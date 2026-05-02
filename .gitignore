@@ -1,0 +1,17 @@
+outputs/
+data_engine/sft/outputs/
+dataset/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.ipynb_checkpoints/
+.DS_Store
+.vscode/
+.idea/
+*.env
+.env.local
+*credential*.json
+*service_account*.json
+*.sqlite

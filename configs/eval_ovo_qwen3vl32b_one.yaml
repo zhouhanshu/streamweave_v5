@@ -1,0 +1,69 @@
+benchmark: ovo
+policy: streamweave
+result_output: outputs/ovo_qwen3vl32b_one/ovo_results.jsonl
+
+prompt:
+  profile: teacher_eval
+
+postprocess:
+  mode: eval_repair
+
+reward:
+  enable_format_reward: true
+  enable_timing_reward: true
+  enable_open_tail_reward: true
+
+synthesis:
+  max_attempts: 3
+
+memory:
+  window_seconds: 90.0
+
+runtime:
+  sample_fps: 1.0
+  frames_per_step: 5
+  max_frames: 0
+  max_steps: 0
+  resolution: 768
+
+dataset:
+  dataset_root: dataset
+  dataset_name: ovo
+  video_root: /mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/chunked_videos
+  frame_id_base: 0
+  image_ext: jpg
+  jpeg_quality: 95
+  overwrite_frames: false
+
+backend:
+  backend: openai
+  model: Qwen/Qwen3-VL-32B-Instruct
+  base_url: https://api.siliconflow.cn/v1
+  api_key: sk-lnjzkensfrhgsmbbxiieokeeeisvydruzblqmxhmwhcjmbhq
+  api_key_env: ""
+  max_tokens: 1024
+  temperature: 0.0
+  timeout_seconds: 120.0
+  image_quality: 85
+  max_retries: 2
+  retry_backoff_seconds: 1.0
+  retry_backoff_multiplier: 2.0
+
+trace:
+  output_root: outputs/ovo_qwen3vl32b_one/traces
+  experiment_name: ""
+  write_jsonl: true
+
+benchmark_args:
+  anno_path: /mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/OVO-Bench/data/ovo_bench_new.json
+  video_dir: /mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/chunked_videos
+  sample_ids: [1]
+  task: ""
+  limit: 1
+
+batch:
+  workers: 1
+  endpoints: []
+  limit: 1
+  output: outputs/ovo_qwen3vl32b_one/ovo_results.jsonl
+  worker_log_dir: outputs/ovo_qwen3vl32b_one/worker_logs
