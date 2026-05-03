@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# V4 OVO full teacher-eval on 8 local vLLM replicas.
+# V4 OVO 1/8 eval on 8 local vLLM replicas.
 # Usage:
 #   ./scripts/run_ovo_8gpu_vllm.sh
 #   ./scripts/run_ovo_8gpu_vllm.sh /path/to/Qwen3-VL-8B-Instruct
@@ -11,15 +11,17 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 MODEL="${1:-/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct}"
 PYTHON="/mmu_mllm_hdd/zhouhanshu/conda/envs/simple/bin/python"
 VLLM="/mmu_mllm_hdd/zhouhanshu/conda/envs/vllm/bin/vllm"
-LIMIT=""  # Set to e.g. "8" for smoke; keep empty for full OVO.
+CONFIG="configs/batch_ovo_qwen3vl8b_8gpu_full.yaml"
+LIMIT=""  # Set to e.g. "8" for smoke; keep empty for the configured annotation file.
+ALLOW_EXISTING_SERVERS="${ALLOW_EXISTING_SERVERS:-0}"
 
 [[ -x "$PYTHON" ]] || PYTHON="python"
 [[ -x "$VLLM" ]] || VLLM="vllm"
 
 mkdir -p \
-  outputs/ovo_qwen3vl8b_8gpu_eval/vllm_logs \
-  outputs/ovo_qwen3vl8b_8gpu_eval/worker_logs \
-  outputs/ovo_qwen3vl8b_8gpu_eval/vllm_pids
+  outputs/ovo_qwen3vl8b_8gpu_1of8_eval/vllm_logs \
+  outputs/ovo_qwen3vl8b_8gpu_1of8_eval/worker_logs \
+  outputs/ovo_qwen3vl8b_8gpu_1of8_eval/vllm_pids
 
 started_pids=()
 
@@ -68,9 +70,14 @@ wait_for_endpoint() {
 for gpu in 0 1 2 3 4 5 6 7; do
   port=$((8000 + gpu))
   endpoint="http://127.0.0.1:${port}/v1"
-  log_path="outputs/ovo_qwen3vl8b_8gpu_eval/vllm_logs/vllm_${port}.log"
+  log_path="outputs/ovo_qwen3vl8b_8gpu_1of8_eval/vllm_logs/vllm_${port}.log"
 
   if check_endpoint "$endpoint"; then
+    if [[ "$ALLOW_EXISTING_SERVERS" != "1" ]]; then
+      echo "ERROR: endpoint already has a running server: $endpoint" >&2
+      echo "Stop existing vLLM servers first, or set ALLOW_EXISTING_SERVERS=1 to reuse them intentionally." >&2
+      exit 1
+    fi
     echo "[server] ready already: gpu=$gpu endpoint=$endpoint"
     continue
   fi
@@ -85,7 +92,7 @@ for gpu in 0 1 2 3 4 5 6 7; do
 
   pid=$!
   started_pids+=("$pid")
-  echo "$pid" > "outputs/ovo_qwen3vl8b_8gpu_eval/vllm_pids/vllm_${port}.pid"
+  echo "$pid" > "outputs/ovo_qwen3vl8b_8gpu_1of8_eval/vllm_pids/vllm_${port}.pid"
 done
 
 for port in 8000 8001 8002 8003 8004 8005 8006 8007; do
@@ -98,21 +105,32 @@ endpoints="http://127.0.0.1:8000/v1,http://127.0.0.1:8001/v1,http://127.0.0.1:80
 
 eval_cmd=(
   "$PYTHON" evaluation/eval_batch.py
-  --config configs/batch_ovo_qwen3vl8b_8gpu_full.yaml
+  --config "$CONFIG"
   --benchmark ovo
   --backend vllm
   --model "$MODEL"
   --endpoints "$endpoints"
   --workers 16
-  --output outputs/ovo_qwen3vl8b_8gpu_eval/results.jsonl
-  --worker-log-dir outputs/ovo_qwen3vl8b_8gpu_eval/worker_logs
+  --output outputs/ovo_qwen3vl8b_8gpu_1of8_eval/results.jsonl
+  --worker-log-dir outputs/ovo_qwen3vl8b_8gpu_1of8_eval/worker_logs
 )
 
 if [[ -n "$LIMIT" ]]; then
   eval_cmd+=(--limit "$LIMIT")
 fi
 
-echo "[eval] teacher path: teacher_eval + eval_repair"
+eval_profile="$("$PYTHON" - "$CONFIG" <<'PY'
+import sys
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    cfg = yaml.safe_load(f) or {}
+prompt = (cfg.get("prompt") or {}).get("profile", "")
+postprocess = (cfg.get("postprocess") or {}).get("mode", "")
+print(f"{prompt or '<unset>'} + {postprocess or '<unset>'}")
+PY
+)"
+echo "[eval] path: $eval_profile"
 echo "[eval] endpoints=$endpoints"
-echo "[eval] output=outputs/ovo_qwen3vl8b_8gpu_eval/results.jsonl"
+echo "[eval] output=outputs/ovo_qwen3vl8b_8gpu_1of8_eval/results.jsonl"
 "${eval_cmd[@]}"
