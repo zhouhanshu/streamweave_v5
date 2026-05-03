@@ -116,7 +116,7 @@ Output Format:
 
 
 SYNTHESIS_EXTRA = """\
-For synthesis, if you are asked to retry, read the previous failed output and the error reason, then produce a fresh full XML answer. Do not explain.
+For synthesis, if retry feedback is provided, apply the listed corrections and produce a fresh full XML answer. Do not explain.
 """
 
 

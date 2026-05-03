@@ -16,6 +16,8 @@
 - 断点续跑时不要带 `--overwrite`；带 `--overwrite` 会清掉当前输出目录的样本和队列状态。
 - `bridge` gap 完整性是硬约束：note 和窗口边界之间、相邻 note 之间必须有合法 bridge；open-tail bridge 继承也必须合法。
 - QA step-level retry 只检查 eta 和 answer 空/非空状态；answer 内容是否正确放到样本级 accepted 判定，避免 retry 直接暴露 GT 答案。
+- 主推理 `synthesis_raw_retry` 与 SFT retry 当前不完全等价：SFT retry 会额外传入 step/window/memory-tail 信息，主推理当前不传这些上下文。这个差异当前可接受，暂不作为阻塞问题。
+- `train_prompt_type=teacher_synthesis` 导出时会重建 teacher 风格 prompt，而不是复用合成时记录的原始 prompt；只有 `recorded` 才复用中间文件里保存的 prompt。这个设计是有意保留的，默认训练仍使用 `production` prompt。
 - 早期过滤版 `streamweave_data/annotations_filtered_30s300s_key10to40.jsonl` 不是 SFT 数据，只是 `VideoXum + ActivityNet_Captions` 的视频/关键帧池；当前 V4 SFT 使用 `annotations_qa_filter_final.jsonl`。
 - `VideoXum` 没有 QA 和 answer timestamp，因此必须先合成 `VideoXum-StreamQA`：
   - `backward`
