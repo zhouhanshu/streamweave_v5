@@ -1,6 +1,6 @@
 benchmark: ovo
 policy: streamweave
-result_output: outputs/ovo_qwen3vl8b_8gpu_eval/results.jsonl
+result_output: outputs/ovo_qwen3vl8b_finetuned/results.jsonl
 
 prompt:
   profile: eval
@@ -37,7 +37,7 @@ dataset:
 
 backend:
   backend: vllm
-  model: /mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct
+  model: /mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/models/qwen3vl8b_streamweave_sft_v2_3077_vllm
   base_url: http://127.0.0.1:8000/v1
   api_key: EMPTY
   api_key_env: ""
@@ -50,7 +50,7 @@ backend:
   retry_backoff_multiplier: 2.0
 
 trace:
-  output_root: outputs/ovo_qwen3vl8b_8gpu_eval/traces
+  output_root: outputs/ovo_qwen3vl8b_finetuned/traces
   experiment_name: ""
   write_jsonl: true
 
@@ -73,5 +73,5 @@ batch:
     - http://127.0.0.1:8006/v1
     - http://127.0.0.1:8007/v1
   limit: 0
-  output: outputs/ovo_qwen3vl8b_8gpu_eval/results.jsonl
-  worker_log_dir: outputs/ovo_qwen3vl8b_8gpu_eval/worker_logs
+  output: outputs/ovo_qwen3vl8b_finetuned/results.jsonl
+  worker_log_dir: outputs/ovo_qwen3vl8b_finetuned/worker_logs
