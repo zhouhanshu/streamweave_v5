@@ -1,0 +1,6 @@
+#!/mmu_mllm_hdd/zhouhanshu/conda/envs/verl312_vllm0110_ray2492/bin/python
+import sys
+from mathruler.interface import main
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(main())

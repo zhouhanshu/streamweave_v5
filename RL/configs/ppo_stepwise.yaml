@@ -1,0 +1,102 @@
+hydra:
+  searchpath:
+    - file:${oc.env:STREAMWEAVE_RL_DIR}/verl/verl/trainer/config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  train_files: ${oc.env:STREAMWEAVE_TRAIN_FILE,data/rl_train.parquet}
+  val_files: ${oc.env:STREAMWEAVE_VAL_FILE,data/rl_val.parquet}
+  train_batch_size: 8
+  val_batch_size: 8
+  max_prompt_length: 8192
+  max_response_length: 512
+  return_raw_chat: true
+  return_multi_modal_inputs: false
+  filter_overlong_prompts: false
+  dataloader_num_workers: 0
+  custom_cls:
+    path: ${oc.env:STREAMWEAVE_RL_DIR}/streamweave_rl/dataset.py
+    name: StreamWeaveAgentDataset
+  streamweave:
+    dataset_name: streamweave_rl
+    prompt_profile: teacher_eval
+    policy: streamweave
+    runtime:
+      sample_fps: 1.0
+      frames_per_step: 5
+      max_frames: 0
+      max_steps: 0
+    dataset:
+      dataset_root: ${oc.env:STREAMWEAVE_DATASET_ROOT,dataset}
+      dataset_name: streamweave_rl
+      video_root: ""
+      frame_id_base: 0
+      image_ext: jpg
+      overwrite_frames: false
+    memory:
+      window_seconds: 120.0
+    reward:
+      w_format: 0.2
+      w_success: 0.8
+      w_step: 0.0
+      format_mode: valid
+      success_mode: exact_or_contains
+
+algorithm:
+  adv_estimator: streamweave_stepwise_gae
+  gamma: 1.0
+  lam: 1.0
+  ignore_value: -100.0
+  use_kl_in_reward: false
+
+critic:
+  enable: true
+  ppo_mini_batch_size: 8
+  ppo_micro_batch_size_per_gpu: 1
+  model:
+    path: ${oc.env:STREAMWEAVE_MODEL_PATH,Qwen/Qwen2.5-VL-3B-Instruct}
+    trust_remote_code: true
+
+actor_rollout_ref:
+  model:
+    path: ${oc.env:STREAMWEAVE_MODEL_PATH,Qwen/Qwen2.5-VL-3B-Instruct}
+    trust_remote_code: true
+  actor:
+    use_kl_loss: true
+    kl_loss_coef: 0.001
+    ppo_mini_batch_size: 8
+    ppo_micro_batch_size_per_gpu: 1
+  rollout:
+    name: sglang
+    mode: async
+    n: 1
+    temperature: 1.0
+    top_p: 0.95
+    tensor_model_parallel_size: 1
+    gpu_memory_utilization: 0.6
+    max_num_batched_tokens: 12000
+    max_model_len: ${oc.env:STREAMWEAVE_MAX_MODEL_LEN,32768}
+    multi_turn:
+      enable: true
+    agent:
+      num_workers: 8
+      default_agent_loop: streamweave_agent
+      agent_loop_config_path: ${oc.env:STREAMWEAVE_RL_DIR}/configs/streamweave_agent_stepwise.yaml
+
+trainer:
+  stepwise_rollout: true
+  stepwise_value_mask: true
+  balance_batch: false
+  val_before_train: false
+  logger: ["console"]
+  project_name: streamweave_rl
+  experiment_name: ppo_stepwise
+  n_gpus_per_node: 8
+  nnodes: 1
+  save_freq: 100
+  test_freq: -1
+  total_epochs: 1
+  total_training_steps: null
