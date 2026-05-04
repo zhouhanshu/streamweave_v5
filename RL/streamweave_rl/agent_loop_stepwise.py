@@ -34,7 +34,8 @@ class StreamWeaveAgentLoop(AgentLoopBase):
             video_path=str(kwargs.get("video_path", "")),
             question=str(kwargs.get("question", "")),
             query_timestamp=float(kwargs.get("query_timestamp", 0.0) or 0.0),
-            ground_truth=str(kwargs.get("ground_truth", "")),
+            ground_truth=kwargs.get("ground_truth", ""),
+            sample_metadata=dict(kwargs.get("sample_metadata", {}) or {}),
             config=dict(kwargs.get("streamweave_config", {}) or {}),
         )
 
@@ -117,6 +118,11 @@ class StreamWeaveAgentLoop(AgentLoopBase):
                 f"prompt too long: {len(prompt_ids)} tokens > {max_prompt_tokens}",
                 prompt_ids=prompt_ids,
             )
+        if len(prompt_ids) > self.prompt_length:
+            raise _TrajectoryAbort(
+                f"prompt too long for training window: {len(prompt_ids)} tokens > {self.prompt_length}",
+                prompt_ids=prompt_ids,
+            )
         turn_sampling_params = dict(sampling_params)
         max_new_tokens = int(turn_sampling_params.get("max_new_tokens") or self.response_length)
         turn_sampling_params["max_new_tokens"] = min(max_new_tokens, self.response_length)
@@ -132,21 +138,23 @@ class StreamWeaveAgentLoop(AgentLoopBase):
         if metrics.get("num_preempted") is None:
             metrics["num_preempted"] = token_output.num_preempted if token_output.num_preempted is not None else -1
 
-        truncated_prompt_ids = prompt_ids[-self.prompt_length :]
+        kept_prompt_ids = prompt_ids
         response_ids = token_output.token_ids[: self.response_length]
+        if not response_ids:
+            raise _TrajectoryAbort("empty model response", prompt_ids=prompt_ids)
         response_text = await self.loop.run_in_executor(
             None,
             lambda: self.tokenizer.decode(response_ids, skip_special_tokens=True),
         )
         output = AgentLoopOutput(
-            prompt_ids=truncated_prompt_ids,
+            prompt_ids=kept_prompt_ids,
             response_ids=response_ids,
             response_mask=[1] * len(response_ids),
             response_logprobs=token_output.log_probs[: self.response_length] if token_output.log_probs else None,
             routed_experts=_align_routed_experts(
                 token_output.routed_experts,
                 original_prompt_len=len(prompt_ids),
-                kept_prompt_len=len(truncated_prompt_ids),
+                kept_prompt_len=len(kept_prompt_ids),
                 response_len=len(response_ids),
             ),
             multi_modal_data={"images": images} if images else {},

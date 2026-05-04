@@ -1,0 +1,48 @@
+# Keep vendored verl source directories trackable. The parent repository
+# ignores every directory named "dataset" or "models", which also catches
+# Python packages inside vendored verl.
+!verl/tests/models/
+!verl/tests/models/**
+!verl/tests/utils/dataset/
+!verl/tests/utils/dataset/**
+!verl/verl/experimental/dataset/
+!verl/verl/experimental/dataset/**
+!verl/verl/experimental/vla/models/
+!verl/verl/experimental/vla/models/**
+!verl/verl/experimental/vla/workers/
+!verl/verl/experimental/vla/workers/**
+!verl/verl/models/
+!verl/verl/models/**
+!verl/verl/utils/dataset/
+!verl/verl/utils/dataset/**
+
+# Python build artifacts.
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Training/runtime outputs.
+*.pt
+*.ckpt
+*.tar.gz
+checkpoints/
+**/checkpoints/
+outputs/
+**/outputs/
+wandb/
+**/wandb/
+logs/
+log/
+*.log
+
+# Local environment/editor state.
+.venv/
+venv/
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.DS_Store
+
+# Local dataset mount/symlink. Actual dataset files stay outside git.
+/dataset

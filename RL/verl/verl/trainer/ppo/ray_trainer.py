@@ -71,6 +71,18 @@ except Exception:
     pass
 
 
+def _select_array(values, indices: Optional[np.ndarray]):
+    if indices is None:
+        return values
+    return np.asarray(values, dtype=object)[indices]
+
+
+def _select_by_indices(values, indices: Optional[np.ndarray]):
+    if indices is None:
+        return values
+    return [values[int(idx)] for idx in indices]
+
+
 def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, kl_penalty="kl"):
     """Apply KL penalty to the token-level rewards.
 
@@ -543,6 +555,22 @@ class RayPPOTrainer:
             select_indices.append(uid_to_idx[key])
         return batch.select_idxs(select_indices).union(gen_batch_output)
 
+    def _stepwise_validation_indices(self, batch: DataProto) -> np.ndarray:
+        non_tensor = batch.non_tensor_batch
+        if "last_turn" in non_tensor:
+            last_turn = np.asarray(non_tensor["last_turn"], dtype=bool)
+            indices = np.flatnonzero(last_turn)
+            if indices.size:
+                return indices.astype(np.int64, copy=False)
+        if "group_idx" in non_tensor and "traj_idx" in non_tensor:
+            selected: dict[tuple[str, str], int] = {}
+            groups = non_tensor["group_idx"]
+            trajs = non_tensor["traj_idx"]
+            for idx, (group, traj) in enumerate(zip(groups, trajs, strict=False)):
+                selected[(str(group), str(traj))] = idx
+            return np.asarray(sorted(selected.values()), dtype=np.int64)
+        return np.arange(len(batch), dtype=np.int64)
+
     def _add_stepwise_value_mask(self, batch: DataProto) -> None:
         if not self.config.trainer.get("stepwise_value_mask", True):
             return
@@ -632,29 +660,41 @@ class RayPPOTrainer:
 
             print("validation generation end")
 
-            # Store generated outputs
-            if self._stepwise_rollout_enabled() and "final_answer" in test_output_gen_batch.non_tensor_batch:
-                output_texts = [str(item) for item in test_output_gen_batch.non_tensor_batch["final_answer"]]
-            else:
-                output_ids = test_output_gen_batch.batch["responses"]
-                output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
-            sample_outputs.extend(output_texts)
-
+            val_indices = None
             if self._stepwise_rollout_enabled():
                 test_batch = self._align_stepwise_batch(test_batch, test_output_gen_batch)
+                val_indices = self._stepwise_validation_indices(test_batch)
                 sample_gts.extend(
-                    [item.non_tensor_batch.get("reward_model", {}).get("ground_truth", None) for item in test_batch]
+                    _select_by_indices(
+                        [
+                            item.non_tensor_batch.get("reward_model", {}).get("ground_truth", None)
+                            for item in test_batch
+                        ],
+                        val_indices,
+                    )
                 )
             else:
                 test_batch = test_batch.union(test_output_gen_batch)
             test_batch.meta_info["validate"] = True
 
+            # Store generated outputs
+            if self._stepwise_rollout_enabled() and "final_answer" in test_batch.non_tensor_batch:
+                output_texts = [str(item) for item in test_batch.non_tensor_batch["final_answer"]]
+            else:
+                output_ids = test_batch.batch["responses"]
+                output_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in output_ids]
+            if val_indices is not None:
+                output_texts = _select_by_indices(output_texts, val_indices)
+            sample_outputs.extend(output_texts)
+
             # Store original inputs
             input_ids = test_batch.batch["prompts"]
             # TODO: Can we keep special tokens except for padding tokens?
             input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
+            if val_indices is not None:
+                input_texts = _select_by_indices(input_texts, val_indices)
             sample_inputs.extend(input_texts)
-            sample_uids.extend(test_batch.non_tensor_batch["uid"])
+            sample_uids.extend(_select_array(test_batch.non_tensor_batch["uid"], val_indices))
 
             # evaluate using reward_function
             reward_tensor, reward_extra_info = extract_reward(test_batch)
@@ -663,12 +703,16 @@ class RayPPOTrainer:
                 scores = [float(item) for item in test_batch.non_tensor_batch["trajectory_score"]]
             else:
                 scores = reward_tensor.sum(-1).cpu().tolist()
+            if val_indices is not None:
+                scores = _select_by_indices(scores, val_indices)
             sample_scores.extend(scores)
 
             reward_extra_infos_dict["reward"].extend(scores)
             for key, values in reward_extra_info.items():
                 if key not in reward_extra_infos_dict:
                     reward_extra_infos_dict[key] = []
+                if val_indices is not None:
+                    values = _select_array(values, val_indices)
                 if isinstance(values, np.ndarray):
                     reward_extra_infos_dict[key].extend(values.tolist())
                 else:
@@ -676,9 +720,14 @@ class RayPPOTrainer:
 
             # collect num_turns of each prompt
             if "__num_turns__" in test_batch.non_tensor_batch:
-                sample_turns.append(test_batch.non_tensor_batch["__num_turns__"])
+                if self._stepwise_rollout_enabled() and "turn_idx" in test_batch.non_tensor_batch:
+                    turns = test_batch.non_tensor_batch["turn_idx"]
+                else:
+                    turns = test_batch.non_tensor_batch["__num_turns__"]
+                sample_turns.append(_select_array(turns, val_indices))
 
-            data_source_lst.append(test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0]))
+            data_source = test_batch.non_tensor_batch.get("data_source", ["unknown"] * reward_tensor.shape[0])
+            data_source_lst.append(_select_array(data_source, val_indices))
 
         self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
 

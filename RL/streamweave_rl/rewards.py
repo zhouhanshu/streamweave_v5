@@ -13,6 +13,7 @@ from typing import Any
 
 from streamweave.schemas import QualityReport
 
+from .scorers import score_answer
 from .schemas import StepRewardResult, TrajectoryRewardResult
 
 
@@ -22,7 +23,8 @@ class StreamWeaveRewardConfig:
     w_success: float = 0.8
     w_step: float = 0.0
     format_mode: str = "valid"
-    success_mode: str = "exact_or_contains"
+    success_mode: str = "dataset"
+    success_scorer: str = "auto"
 
 
 def reward_config_from_mapping(data: dict[str, Any] | None) -> StreamWeaveRewardConfig:
@@ -52,22 +54,33 @@ def compute_step_reward(
     quality: QualityReport,
     cfg: StreamWeaveRewardConfig,
     ctx: dict[str, Any] | None = None,
+    total_steps: int = 1,
 ) -> StepRewardResult:
     ctx = ctx or {}
+    denominator = max(int(total_steps), 1)
     format_score = compute_format_score(quality, mode=cfg.format_mode)
     step_score = compute_step_score({**ctx, "quality": quality})
-    turn_reward = cfg.w_format * format_score + cfg.w_step * step_score
+    turn_reward = (cfg.w_format * format_score + cfg.w_step * step_score) / denominator
     return StepRewardResult(
         format_score=format_score,
         step_score=step_score,
         turn_reward=turn_reward,
-        info={"format_mode": cfg.format_mode},
+        info={"format_mode": cfg.format_mode, "process_reward_denominator": denominator},
     )
 
 
-def compute_success_score(answer: str, ground_truth: str, *, mode: str = "exact_or_contains") -> float:
+def compute_success_score(
+    answer: str,
+    ground_truth: Any,
+    *,
+    mode: str = "exact_or_contains",
+    scorer: str = "auto",
+    metadata: dict[str, Any] | None = None,
+) -> float:
+    if mode == "dataset":
+        return score_answer(answer, ground_truth, scorer=scorer, metadata=metadata, fallback_mode="exact_or_contains")
     answer_norm = (answer or "").strip().lower()
-    gt_norm = (ground_truth or "").strip().lower()
+    gt_norm = str(ground_truth or "").strip().lower()
     if not answer_norm or not gt_norm:
         return 0.0
     if mode == "exact":
@@ -83,8 +96,9 @@ def compute_trajectory_reward(
     *,
     step_results: list[StepRewardResult],
     final_answer: str,
-    ground_truth: str,
+    ground_truth: Any,
     cfg: StreamWeaveRewardConfig,
+    metadata: dict[str, Any] | None = None,
 ) -> TrajectoryRewardResult:
     if step_results:
         format_mean = sum(item.format_score for item in step_results) / len(step_results)
@@ -92,12 +106,18 @@ def compute_trajectory_reward(
     else:
         format_mean = 0.0
         step_mean = 0.0
-    success_score = compute_success_score(final_answer, ground_truth, mode=cfg.success_mode)
+    success_score = compute_success_score(
+        final_answer,
+        ground_truth,
+        mode=cfg.success_mode,
+        scorer=cfg.success_scorer,
+        metadata=metadata,
+    )
     trajectory_score = cfg.w_format * format_mean + cfg.w_step * step_mean + cfg.w_success * success_score
     return TrajectoryRewardResult(
         trajectory_score=trajectory_score,
         format_mean=format_mean,
         step_mean=step_mean,
         success_score=success_score,
-        info={"success_mode": cfg.success_mode},
+        info={"success_mode": cfg.success_mode, "success_scorer": cfg.success_scorer},
     )

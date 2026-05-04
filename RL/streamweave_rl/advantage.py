@@ -30,13 +30,11 @@ def _to_numpy_int64(values: Any, *, factorize: bool = False) -> np.ndarray:
 
 def _to_float_array(values: Any) -> np.ndarray:
     arr = np.asarray(values)
-    out = np.zeros(arr.shape[0], dtype=np.float32)
-    for idx, value in enumerate(arr):
-        try:
-            out[idx] = float(0.0 if value is None else value)
-        except (TypeError, ValueError):
-            out[idx] = 0.0
-    return out
+    if arr.dtype == object:
+        arr = np.array([0.0 if value is None else value for value in arr], dtype=np.float32)
+    else:
+        arr = arr.astype(np.float32, copy=False)
+    return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
 
 
 def _unique_turn_rows(data):

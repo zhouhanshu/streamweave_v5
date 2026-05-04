@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+import sys
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -13,7 +13,7 @@ from streamweave.config import DatasetConfig, MemoryConfig, RewardConfig, Runtim
 from streamweave.env import StreamWeaveEnv
 from streamweave.frame_store import FrameStore
 from streamweave.policies import make_policy
-from streamweave.rollout import _group_frames
+from streamweave.rollout import _group_frames, _query_events_by_frame
 from streamweave.schemas import BenchmarkSample, ContentItem, FrameRef, QARecord, QueryEvent
 
 from .rewards import (
@@ -24,21 +24,10 @@ from .rewards import (
 )
 from .schemas import StepRecord, StepRewardResult, TrajectoryRewardResult
 
-logger = logging.getLogger(__name__)
-
-
-STREAMWEAVE_SYSTEM_PROMPT = """\
-[STREAM_AGENT]
-You are a streaming video agent that maintains a real-time Interleaved Memory to
-track a video stream and answers only active questions in the QA History section.
-Output only the required StreamWeave XML tags.
-"""
-
-
 @dataclass(slots=True)
 class StreamWeaveRLSettings:
     dataset_name: str = "default"
-    prompt_profile: str = "teacher_eval"
+    prompt_profile: str = "eval"
     policy: str = "streamweave"
     extra_context: str = ""
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
@@ -57,14 +46,19 @@ class StreamWeaveRLEnv:
         video_path: str,
         question: str,
         query_timestamp: float,
-        ground_truth: str,
+        ground_truth: Any,
+        sample_metadata: dict[str, Any] | None = None,
         config: dict[str, Any] | None = None,
     ) -> None:
+        metadata = dict(sample_metadata or {})
+        metadata.setdefault("dataset", (config or {}).get("dataset_name", ""))
+        metadata.setdefault("ground_truth", ground_truth)
         self.sample = BenchmarkSample(
             sample_id=sample_id,
             video_id=video_id,
             video_path=video_path,
             query_events=[QueryEvent(text=question, timestamp=float(query_timestamp))] if question else [],
+            metadata=metadata,
         )
         self.ground_truth = ground_truth
         self.settings = _settings_from_mapping(config or {})
@@ -82,13 +76,6 @@ class StreamWeaveRLEnv:
         self.step_rewards: list[StepRewardResult] = []
         self.records: list[StepRecord] = []
         self.trajectory_reward: TrajectoryRewardResult | None = None
-
-    async def system_prompt(self) -> dict[str, Any]:
-        return {
-            "messages": [{"role": "system", "content": STREAMWEAVE_SYSTEM_PROMPT}],
-            "images": [],
-            "prompt_text": STREAMWEAVE_SYSTEM_PROMPT,
-        }
 
     async def reset(self, seed: int | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         del seed
@@ -112,19 +99,12 @@ class StreamWeaveRLEnv:
         if not self.groups:
             raise RuntimeError(f"No frame groups for sample {self.sample.sample_id}")
 
-        retained_frames = [frame for group in self.groups for frame in group]
-        self.query_by_frame = _query_events_by_frame_strict(
-            retained_frames,
+        self.query_by_frame = _query_events_by_frame(
+            self.frames,
             self.sample.query_events,
             sample_fps=runtime.sample_fps,
             frame_id_base=self.settings.dataset.frame_id_base,
         )
-        if self.sample.query_events and not any(self.query_by_frame.values()):
-            last_end = retained_frames[-1].end_time if retained_frames else 0.0
-            raise RuntimeError(
-                "No query event remains after StreamWeave RL frame truncation. "
-                f"sample_id={self.sample.sample_id!r}, max_steps={runtime.max_steps}, retained_end={last_end:.1f}s"
-            )
         self.env = StreamWeaveEnv(
             prompt_profile=self.settings.prompt_profile,
             policy=self.policy,
@@ -154,6 +134,7 @@ class StreamWeaveRLEnv:
             quality=quality,
             cfg=self.settings.rl_reward,
             ctx={"sample": self.sample, "frames": self.current_frames, "action": raw_action},
+            total_steps=len(self.groups),
         )
         self.step_rewards.append(reward_result)
 
@@ -168,6 +149,7 @@ class StreamWeaveRLEnv:
                 final_answer=final_answer,
                 ground_truth=self.ground_truth,
                 cfg=self.settings.rl_reward,
+                metadata=self.sample.metadata,
             )
             turn_reward += self.settings.rl_reward.w_success * self.trajectory_reward.success_score
             reward_result.turn_reward = turn_reward
@@ -258,34 +240,7 @@ def _content_to_messages_and_images(content: list[ContentItem]) -> tuple[list[di
                 continue
             blocks.append({"type": "image"})
             images.append(image)
-    return [
-        {"role": "system", "content": STREAMWEAVE_SYSTEM_PROMPT},
-        {"role": "user", "content": blocks},
-    ], images
-
-
-def _query_events_by_frame_strict(
-    frames: list[FrameRef],
-    query_events: list[QueryEvent],
-    *,
-    sample_fps: float,
-    frame_id_base: int,
-) -> dict[int, list[QueryEvent]]:
-    if not frames:
-        return {}
-    first_time = frames[0].start_time
-    last_time = frames[-1].end_time
-    frame_ids = {frame.global_index for frame in frames}
-    seconds_per_frame = 1.0 / max(sample_fps, 1e-6)
-    out: dict[int, list[QueryEvent]] = {}
-    for event in sorted(query_events, key=lambda item: item.timestamp):
-        if event.timestamp < first_time or event.timestamp >= last_time:
-            continue
-        frame_offset = int(event.timestamp // seconds_per_frame)
-        frame_id = frame_id_base + frame_offset
-        if frame_id in frame_ids:
-            out.setdefault(frame_id, []).append(event)
-    return out
+    return [{"role": "user", "content": blocks}], images
 
 
 def _load_image(path: str | Path) -> Image.Image | None:
@@ -293,19 +248,20 @@ def _load_image(path: str | Path) -> Image.Image | None:
         with Image.open(path) as image:
             return image.convert("RGB").copy()
     except (FileNotFoundError, PermissionError, OSError, UnidentifiedImageError) as exc:
-        logger.warning("Skipping unreadable StreamWeave frame image %s: %s", path, exc)
-        return None
+        message = f"StreamWeave RL failed to read frame image {path}: {type(exc).__name__}: {exc}"
+        print(message, file=sys.stderr, flush=True)
+        raise RuntimeError(message) from exc
 
 
 def _settings_from_mapping(data: dict[str, Any]) -> StreamWeaveRLSettings:
     runtime = _dataclass_from_mapping(RuntimeConfig, data.get("runtime"))
     dataset = _dataclass_from_mapping(DatasetConfig, data.get("dataset"))
     memory = _dataclass_from_mapping(MemoryConfig, data.get("memory"))
-    reward_config = _dataclass_from_mapping(RewardConfig, data.get("streamweave_reward"))
+    reward_config = _reward_config_from_mapping(data.get("streamweave_reward") or data.get("streamweave_reward_config"))
     rl_reward = reward_config_from_mapping(dict(data.get("reward", {}) or {}))
     return StreamWeaveRLSettings(
         dataset_name=str(data.get("dataset_name", dataset.dataset_name)),
-        prompt_profile=str(data.get("prompt_profile", data.get("prompt", "teacher_eval"))),
+        prompt_profile=str(data.get("prompt_profile", data.get("prompt", "eval"))),
         policy=str(data.get("policy", "streamweave")),
         extra_context=str(data.get("extra_context", "")),
         runtime=runtime,
@@ -320,3 +276,14 @@ def _dataclass_from_mapping(cls, data: Any):
     mapping = dict(data or {})
     allowed = {item.name for item in fields(cls)}
     return cls(**{key: value for key, value in mapping.items() if key in allowed})
+
+
+def _reward_config_from_mapping(data: Any) -> RewardConfig:
+    mapping = dict(data or {})
+    values = {
+        "enable_format_reward": True,
+        "enable_timing_reward": False,
+        "enable_open_tail_reward": False,
+    }
+    values.update({key: value for key, value in mapping.items() if key in values})
+    return RewardConfig(**values)

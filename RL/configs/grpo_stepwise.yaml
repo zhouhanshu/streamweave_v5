@@ -22,7 +22,8 @@ data:
     name: StreamWeaveAgentDataset
   streamweave:
     dataset_name: streamweave_rl
-    prompt_profile: teacher_eval
+    require_question: true
+    prompt_profile: eval
     policy: streamweave
     runtime:
       sample_fps: 1.0
@@ -38,12 +39,17 @@ data:
       overwrite_frames: false
     memory:
       window_seconds: 120.0
+    streamweave_reward:
+      enable_format_reward: true
+      enable_timing_reward: false
+      enable_open_tail_reward: false
     reward:
       w_format: 0.2
       w_success: 0.8
       w_step: 0.0
       format_mode: valid
-      success_mode: exact_or_contains
+      success_mode: dataset
+      success_scorer: auto
 
 algorithm:
   adv_estimator: streamweave_stepwise_traj_grpo
