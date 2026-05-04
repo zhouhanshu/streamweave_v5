@@ -242,14 +242,22 @@ class BaseEngineCtx:
     def _context_switch(self, device):
         if self.disable_auto_offload:
             return
+        target_is_device = device == get_device_name()
         if self.mode == "eval":
-            self.engine.to(device=device, model=self.engine.is_param_offload_enabled, optimizer=False, grad=False)
+            # The engine can be manually offloaded to CPU between phases even when
+            # param_offload is disabled, e.g. after rollout weight sync.
+            self.engine.to(
+                device=device,
+                model=target_is_device or self.engine.is_param_offload_enabled,
+                optimizer=False,
+                grad=False,
+            )
         elif self.mode == "train":
             self.engine.to(
                 device=device,
-                model=self.engine.is_param_offload_enabled,
+                model=target_is_device or self.engine.is_param_offload_enabled,
                 optimizer=self.engine.is_optimizer_offload_enabled,
-                grad=self.engine.is_param_offload_enabled,
+                grad=target_is_device or self.engine.is_param_offload_enabled,
             )
 
     def __enter__(self):

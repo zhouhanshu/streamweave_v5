@@ -9,10 +9,9 @@ preserve the full trajectory structure for PPO and GRPO advantage computation.
 
 The RL environment is read-only with respect to video frames. It expects frames
 to already exist under `dataset_root/dataset_name/video/<video_id>/`.
-Each rollout turn uses an explicit StreamWeave `system` message, so the model
-chat template does not fall back to the base model's default assistant persona.
-Query events outside the extracted frame time range are ignored rather than
-clamped into the first or last frame.
+Each rollout turn renders the full StreamWeave instruction, memory, QA history,
+and current frame window into one multimodal user message.
+Query events follow the V4 StreamWeave frame alignment logic.
 If `runtime.max_steps` truncates away every query event, the trajectory is
 aborted with zero reward instead of silently training on format reward only.
 Rollout also aborts with zero reward when the rendered prompt exceeds

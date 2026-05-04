@@ -32,6 +32,28 @@ from verl.utils.device import auto_set_device, is_cuda_available
 from verl.utils.import_utils import load_extern_object
 
 
+def _register_optional_streamweave_integrations(config) -> None:
+    """Register StreamWeave extensions when a StreamWeave config is selected."""
+    probes = (
+        OmegaConf.select(config, "algorithm.adv_estimator", default=""),
+        OmegaConf.select(config, "data.custom_cls.path", default=""),
+        OmegaConf.select(config, "data.custom_cls.name", default=""),
+        OmegaConf.select(config, "data.streamweave.policy", default=""),
+        OmegaConf.select(config, "actor_rollout_ref.rollout.agent.default_agent_loop", default=""),
+        OmegaConf.select(config, "actor_rollout_ref.rollout.agent.agent_loop_config_path", default=""),
+    )
+    if not any("streamweave" in str(value).lower() for value in probes if value is not None):
+        return
+
+    try:
+        import streamweave_rl  # noqa: F401
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "StreamWeave config is selected, but streamweave_rl cannot be imported. "
+            "Check PYTHONPATH/STREAMWEAVE_RL_DIR before launching training."
+        ) from exc
+
+
 @hydra.main(config_path="config", config_name="ppo_trainer", version_base=None)
 def main(config):
     """Main entry point for PPO training with Hydra configuration management.
@@ -284,6 +306,7 @@ class TaskRunner:
         from verl.utils.fs import copy_to_local
 
         print(f"TaskRunner hostname: {socket.gethostname()}, PID: {os.getpid()}")
+        _register_optional_streamweave_integrations(config)
         pprint(OmegaConf.to_container(config, resolve=True))
         OmegaConf.resolve(config)
 

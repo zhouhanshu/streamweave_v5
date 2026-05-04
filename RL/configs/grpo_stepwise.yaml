@@ -1,6 +1,6 @@
 hydra:
   searchpath:
-    - file:${oc.env:STREAMWEAVE_RL_DIR}/verl/verl/trainer/config
+    - file://${oc.env:STREAMWEAVE_RL_DIR}/verl/verl/trainer/config
 
 defaults:
   - ppo_trainer
@@ -11,8 +11,8 @@ data:
   val_files: ${oc.env:STREAMWEAVE_VAL_FILE,data/rl_val.parquet}
   train_batch_size: 8
   val_batch_size: 8
-  max_prompt_length: 8192
-  max_response_length: 512
+  max_prompt_length: ${oc.env:STREAMWEAVE_MAX_PROMPT_LENGTH,31744}
+  max_response_length: ${oc.env:STREAMWEAVE_MAX_RESPONSE_LENGTH,1024}
   return_raw_chat: true
   return_multi_modal_inputs: false
   filter_overlong_prompts: false
@@ -78,7 +78,7 @@ actor_rollout_ref:
     top_p: 0.95
     tensor_model_parallel_size: 1
     gpu_memory_utilization: 0.6
-    max_num_batched_tokens: 12000
+    max_num_batched_tokens: ${oc.env:STREAMWEAVE_MAX_NUM_BATCHED_TOKENS,32768}
     max_model_len: ${oc.env:STREAMWEAVE_MAX_MODEL_LEN,32768}
     multi_turn:
       enable: true

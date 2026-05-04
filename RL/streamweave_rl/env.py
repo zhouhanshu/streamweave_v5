@@ -105,6 +105,15 @@ class StreamWeaveRLEnv:
             sample_fps=runtime.sample_fps,
             frame_id_base=self.settings.dataset.frame_id_base,
         )
+        if self.sample.query_events:
+            retained_frame_ids = {frame.global_index for group in self.groups for frame in group}
+            if not any(frame_id in retained_frame_ids for frame_id in self.query_by_frame):
+                retained_end = self.groups[-1][-1].end_time if self.groups and self.groups[-1] else 0.0
+                raise RuntimeError(
+                    "No query event remains after StreamWeave RL frame truncation. "
+                    f"sample_id={self.sample.sample_id!r}, max_steps={runtime.max_steps}, "
+                    f"retained_end={retained_end:.1f}s"
+                )
         self.env = StreamWeaveEnv(
             prompt_profile=self.settings.prompt_profile,
             policy=self.policy,
