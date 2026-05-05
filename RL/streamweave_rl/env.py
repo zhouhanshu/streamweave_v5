@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from streamweave.config import DatasetConfig, MemoryConfig, RewardConfig, RuntimeConfig
 from streamweave.env import StreamWeaveEnv
@@ -216,7 +216,8 @@ class StreamWeaveRLEnv:
         self.current_frames = local_frames
         self.current_prompt_text = prompt_text
         self.current_prompt_images = prompt_images
-        messages, images = _content_to_messages_and_images(content)
+        image_resolution = int(getattr(self.settings.runtime, "resolution", 768) or 0)
+        messages, images = _content_to_messages_and_images(content, max_side=image_resolution)
         return {"messages": messages, "images": images, "prompt_text": prompt_text, "prompt_images": prompt_images}
 
     def _prompt_frames(self, group: list[FrameRef]) -> list[FrameRef]:
@@ -234,7 +235,9 @@ class StreamWeaveRLEnv:
         return ""
 
 
-def _content_to_messages_and_images(content: list[ContentItem]) -> tuple[list[dict[str, Any]], list[Image.Image]]:
+def _content_to_messages_and_images(
+    content: list[ContentItem], *, max_side: int = 768
+) -> tuple[list[dict[str, Any]], list[Image.Image]]:
     blocks: list[dict[str, Any]] = []
     images: list[Image.Image] = []
     for item in content:
@@ -244,7 +247,7 @@ def _content_to_messages_and_images(content: list[ContentItem]) -> tuple[list[di
         elif item.type == "image":
             if item.image_path is None:
                 continue
-            image = _load_image(item.image_path)
+            image = _load_image(item.image_path, max_side=max_side)
             if image is None:
                 continue
             blocks.append({"type": "image"})
@@ -252,10 +255,13 @@ def _content_to_messages_and_images(content: list[ContentItem]) -> tuple[list[di
     return [{"role": "user", "content": blocks}], images
 
 
-def _load_image(path: str | Path) -> Image.Image | None:
+def _load_image(path: str | Path, *, max_side: int = 768) -> Image.Image | None:
     try:
         with Image.open(path) as image:
-            return image.convert("RGB").copy()
+            image = ImageOps.exif_transpose(image).convert("RGB")
+            if max_side and max(image.size) > max_side:
+                image.thumbnail((max_side, max_side))
+            return image.copy()
     except (FileNotFoundError, PermissionError, OSError, UnidentifiedImageError) as exc:
         message = f"StreamWeave RL failed to read frame image {path}: {type(exc).__name__}: {exc}"
         print(message, file=sys.stderr, flush=True)

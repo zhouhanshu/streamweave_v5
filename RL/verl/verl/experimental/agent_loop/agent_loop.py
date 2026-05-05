@@ -864,6 +864,7 @@ class AgentLoopWorker:
         default_extra_keys = {
             "turn_scores",
             "tool_rewards",
+            "rollout_error",
             "min_global_steps",
             "max_global_steps",
             "extras",

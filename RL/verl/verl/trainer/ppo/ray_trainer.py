@@ -19,6 +19,7 @@ This trainer supports model-agonistic model initialization with huggingface
 """
 
 import json
+import math
 import os
 import uuid
 from collections import defaultdict
@@ -1148,6 +1149,35 @@ class RayPPOTrainer:
             dp_rank_mapping = worker_group._dispatch_info[role]
         return max(dp_rank_mapping) + 1
 
+    def _pad_batch_to_dp_divisor(
+        self, batch: DataProto, worker_group, role: str, extra_divisor: Optional[int] = None
+    ) -> tuple[DataProto, int]:
+        """Pad variable-length stepwise rollout batches for equal DP dispatch."""
+        dp_size = self._get_dp_size(worker_group, role)
+        size_divisor = dp_size if extra_divisor is None else math.lcm(dp_size, int(extra_divisor))
+        return pad_dataproto_to_divisor(batch, size_divisor)
+
+    def _pad_batch_to_logprob_divisor(
+        self, batch: DataProto, worker_group, role: str, micro_batch_size_per_gpu: int
+    ) -> tuple[DataProto, int]:
+        dp_size = self._get_dp_size(worker_group, role)
+        micro_batch_size_per_gpu = int(micro_batch_size_per_gpu or 1)
+        return self._pad_batch_to_dp_divisor(
+            batch,
+            worker_group,
+            role,
+            extra_divisor=dp_size * micro_batch_size_per_gpu,
+        )
+
+    @staticmethod
+    def _mask_actor_padding_loss(batch: DataProto, pad_size: int) -> None:
+        """Keep dispatch padding from contributing to the actor loss."""
+        if pad_size == 0:
+            return
+        for key in ("response_mask", "advantages"):
+            if key in batch.batch:
+                batch.batch[key][-pad_size:] = 0
+
     def _balance_batch(self, batch: DataProto, metrics, logging_prefix="global_seqlen", keep_minibatch=False):
         """Reorder the data on single controller such that each dp rank gets similar total tokens.
 
@@ -1237,8 +1267,18 @@ class RayPPOTrainer:
 
     def _compute_ref_log_prob(self, batch: DataProto) -> DataProto:
         if self.use_legacy_worker_impl == "disable":
+            if self.ref_in_actor:
+                micro_batch_size_per_gpu = self.config.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu
+                padded_batch, pad_size = self._pad_batch_to_logprob_divisor(
+                    batch, self.actor_rollout_wg, "actor", micro_batch_size_per_gpu
+                )
+            else:
+                micro_batch_size_per_gpu = self.config.actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu
+                padded_batch, pad_size = self._pad_batch_to_logprob_divisor(
+                    batch, self.ref_policy_wg, "ref", micro_batch_size_per_gpu
+                )
             # step 1: convert dataproto to tensordict.
-            batch_td = batch.to_tensordict()
+            batch_td = padded_batch.to_tensordict()
             # step 2: convert from padding to nopadding
             batch_td = left_right_2_no_padding(batch_td)
             # step 3: add meta info
@@ -1257,6 +1297,7 @@ class RayPPOTrainer:
             # step 5: rebuild a tensordict and convert to dataproto
             ref_log_prob = tu.get_tensordict({"ref_log_prob": log_probs.float()})
             ref_log_prob = DataProto.from_tensordict(ref_log_prob)
+            ref_log_prob = unpad_dataproto(ref_log_prob, pad_size)
         else:
             ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
 
@@ -1264,9 +1305,13 @@ class RayPPOTrainer:
 
     def _compute_old_log_prob(self, batch: DataProto):
         if self.use_legacy_worker_impl == "disable":
+            micro_batch_size_per_gpu = self.config.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu
+            padded_batch, pad_size = self._pad_batch_to_logprob_divisor(
+                batch, self.actor_rollout_wg, "actor", micro_batch_size_per_gpu
+            )
             # TODO: remove step 1, 2, 4 after we make the whole training tensordict and padding free
             # step 1: convert dataproto to tensordict.
-            batch_td = batch.to_tensordict()
+            batch_td = padded_batch.to_tensordict()
             # step 2: convert from padding to nopadding
             batch_td = left_right_2_no_padding(batch_td)
             # step 3: add meta info
@@ -1288,6 +1333,7 @@ class RayPPOTrainer:
             else:
                 old_log_prob = tu.get_tensordict({"old_log_probs": log_probs.float(), "entropys": entropy.float()})
             old_log_prob = DataProto.from_tensordict(old_log_prob)
+            old_log_prob = unpad_dataproto(old_log_prob, pad_size)
         else:
             old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
             old_log_prob_mfu = 0
@@ -1300,12 +1346,20 @@ class RayPPOTrainer:
         batch.meta_info["temperature"] = rollout_config.temperature
         # update actor
         if self.use_legacy_worker_impl == "disable":
-            batch_td = batch.to_tensordict()
-            # step 2: convert from padding to no-padding
-            batch_td = left_right_2_no_padding(batch_td)
             calculate_entropy = self.config.actor_rollout_ref.actor.entropy_coeff != 0.0
             ppo_mini_batch_size = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
             ppo_mini_batch_size = ppo_mini_batch_size * self.config.actor_rollout_ref.rollout.n
+            # Stepwise rollout emits one row per trajectory turn, so the post-rollout
+            # batch is not necessarily train_batch_size * rollout.n. Pad to the actor
+            # mini-batch divisor as well as DP size; otherwise each rank can receive a
+            # local batch that is not divisible by its mini-batch size.
+            padded_batch, pad_size = self._pad_batch_to_dp_divisor(
+                batch, self.actor_rollout_wg, "actor", extra_divisor=ppo_mini_batch_size
+            )
+            self._mask_actor_padding_loss(padded_batch, pad_size)
+            batch_td = padded_batch.to_tensordict()
+            # step 2: convert from padding to no-padding
+            batch_td = left_right_2_no_padding(batch_td)
             ppo_epochs = self.config.actor_rollout_ref.actor.ppo_epochs
             seed = self.config.actor_rollout_ref.actor.data_loader_seed
             shuffle = self.config.actor_rollout_ref.actor.shuffle

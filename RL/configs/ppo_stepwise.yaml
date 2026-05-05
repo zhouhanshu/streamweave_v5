@@ -30,6 +30,7 @@ data:
       frames_per_step: 5
       max_frames: 0
       max_steps: 0
+      resolution: ${oc.env:STREAMWEAVE_IMAGE_RESOLUTION,768}
     dataset:
       dataset_root: ${oc.env:STREAMWEAVE_DATASET_ROOT,dataset}
       dataset_name: streamweave_rl
