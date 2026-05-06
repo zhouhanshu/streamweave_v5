@@ -6,7 +6,7 @@ This note records the recent StreamWeave RL changes made while debugging the slo
 
 All changes are limited to:
 
-- `RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_8gpu_lt120s_fused_chunked.sh`
+- `RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_4gpu_3_4_6_7_lt120s_fused_chunked.sh`
 - `RL/verl/verl/workers/actor/dp_actor.py`
 - `RL/verl/verl/workers/critic/dp_critic.py`
 
@@ -16,7 +16,7 @@ No files outside `streamweave_v5/RL` were changed for this step.
 
 File:
 
-- `RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_8gpu_lt120s_fused_chunked.sh`
+- `RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_4gpu_3_4_6_7_lt120s_fused_chunked.sh`
 
 This is a separate experiment script. The original `train_grpo_ovo_vllm_qwen3vl8b_full_8gpu_lt120s.sh` was not modified.
 
@@ -154,7 +154,7 @@ The next run should verify:
 
 Compared files:
 
-- StreamWeave current script: `RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_8gpu_lt120s_fused_chunked.sh`
+- StreamWeave current script: `RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_4gpu_3_4_6_7_lt120s_fused_chunked.sh`
 - VAGEN reference script: `/mmu_mllm_hdd/zhouhanshu/test/VAGEN/examples/train/sokoban/train_grpo_qwen3vl4b.sh`
 
 Important settings now aligned:

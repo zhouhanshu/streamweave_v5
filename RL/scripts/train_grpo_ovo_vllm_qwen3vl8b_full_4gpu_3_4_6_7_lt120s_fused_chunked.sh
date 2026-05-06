@@ -5,7 +5,7 @@ RL_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 V5_DIR="$(cd -- "${RL_DIR}/.." && pwd)"
 PYTHON_BIN="/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/python"
 
-RUN_NAME="grpo_ovo_qwen3vl8b_full_vllm_4gpu_3_4_6_7_lt120s_fused_chunked"
+RUN_NAME="grpo_ovo_qwen3vl8b_full_vllm_8gpu_lt120s_fused_chunked"
 RUN_STAMP="$(date -u +%Y%m%d.%H%M%S)"
 RUN_DIR="${RL_DIR}/outputs/debug/${RUN_NAME}_${RUN_STAMP}"
 LOG_FILE="${RUN_DIR}/train.log"
@@ -14,7 +14,7 @@ RAY_TMPDIR="/tmp/swray_$$"
 mkdir -p "${RUN_DIR}" "${RAY_TMPDIR}"
 
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
-export CUDA_VISIBLE_DEVICES=3,4,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export HYDRA_FULL_ERROR=1
 export PYTHONFAULTHANDLER=1
 export RAY_DEDUP_LOGS=0
@@ -147,7 +147,7 @@ cd "${RL_DIR}"
     trainer.experiment_name="${RUN_NAME}" \
     trainer.default_local_dir="${RUN_DIR}/checkpoints" \
     trainer.resume_mode=disable \
-    trainer.n_gpus_per_node=4 \
+    trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     ray_kwargs.ray_init.num_cpus=64 \
     +ray_kwargs.ray_init._temp_dir="${RAY_TMPDIR}" \
