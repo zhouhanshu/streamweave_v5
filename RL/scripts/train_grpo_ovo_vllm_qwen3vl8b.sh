@@ -6,7 +6,7 @@ V5_DIR="$(cd "${RL_DIR}/.." && pwd)"
 
 PYTHON_BIN="${PYTHON_BIN:-/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/python}"
 MODEL_PATH="${STREAMWEAVE_MODEL_PATH:-/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct}"
-DATASET_ROOT="${STREAMWEAVE_DATASET_ROOT:-/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset}"
+DATASET_ROOT="${STREAMWEAVE_DATASET_ROOT:-/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset}"
 TRAIN_FILE="${STREAMWEAVE_TRAIN_FILE:-${DATASET_ROOT}/ovo/ovo_rl.json}"
 VAL_FILE="${STREAMWEAVE_VAL_FILE:-${TRAIN_FILE}}"
 EXP_NAME="${STREAMWEAVE_EXPERIMENT_NAME:-grpo_ovo_qwen3vl8b_vllm}"

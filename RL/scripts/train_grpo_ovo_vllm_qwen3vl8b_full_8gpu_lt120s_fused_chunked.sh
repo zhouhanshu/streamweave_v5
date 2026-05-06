@@ -5,7 +5,7 @@ RL_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 V5_DIR="$(cd -- "${RL_DIR}/.." && pwd)"
 PYTHON_BIN="/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/python"
 
-RUN_NAME="grpo_ovo_qwen3vl8b_full_vllm_8gpu_lt120s"
+RUN_NAME="grpo_ovo_qwen3vl8b_full_vllm_8gpu_lt120s_fused_chunked"
 RUN_STAMP="$(date -u +%Y%m%d.%H%M%S)"
 RUN_DIR="${RL_DIR}/outputs/debug/${RUN_NAME}_${RUN_STAMP}"
 LOG_FILE="${RUN_DIR}/train.log"
@@ -71,7 +71,8 @@ cd "${RL_DIR}"
     --config-name=grpo_stepwise \
     data.train_files="/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json" \
     data.val_files="/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json" \
-    data.train_batch_size=4 \
+    data.train_batch_size=32 \
+    +data.gen_batch_size=4 \
     data.val_batch_size=4 \
     data.max_prompt_length=15360 \
     data.max_response_length=1024 \
@@ -94,15 +95,16 @@ cd "${RL_DIR}"
     data.streamweave.memory.window_seconds=120.0 \
     actor_rollout_ref.model.path="/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_v2_3077" \
     actor_rollout_ref.model.trust_remote_code=True \
-    actor_rollout_ref.model.use_remove_padding=False \
-    actor_rollout_ref.model.use_fused_kernels=False \
+    actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.model.use_fused_kernels=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
     actor_rollout_ref.actor.optim.lr=1e-6 \
-    actor_rollout_ref.actor.strategy=fsdp2 \
+    actor_rollout_ref.actor.strategy=fsdp \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=4 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
+    actor_rollout_ref.actor.use_dynamic_bsz=False \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=16384 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.kl_loss_coef=0.0 \
@@ -111,27 +113,28 @@ cd "${RL_DIR}"
     actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-    actor_rollout_ref.ref.strategy=fsdp2 \
+    actor_rollout_ref.ref.strategy=fsdp \
     actor_rollout_ref.ref.ulysses_sequence_parallel_size=1 \
     actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
+    actor_rollout_ref.ref.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=16384 \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.mode=async \
     actor_rollout_ref.rollout.n=8 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
+    actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=False \
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=16384 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.max_model_len=16384 \
     actor_rollout_ref.rollout.max_num_batched_tokens=16384 \
-    actor_rollout_ref.rollout.max_num_seqs=16 \
-    actor_rollout_ref.rollout.enable_chunked_prefill=False \
+    actor_rollout_ref.rollout.max_num_seqs=2048 \
+    actor_rollout_ref.rollout.enable_chunked_prefill=True \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.free_cache_engine=True \
     actor_rollout_ref.rollout.agent.num_workers=16 \
-    +actor_rollout_ref.rollout.engine_kwargs.vllm.disable_mm_preprocessor_cache=True \
     algorithm.adv_estimator=streamweave_stepwise_traj_grpo \
     algorithm.use_kl_in_reward=False \
     critic.enable=False \
@@ -140,7 +143,7 @@ cd "${RL_DIR}"
     trainer.stepwise_value_mask=True \
     trainer.balance_batch=False \
     trainer.val_before_train=False \
-    trainer.use_legacy_worker_impl=enable \
+    trainer.use_legacy_worker_impl=disable \
     trainer.critic_warmup=0 \
     trainer.logger='["console","swanlab"]' \
     trainer.project_name=streamweave_rl \
@@ -152,9 +155,9 @@ cd "${RL_DIR}"
     ray_kwargs.ray_init.num_cpus=64 \
     +ray_kwargs.ray_init._temp_dir="${RAY_TMPDIR}" \
     +ray_kwargs.ray_init.include_dashboard=False \
-    trainer.save_freq=100 \
+    trainer.save_freq=30 \
     trainer.test_freq=-1 \
-    trainer.total_epochs=1 \
+    trainer.total_epochs=2 \
     "$@" 2>&1 | tee "${LOG_FILE}"
 
 exit "${PIPESTATUS[0]}"

@@ -8,7 +8,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-MODEL="${1:-/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/models/qwen3vl8b_streamweave_sft_v2_3077_vllm}"
+MODEL="${1:-/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_v2_3077_vllm}"
 PYTHON="/mmu_mllm_hdd/zhouhanshu/conda/envs/simple/bin/python"
 VLLM="/mmu_mllm_hdd/zhouhanshu/conda/envs/vllm/bin/vllm"
 CONFIG="configs/batch_ovo_qwen3vl8b_finetuned_8gpu.yaml"

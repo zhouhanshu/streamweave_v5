@@ -12,7 +12,7 @@ from typing import Any
 JsonDict = dict[str, Any]
 
 
-DEFAULT_INPUT = Path("streamweave_v4/dataset/streamweave_data/annotations_qa_filter.jsonl")
+DEFAULT_INPUT = Path("dataset/streamweave_data/annotations_qa_filter.jsonl")
 
 
 def parse_args() -> argparse.Namespace:

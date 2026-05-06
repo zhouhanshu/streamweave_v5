@@ -1,6 +1,6 @@
 benchmark: ovo
 policy: streamweave
-result_output: outputs/ovo_qwen3vl8b_finetuned_1of8/results.jsonl
+result_output: outputs/ovo_qwen3vl8b_finetuned_selected_single/results.jsonl
 
 prompt:
   profile: eval
@@ -50,28 +50,36 @@ backend:
   retry_backoff_multiplier: 2.0
 
 trace:
-  output_root: outputs/ovo_qwen3vl8b_finetuned_1of8/traces
+  output_root: outputs/ovo_qwen3vl8b_finetuned_selected_single/traces
   experiment_name: ""
   write_jsonl: true
 
 benchmark_args:
   anno_path: /mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/OVO-Bench/data/ovo_bench_1of8_stratified.json
   video_dir: /mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/chunked_videos
-  sample_ids: []
+  sample_ids:
+    - 1520
+    - 1603
+    - 1578
+    - 1635
+    - 325
+    - 422
+    - 462
+    - 595
+    - 740
+    - 869
+    - 901
+    - 957
+    - 1038
+    - 1136
+    - 1221
   task: ""
   limit: 0
 
 batch:
-  workers: 32
+  workers: 1
   endpoints:
     - http://127.0.0.1:8000/v1
-    - http://127.0.0.1:8001/v1
-    - http://127.0.0.1:8002/v1
-    - http://127.0.0.1:8003/v1
-    - http://127.0.0.1:8004/v1
-    - http://127.0.0.1:8005/v1
-    - http://127.0.0.1:8006/v1
-    - http://127.0.0.1:8007/v1
   limit: 0
-  output: outputs/ovo_qwen3vl8b_finetuned_1of8/results.jsonl
-  worker_log_dir: outputs/ovo_qwen3vl8b_finetuned_1of8/worker_logs
+  output: outputs/ovo_qwen3vl8b_finetuned_selected_single/results.jsonl
+  worker_log_dir: outputs/ovo_qwen3vl8b_finetuned_selected_single/worker_logs

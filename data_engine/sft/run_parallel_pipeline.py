@@ -38,10 +38,10 @@ from data_engine.sft.sample_sources import load_sample_source, source_input_path
 
 
 DEFAULT_INPUT = Path(
-    "/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/streamweave_data/annotations_qa_filter_final.jsonl"
+    "/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/streamweave_data/annotations_qa_filter_final.jsonl"
 )
 DEFAULT_RAW_DATA_ROOT = Path(
-    "/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/streamweave_data"
+    "/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/streamweave_data"
 )
 COMPLETED_STATUSES = {"accepted", "failed", "error"}
 
