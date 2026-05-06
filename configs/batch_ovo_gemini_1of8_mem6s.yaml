@@ -1,6 +1,6 @@
 benchmark: ovo
 policy: streamweave
-result_output: outputs/ovo_gemini_teacher_eval_error_cases_single/results.jsonl
+result_output: outputs/ovo_gemini_1of8_mem6s/results.jsonl
 
 prompt:
   profile: teacher_eval
@@ -17,7 +17,7 @@ synthesis:
   max_attempts: 3
 
 memory:
-  window_seconds: 120.0
+  window_seconds: 6.0
 
 runtime:
   sample_fps: 1.0
@@ -65,30 +65,20 @@ backend:
     - "503"
 
 trace:
-  output_root: outputs/ovo_gemini_teacher_eval_error_cases_single/traces
+  output_root: outputs/ovo_gemini_1of8_mem6s/traces
   experiment_name: ""
   write_jsonl: true
 
 benchmark_args:
   anno_path: /mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/OVO-Bench/data/ovo_bench_1of8_stratified.json
   video_dir: /mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/chunked_videos
-  sample_ids:
-    - 494
-    - 502
-    - 869
-    - 1136
-    - 1496
-    - 1512
-    - 1520
-    - 1578
-    - 1603
-    - 1635
+  sample_ids: []
   task: ""
   limit: 0
 
 batch:
-  workers: 1
-  endpoints: []
+  workers: 32
   limit: 0
-  output: outputs/ovo_gemini_teacher_eval_error_cases_single/results.jsonl
-  worker_log_dir: outputs/ovo_gemini_teacher_eval_error_cases_single/worker_logs
+  output: outputs/ovo_gemini_1of8_mem6s/results.jsonl
+  worker_log_dir: outputs/ovo_gemini_1of8_mem6s/worker_logs
+  endpoints: []
