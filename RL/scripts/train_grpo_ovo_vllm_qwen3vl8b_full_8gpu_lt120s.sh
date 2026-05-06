@@ -6,10 +6,12 @@ V5_DIR="$(cd -- "${RL_DIR}/.." && pwd)"
 PYTHON_BIN="/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/python"
 
 RUN_NAME="grpo_ovo_qwen3vl8b_full_vllm_8gpu_lt120s"
-RUN_DIR="${RL_DIR}/outputs/debug/${RUN_NAME}_$(date -u +%Y%m%d.%H%M%S)"
+RUN_STAMP="$(date -u +%Y%m%d.%H%M%S)"
+RUN_DIR="${RL_DIR}/outputs/debug/${RUN_NAME}_${RUN_STAMP}"
 LOG_FILE="${RUN_DIR}/train.log"
+RAY_TMPDIR="/tmp/swray_$$"
 
-mkdir -p "${RUN_DIR}"
+mkdir -p "${RUN_DIR}" "${RAY_TMPDIR}"
 
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
@@ -17,6 +19,7 @@ export HYDRA_FULL_ERROR=1
 export PYTHONFAULTHANDLER=1
 export RAY_DEDUP_LOGS=0
 export RAY_ENABLE_UV_RUN_RUNTIME_ENV=0
+export RAY_TMPDIR="${RAY_TMPDIR}"
 export TOKENIZERS_PARALLELISM=false
 export STREAMWEAVE_RL_DIR="${RL_DIR}"
 export STREAMWEAVE_MODEL_PATH="/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_v2_3077"
@@ -46,7 +49,10 @@ dump_debug_artifacts() {
         nvidia-smi > "${RUN_DIR}/nvidia_smi.txt" 2>&1
     fi
 
-    if [ -d /tmp/ray/session_latest/logs ]; then
+    if [ -d "${RAY_TMPDIR}/session_latest/logs" ]; then
+        mkdir -p "${RUN_DIR}/ray_logs"
+        cp -a "${RAY_TMPDIR}/session_latest/logs/." "${RUN_DIR}/ray_logs/"
+    elif [ -d /tmp/ray/session_latest/logs ]; then
         mkdir -p "${RUN_DIR}/ray_logs"
         cp -a /tmp/ray/session_latest/logs/. "${RUN_DIR}/ray_logs/"
     fi
@@ -58,6 +64,8 @@ echo "Debug artifacts will be saved to ${RUN_DIR}"
 
 cd "${RL_DIR}"
 
+"${PYTHON_BIN%/python}/ray" stop --force >/dev/null 2>&1 || true
+
 "${PYTHON_BIN}" -m verl.trainer.main_ppo \
     --config-path="${RL_DIR}/configs" \
     --config-name=grpo_stepwise \
@@ -65,8 +73,8 @@ cd "${RL_DIR}"
     data.val_files="/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/ovo/ovo_rl_lt120s.json" \
     data.train_batch_size=4 \
     data.val_batch_size=4 \
-    data.max_prompt_length=32256 \
-    data.max_response_length=512 \
+    data.max_prompt_length=15360 \
+    data.max_response_length=1024 \
     data.return_raw_chat=True \
     data.return_multi_modal_inputs=False \
     data.filter_overlong_prompts=False \
@@ -79,6 +87,8 @@ cd "${RL_DIR}"
     data.streamweave.runtime.max_frames=0 \
     data.streamweave.runtime.max_steps=0 \
     data.streamweave.runtime.resolution=512 \
+    data.streamweave.reward.w_format=0.5 \
+    data.streamweave.reward.w_success=0.5 \
     data.streamweave.dataset.dataset_root="/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset" \
     data.streamweave.dataset.dataset_name=ovo \
     data.streamweave.memory.window_seconds=120.0 \
@@ -93,29 +103,29 @@ cd "${RL_DIR}"
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \
     actor_rollout_ref.actor.ppo_mini_batch_size=4 \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=2 \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768 \
-    actor_rollout_ref.actor.use_kl_loss=True \
-    actor_rollout_ref.actor.kl_loss_coef=0.001 \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=16384 \
+    actor_rollout_ref.actor.use_kl_loss=False \
+    actor_rollout_ref.actor.kl_loss_coef=0.0 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=False \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+    actor_rollout_ref.actor.fsdp_config.param_offload=True \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.ref.strategy=fsdp2 \
     actor_rollout_ref.ref.ulysses_sequence_parallel_size=1 \
     actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
-    actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=32768 \
-    actor_rollout_ref.ref.fsdp_config.param_offload=False \
+    actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=16384 \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.mode=async \
     actor_rollout_ref.rollout.n=8 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
-    actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=32768 \
+    actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=16384 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
-    actor_rollout_ref.rollout.max_model_len=32768 \
-    actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
+    actor_rollout_ref.rollout.max_model_len=16384 \
+    actor_rollout_ref.rollout.max_num_batched_tokens=16384 \
     actor_rollout_ref.rollout.max_num_seqs=16 \
     actor_rollout_ref.rollout.enable_chunked_prefill=False \
     actor_rollout_ref.rollout.enforce_eager=False \
@@ -130,7 +140,7 @@ cd "${RL_DIR}"
     trainer.stepwise_value_mask=True \
     trainer.balance_batch=False \
     trainer.val_before_train=False \
-    trainer.use_legacy_worker_impl=disable \
+    trainer.use_legacy_worker_impl=enable \
     trainer.critic_warmup=0 \
     trainer.logger='["console","swanlab"]' \
     trainer.project_name=streamweave_rl \
@@ -139,6 +149,9 @@ cd "${RL_DIR}"
     trainer.resume_mode=disable \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
+    ray_kwargs.ray_init.num_cpus=64 \
+    +ray_kwargs.ray_init._temp_dir="${RAY_TMPDIR}" \
+    +ray_kwargs.ray_init.include_dashboard=False \
     trainer.save_freq=100 \
     trainer.test_freq=-1 \
     trainer.total_epochs=1 \

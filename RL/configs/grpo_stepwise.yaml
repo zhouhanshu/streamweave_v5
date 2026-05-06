@@ -45,8 +45,8 @@ data:
       enable_timing_reward: false
       enable_open_tail_reward: false
     reward:
-      w_format: 0.2
-      w_success: 0.8
+      w_format: 0.5
+      w_success: 0.5
       w_step: 0.0
       format_mode: valid
       success_mode: dataset

@@ -84,6 +84,71 @@ def _select_by_indices(values, indices: Optional[np.ndarray]):
     return [values[int(idx)] for idx in indices]
 
 
+def _float_metric_array(values: Any) -> np.ndarray:
+    arr = np.asarray(values, dtype=object).reshape(-1)
+    out = []
+    for value in arr:
+        if value is None:
+            continue
+        try:
+            out.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    if not out:
+        return np.asarray([], dtype=np.float32)
+    numeric = np.asarray(out, dtype=np.float32)
+    return numeric[np.isfinite(numeric)]
+
+
+def _first_trajectory_indices(non_tensor_batch: dict[str, Any], length: int) -> Optional[np.ndarray]:
+    if "group_idx" not in non_tensor_batch or "traj_idx" not in non_tensor_batch:
+        return None
+    groups = np.asarray(non_tensor_batch["group_idx"], dtype=object).reshape(-1)
+    trajs = np.asarray(non_tensor_batch["traj_idx"], dtype=object).reshape(-1)
+    if len(groups) != length or len(trajs) != length:
+        return None
+
+    seen = set()
+    first_indices = []
+    for idx, (group, traj) in enumerate(zip(groups, trajs, strict=True)):
+        key = (str(group), str(traj))
+        if key in seen:
+            continue
+        seen.add(key)
+        first_indices.append(idx)
+    return np.asarray(first_indices, dtype=np.int64)
+
+
+def _add_metric_stats(metrics: dict[str, Any], prefix: str, values: Any) -> None:
+    arr = _float_metric_array(values)
+    if arr.size == 0:
+        return
+    metrics[f"{prefix}/mean"] = float(np.mean(arr))
+    metrics[f"{prefix}/max"] = float(np.max(arr))
+    metrics[f"{prefix}/min"] = float(np.min(arr))
+    metrics[f"{prefix}/std"] = float(np.std(arr))
+
+
+def _compute_streamweave_stepwise_metrics(batch: DataProto) -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+    non_tensor_batch = batch.non_tensor_batch
+
+    for key in ("trajectory_score", "success_score"):
+        if key not in non_tensor_batch:
+            continue
+        values = np.asarray(non_tensor_batch[key], dtype=object).reshape(-1)
+        indices = _first_trajectory_indices(non_tensor_batch, len(values))
+        _add_metric_stats(metrics, f"streamweave/{key}", _select_array(values, indices))
+        if indices is not None:
+            metrics["streamweave/num_trajectories"] = int(len(indices))
+
+    for key in ("format_score", "step_score", "turn_reward"):
+        if key in non_tensor_batch:
+            _add_metric_stats(metrics, f"streamweave/{key}", non_tensor_batch[key])
+
+    return metrics
+
+
 def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, kl_penalty="kl"):
     """Apply KL penalty to the token-level rewards.
 
@@ -1773,6 +1838,8 @@ class RayPPOTrainer:
                 )
                 # collect metrics
                 metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
+                if self._stepwise_rollout_enabled():
+                    metrics.update(_compute_streamweave_stepwise_metrics(batch))
                 # GDPO per-component reward metrics
                 gdpo_reward_keys = self.config.algorithm.get("gdpo_reward_keys", None)
                 if gdpo_reward_keys and self.config.algorithm.adv_estimator in ("gdpo", AdvantageEstimator.GDPO):

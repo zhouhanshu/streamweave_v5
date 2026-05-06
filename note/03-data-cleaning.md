@@ -1,37 +1,37 @@
 # 第三部分：数据清洗
 
-- 状态：待开始，已完成第一版粗过滤
-- 目标：
-  - 保证数据可解析、无未来泄漏、无答案偷渡，并满足时序一致性
-- 清洗规则：
-  - parser 必须可无歧义解析
-  - `bridge` 不得泄漏未来信息
-  - `note/bridge` 不得直接写最终答案
-  - 回答时间必须发生在证据出现之后
-  - 去重，避免重复轨迹污染训练
-- 过滤情况：
-  - 已对 `streamweave_data/annotations.jsonl` 做第一版标注过滤
-  - 保留条件：`30 <= duration <= 300`，`0.10 <= key_frame_ratio <= 0.40`
-  - 输出：`exp2/data/streamweave_data/annotations_filtered_30s300s_key10to40.jsonl`
-  - 保留：`12029 / 14001`
-  - 这一步只过滤视频/关键帧池，不等于最终 QA 清洗
-- 清洗结果：
-  - 待执行
-- 风险/问题：
-  - 未来泄漏和答案偷渡是最高优先级问题
-  - 仅靠字符串规则可能不够，需要后续加入语义校验
-- 下一步：
-  - 先实现针对过滤后 jsonl 的视频/关键帧 validator：
-    - `video_frame/{video_id}` 存在
-    - `frame_count` 与抽帧文件数一致或误差可解释
-    - `key_frame_ids` 全部在 `[0, frame_count)` 内
-    - `len(key_frame_scores) == frame_count`
-    - `key_frame_ratio` 与 `key_frame_count / frame_count` 一致
-  - 再实现 `VideoXum-StreamQA` 的 QA validator：
-    - `evidence_only_pass`
-    - `prefix_before_query_unanswerable`，主要用于 forward
-    - `prefix_at_answer_pass`
-    - `text_only_bias`
-    - `summary_only_bias`
-    - 时间泄漏检查：问题不能暴露绝对时间、frame id 或关键帧 id
-  - QA 验证通过后，再设计 V3 teacher trace 和 SFT step 的 parser 检查
+## 归档状态
+
+本文件保留早期 VideoXum/ActivityNet 数据清洗结论。当前 V5 GRPO 使用 OVO RL 数据，数据清洗不是当前阻塞项。
+
+## 已完成的历史过滤
+
+早期视频/关键帧池：
+
+```text
+exp2/data/streamweave_data/annotations_filtered_30s300s_key10to40.jsonl
+```
+
+过滤条件：
+
+- `30 <= duration <= 300`
+- `0.10 <= key_frame_ratio <= 0.40`
+
+结果：
+
+- 原始：`14001`
+- 保留：`12029`
+- 该文件只表示视频/关键帧池，不是 QA/SFT/RL 训练入口。
+
+## 后续若重启数据清洗
+
+优先检查：
+
+- 视频帧目录存在。
+- `frame_count` 与抽帧文件数一致或误差可解释。
+- `key_frame_ids` 全部在 `[0, frame_count)` 内。
+- `len(key_frame_scores) == frame_count`。
+- `key_frame_ratio == key_frame_count / frame_count`。
+- QA 不暴露未来信息、绝对时间、frame id 或答案。
+
+当前不继续展开旧 VideoXum-StreamQA 清洗计划。

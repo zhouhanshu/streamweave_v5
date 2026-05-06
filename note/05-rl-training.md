@@ -1,90 +1,86 @@
 # 第五部分：RL 训练
 
-- 状态：未开始；当前先完成 V4 SFT 数据合成、第一次 SFT 和评测，随后开始搭建 RL 框架
-- 目标：用 GRPO 联合优化格式正确性、回答正确性、时机选择与视觉保留成本
-- 初始化模型：第一轮 SFT 模型冷启动，后续再决定是否加入 RAFT
-- 训练数据：优先使用与 SFT 不重叠的新数据集或 heldout QA，避免直接在训练集上做 RL
+## 当前状态
 
-## Reward 设计
+- 状态：GRPO stepwise 链路已经跑通，但最近一次 run 非正常中断。
+- 代码目录：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/RL`
+- 当前脚本：`RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_8gpu_lt120s.sh`
+- 训练链路：`vLLM rollout + Ray + verl_0425 + StreamWeave stepwise env`
+- 当前数据：`/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/ovo/ovo_rl_lt120s.json`
+- 数据规模：`293` 条 `<120s` 单 query OVO RL 样本。
+- 当前模型起点：`/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_v2_3077`
 
-### 总公式
+## 最近一次 run
 
-```
-R_traj =
-  gate_format * (
-      w_time  * mean_t(R_time_valid_t)
-    + w_eta   * mean_t(R_eta_t)
-    + w_ans   * R_answer_correct
-    + w_mem   * mean_t(R_memory_t)
-  )
-```
+- run 目录：`RL/outputs/debug/grpo_ovo_qwen3vl8b_full_vllm_8gpu_lt120s_20260505.163625`
+- 进度：`39/73`，约 `53%`
+- elapsed：`10:26:12`
+- 日志最后更新时间：北京时间 `2026-05-06 11:06:52`
+- 后续检查时核心进程均已消失：`TaskRunner / AgentLoopWorker / WorkerDict / vLLMHttpServer`
+- 目录内没有 `exit_code.txt`，没有 checkpoint。
 
-### 各项说明
+判断：本次不像正常完成，更像外部中断、进程被杀或 shell 任务异常退出。
 
-**`gate_format`（硬约束）**
-- 任意 step 无法解析或缺少必要 XML 字段，整条 rollout 记 0 分。
+## 当前观测
 
-**`R_time_valid_t`（0/1，step 级）**
-- 检查当前 step 所有时间约束：
-  - `note frame` 引用合法（属于当前 group）
-  - `note t` 与 frame 真实时间匹配
-  - `bridge` 绝对时间区间合法
-  - 普通 bridge 落在当前 step 范围内
-  - open-tail bridge 继承合法
+- 数据/rollout 链路没有明显错误：
+  - `response/aborted_ratio = 0.0`
+  - `prompt_length/clip_ratio = 0.0`
+  - `response_length/clip_ratio` 基本为 `0`
+  - `format_score` 基本在 `0.96 ~ 1.0`
+- reward 能产生有效信号：
+  - `streamweave/format_score/mean` 基本接近 `1`
+  - `streamweave/success_score/mean` 约 `0.09 ~ 0.87`
+  - `trajectory_score/mean` 约 `0.54 ~ 0.93`
+- 每 step 只有 `4 * 8 = 32` 条 trajectory，success 波动明显是预期现象。
 
-**`R_eta_t`（step 级，连续）**
-- 根据绝对时间戳 `eta_pred` 与 `eta_target` 的偏差计算：
-  - 尚未可答时：`eta_target = t*`
-  - 已可答并回答时：`eta_target = current_window_end`
-- 6s 以内不惩罚；超过 6s 后随偏差增大线性惩罚；预测方向与真值方向相反且偏差较大时加重惩罚。
+## 性能瓶颈
 
-**`R_answer_correct`（0/1，trajectory 级）**
-- 由 judge 判断最终答案与标准答案语义一致性。
-- 同一条 rollout 的所有 step 共享同一个值。
-- judge 只接收 question、reference answer 和 model answer，结果缓存。
+step 38 观测：
 
-**`R_memory_t`（step 级，连续）**
-- 核心项：在语义保真的前提下最小化 memory token 数量。
-
-```
-R_memory_t = w_sem * SemSim(frames_t, memory_t) - lambda_tok * TokenCount(memory_t)
+```text
+gen:          51s
+old_log_prob: 222s
+update_actor: 934s
+step total:   1212s
 ```
 
-- `SemSim(frames_t, memory_t)`：当前 step 原始图片序列与转换后图文序列（bridge + 有效 note）之间的语义相似度，取值 [0, 1]。打分器使用多模态模型（**待定**，初步考虑已有 MLLM 如 Qwen3-VL-32B-Instruct），输入原始帧图片和图文 memory，输出语义保真度评分。
-- `TokenCount(memory_t)`：当前 step memory 的 token 数量（bridge token + note token），归一化到 [0, 1]。
-- `lambda_tok`：token 惩罚系数，作为实验超参控制语义与压缩之间的 trade-off。
+当前主要瓶颈不在 vLLM 生成，而在训练侧，尤其 `old_log_prob` 和 `update_actor`。
 
-### GRPO 配置
+优先排查方向：
 
-- 每条 QA 采样 8 条完整 rollout，组内相对优化。
-- 加 KL 约束到 SFT+RAFT policy，防止格式和语言风格漂移。
-- step 级指标先聚合成 trajectory score，再在同一 QA 的 8 条 rollout 内归一化。
+- `use_remove_padding=False`
+- FSDP2 offload
+- 长多模态序列
+- stepwise 展开后的 token 量
+- actor micro batch / sequence balance
+- checkpoint 和日志写入频率
 
-## 关键指标
+## 配置问题
 
-- `parser_valid_rate`
-- `time_valid_rate`
-- `answer_accuracy`
-- `ETA MAE`
-- `note_rate`
-- `avg_bridge_length`
+- `save_freq=100`，但总 step 只有 `73`，所以中途不会保存 checkpoint。下一次应改成 `5` 或 `10`。
+- 当前脚本实际从 SFT checkpoint 开始 RL，而不是 base instruct。这个选择需要明确记录：
+  - SFT 起点：`/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_v2_3077`
+  - base instruct：`/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct`
 
-## 风险
+## Reward 当前口径
 
-- reward hacking：每轮训练后必须跑 heldout closed-loop eval，格式稳定性下降时先降学习率、增大 KL 或停止 RL。
-- 稀疏性正则过强导致关键信息丢失。
-- 稀疏性正则过弱退化为全保留。
+当前已经可工作的 reward 信号优先包括：
+
+- 格式分：XML/parser、字段完整性、stepwise 输出协议。
+- 成功分：最终 answer/trajectory 是否满足 OVO 任务。
+- trajectory 聚合：对同一 query 的多条 rollout 做组内优化。
+
+后续再逐步增强：
+
+- 时间约束：`eta` 合法性、早答/迟答惩罚。
+- memory 成本：note 数、bridge token、long bridge、open-tail bridge。
+- 语义保真：先做离线 evaluator，不要一开始塞进主训练阻塞链路。
 
 ## 下一步
 
-先完成当前 SFT 数据合成、第一次 SFT 和评测，再实现 `reward.py`、`rollout_env.py`、`collect_rl_rollouts.py` 和训练脚本。
-
-## 2026-05-02 当前衔接计划
-
-RL 暂时不是当前阻塞项，但需要按 V4 SFT 已经固定下来的协议提前对齐：
-
-- rollout env 必须复用 V4 的 XML parser、quality validator、FrameStore 和 production prompt。
-- reward 里格式分应该包含 bridge gap 完整性、note/frame 合法性、时间边界、open-tail 继承和 QA eta/answer 状态。
-- answer reward 需要和当前样本级 accepted 逻辑一致，避免把“是否回答”和“是否答对”混成同一个 step 级 retry 目标。
-- memory reward 第一版先统计 note 数、bridge token 数、long bridge 和 open-tail bridge，再考虑引入语义相似度 evaluator。
-- 训练前必须先有 SFT 模型作为格式稳定的初始化，否则 RL 很容易退化成格式错误采样。
+1. 修改 GRPO 脚本，把 `save_freq` 改成 `5` 或 `10`。
+2. 确认模型起点：SFT checkpoint 还是 base instruct。
+3. 重新跑 `<120s` OVO RL 子集，确保至少产出可恢复 checkpoint。
+4. 在 checkpoint 可恢复后，再优化 `old_log_prob/update_actor`。
+5. 跑完一个完整小实验后，做 OVO 小规模回评，而不是只看训练 reward。

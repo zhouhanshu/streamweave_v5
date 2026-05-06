@@ -2,207 +2,63 @@
 
 ## 当前关键结论
 
-- 当前主框架是 `exp2/streamweave_v4`，后续 SFT 数据合成、第一次训练、评测和 RL 框架都要优先对齐 V4 代码与 `data_engine/sft/README.md`。
-- `streamweave_v3` 文档仍作为历史设计参考，但当前可执行链路以 V4 为准。
-- V4 协议里 `note` 只保存视觉锚点，不保存文字；`bridge` 才保存文本。
-- `note` 必须使用成对标签 `<note t="..." frame="..."></note>`，自闭合 `<note .../>` 是非法格式。
-- V4 的 `qa_history` 是时间顺序日志，不再维护 active query 或一问一答配对。
-- V4 的 `eta` 是视频内绝对秒级时间戳，不是相对 delay；SFT QA 校验要求 eta 落在目标时间窗口内，不再要求严格等于窗口端点。
-- SFT 数据合成已经打通：teacher synthesis 用强提示和 retry 合成，训练导出用 production prompt。
-- teacher-only 信息不能污染训练数据：关键帧标注提示、retry feedback、few-shot、teacher context 都不能进入 `llamafactory_sharegpt.jsonl`。
-- 样本级 accepted 是硬门槛：只有整条样本所有 step 合法、且样本级答案正确时，才导出到 `sft_steps.jsonl` 和 ShareGPT。
-- failed/error 样本可以保存在 `samples/*.json` 和 `sample_manifest.jsonl` 里排查，但不能进入训练数据。
-- 当前多进程 SFT 合成必须使用动态任务队列；不要再用静态 offset 分片作为全量运行方案。
-- 断点续跑时不要带 `--overwrite`；带 `--overwrite` 会清掉当前输出目录的样本和队列状态。
-- `bridge` gap 完整性是硬约束：note 和窗口边界之间、相邻 note 之间必须有合法 bridge；open-tail bridge 继承也必须合法。
-- QA step-level retry 只检查 eta 和 answer 空/非空状态；answer 内容是否正确放到样本级 accepted 判定，避免 retry 直接暴露 GT 答案。
-- 主推理 `synthesis_raw_retry` 与 SFT retry 当前不完全等价：SFT retry 会额外传入 step/window/memory-tail 信息，主推理当前不传这些上下文。这个差异当前可接受，暂不作为阻塞问题。
-- `train_prompt_type=teacher_synthesis` 导出时会重建 teacher 风格 prompt，而不是复用合成时记录的原始 prompt；只有 `recorded` 才复用中间文件里保存的 prompt。这个设计是有意保留的，默认训练仍使用 `production` prompt。
-- 早期过滤版 `streamweave_data/annotations_filtered_30s300s_key10to40.jsonl` 不是 SFT 数据，只是 `VideoXum + ActivityNet_Captions` 的视频/关键帧池；当前 V4 SFT 使用 `annotations_qa_filter_final.jsonl`。
-- `VideoXum` 没有 QA 和 answer timestamp，因此必须先合成 `VideoXum-StreamQA`：
-  - `backward`
-  - `realtime`
-  - `forward`
-- 不要把 `vsum_onehot` 说成 QA evidence frame。它只是视频级、query-free 的视觉摘要帧标签。
-- `forward` QA 的核心过滤条件是：`0..t_query` prefix 不能答，`0..t_answer_start` 后必须能答。
-- 当前主线已经从 `Idea 验证` 转到 `V4 SFT 数据合成 / 首次 SFT 训练准备`。
-- 早期视频/关键帧池入口是：
-  - `exp2/data/streamweave_data/annotations_filtered_30s300s_key10to40.jsonl`
-  - 过滤后 `12029` 条样本。
-- `summary_filtered_30s300s_key10to40.json` 只用于看统计，不是训练入口。
-- `streamweave_data` 来自 `VideoXum` 标注和 `ActivityNet_Captions` 视频：
-  - ActivityNet 视频源是 3fps。
-  - 当前抽帧输出是 1fps。
-  - VideoXum 的 `vsum_onehot` 标注轴也是 1fps。
-- 当前 `key_frame_ids` 使用 0-based 编号，对应 `key_frame_scores` 下标和抽帧文件名 `{frame_id:06d}.jpg`。
-- 当前过滤数据基于 `threshold=0.3` 生成；如果重跑构造脚本，需要显式传 `--threshold 0.3` 才能复现当前版本。
-- 当前不做超分；先保留原抽帧分辨率，训练或推理时由 processor/dataloader 做 resize/pad。
-- 当前正式术语统一为 `note / bridge / silent / answer`，不再使用旧的 `think` 命名。
-- `StreamWeave` 的核心不是单纯压缩历史，而是显式区分“视觉不可替代证据”和“可被桥接文本取代的过渡”。
-- 当前场景不再限定为 `query-at-start`，而是允许用户在视频中的任意时间提出问题。
-- 数据构造阶段拆分 `state teacher` 和 `response teacher`，但最终学生模型仍然是统一策略。
-- 第一版以 `1s chunk` 为单位做决策，并维护一个 `active note` 作为后续 `bridge` 的参照锚点。
-- `v0` baseline 的工作空间应包含结构化 `chunk state`：`entities / attributes_or_states / relations / ocr / action`。
-- 当前必须先完成 `32B plain baseline`，再比较 `32B agent`，否则无法判断方法收益。
-- API 重写时只能替换接口层和调度层，不能改 prompt、切窗、打分、结果格式。
-- `Qwen3-VL-32B-Instruct plain` 的全量 baseline 已完成：
-  - `OVO Total 61.19`，高于 `SimpleStream / Qwen3-VL-8B / recent4` 的 `58.59`
-  - 结构上表现为 `Backward` 明显提升、`Realtime` 小幅下降、`Forward` 小幅提升
-  - 这说明更强基座首先补上的是历史/整合能力，但不自动保证实时感知类指标同步上升
-- 历史主实验代码目录曾切换到 `exp1/stream-weave_v2`：
-  - 旧的 `exp1/streamweave` 当前只保留作历史参考
-  - 新的实验进度不要再混记到旧目录调试记录里
-- `stream-weave_v2` 当前视为已整体解决上一版积累的 prompt 问题：
-  - 当前主阻塞从 prompt 重写转为 backend 切换和路径对齐
-  - 下一步重点是把 `v2` 接到本地部署模型并稳定 benchmark 路径
+- 当前主线已经切到 `exp3/streamweave_v5/RL`。
+- GRPO stepwise 训练链路已经跑通，当前问题是稳定跑完、保存 checkpoint 和优化训练侧性能。
+- 最近一次 GRPO run 到 `39/73` 后非正常中断，没有 checkpoint；这首先是实验配置和运行稳定性问题，不是“链路没跑通”。
+- `save_freq=100` 对总 step `73` 的 run 不合理，下一次必须改成 `5` 或 `10`。
+- 当前脚本从 SFT checkpoint `streamweave_sft_v2_3077` 初始化；如果目标是 base instruct，需要显式改模型路径并单独命名 run。
+- 当前性能瓶颈主要在 `old_log_prob` 和 `update_actor`，不是 vLLM 生成。
+- V4 第一次 SFT 在 OVO 1/8 上明显退化，不能默认当作更优 RL 起点。
+- V3 + Gemini 在 OVO full 上达到 `65.81`，证明方法上限存在，但 Forward/CRR 仍是核心短板。
 
-## 错误记录（避免再犯）
+## 协议硬约束
 
-- 本地 `vllm` 使用 `--reasoning-parser qwen3` 时，答案可能在 `message.reasoning`，不一定在 `message.content`。如果只读 `content`，结果文件会出现大量 `"None"`，分数会异常归零。
-- 本地模型接口统一使用 `openai` Python SDK，不再使用 `urllib.request` 手写请求。
-- 在 Codex 受限沙箱内，`localhost` 连通性判断可能失真；本地 `vllm` 是否真正收到请求，必须以外部环境下的实际 `HTTP 200` 为准。
-- `OVO` 全量在较高并发下容易触发视频解码资源错误。当前机器建议从 `--max_concurrency 4` 起跑，不稳就降到 `2`。
-- 预修复阶段产生的旧结果目录不能继续复用；若结果文件里出现大量 `response="None"`，该目录作废，重新开新目录跑。
-- `gemini-2.5-flash` 和 `gemini-2.5-pro` 不能共用同一套 thinking 参数：
-  - `flash` 可用 `thinking_budget=0`
-  - `pro` 不支持 `thinking_budget=0`
-  - 如果把 `flash` 的配置直接搬到 `pro`，请求会大量 `400 INVALID_ARGUMENT`
-- Gemini 跑 OVO 时，如果结果突然整片 `0.00%`，第一反应不能是“模型全错”：
-  - 先看 `results_incremental.jsonl` 是否充满 `error`
-  - 尤其检查是否是系统性参数错误、认证错误或配额错误
-- Gemini runner 当前默认应使用 `--thinking_budget auto`：
-  - `gemini-2.5-flash -> 0`
-  - `gemini-2.5-pro -> 安全非零 budget`
-  - 只有确认模型支持时，才手动覆盖
-- API 评测里“请求失败”和“答错”必须严格区分：
-  - 失败请求不能继续算作 benchmark 样本分数
-  - 失败请求不能写进 checkpoint 后就当作 `done`
-  - 如果全部请求失败，脚本必须直接报错，而不是打印一个看似合法的 `0 分` 总结
-- `stream-weave_v2` 当前默认走 OpenAI-compatible API：
-  - 不要把“API 版跑通”误记成“本地部署模型已接通”
-  - 在正式记录本地实验结果前，必须确认 backend 已切到本地服务
-- `stream-weave_v2` 的默认 benchmark 路径当前可能与工作区实际目录不完全一致：
-  - 正式跑分前先核对 `--anno-path / --chunked-dir`
-  - 不要因为默认路径凑巧存在或不存在，就误判代码逻辑是否正确
-- 不要继续把旧版 `exp1/streamweave` 的 prompt 细节直接外推到 `stream-weave_v2`：
-  - 两版代码已经分叉
-  - 旧版问题记录只保留作设计回顾，不再直接代表当前代码状态
-- 笔记和代码实现里不要再混用旧版叙事；若看到 `think`、`query-at-start` 等旧术语，需要先确认是否在引用旧方案。
-- `streamweave` 的 `MockBackend` 只能验 parser、trace 和目录结构，不能用于语义 debug。若轨迹里持续出现固定的 `screen / person / 27`，先检查是否误用了 `mock`。
-- `streamweave` 首帧输出 `bridge` 属于实现错误。第一版 replay 必须先建立初始 `note`，后续 `bridge` 才有参照。
-- `streamweave` 当前 `ChunkSignals` 只用了像素差、OCR 集合差和简单集合重叠，过于粗糙，不能代表真实的视觉锚点价值。
-- `streamweave` 当前 `note` 样例 `event=screen shows 27; cue=ocr; reason=visual-critical` 是错误示例。后续 `note` 必须围绕“当前帧与 query 的推理”来写，不能退化成无关的视觉标签。
-- 第一版选帧逻辑当前定为：
-  - `bridge candidate`
-  - `change_large=yes|no`
-  - `text_compressible=yes|no`
-  - `scene cut`
-  - 最终由加权 gate 决定 `note/bridge`
-- `change_large=yes|no` 当前只作为辅助记录，不直接进入第一版 gate 分数。
-- `ocr` 当前不再参与第一版选帧判据。
-- 当前已删除 `reconstruct prompt / reconstruction_error` 整条链路。
-- 当前状态决策代码已收进 `state_policy.py`，旧的 `bridge_policy / note_policy / reconstruction / state_gate` 已移除。
-- `PySceneDetect` 当前已安装在 `simple` 环境里：
-  - 已确认 `scenedetect 0.6.7.1`
-  - 后续如果 scene cut score 异常，再优先检查视频读取和调用路径，而不是先怀疑依赖缺失
-- `streamweave` 当前 trace 中的 `state_prompt_text` 字段命名有误，里面写入的是观察输出加状态输出，debug 时不要把它当成真实 prompt。
-- `streamweave` 修正后，trace 应同时记录 `observe_prompt_text / observe_raw_output / state_prompt_text / state_raw_output / response_prompt_text / response_raw_output`。如果缺这些字段，说明看到的是旧 trace。
-- `streamweave` 的样本 trace 目录重跑时必须清空，否则同一条样本的新旧轨迹会混在一起，debug 会直接失真。
-- `memory_trace.xml` 是后续讨论 memory 设计的主文件：
-  - 只看每一步最终输出到 memory 的内容
-  - `note` 以 `<note frame="...">...</note>` 保存
-  - `bridge` 以 `<bridge>...</bridge>` 保存
-  - 同时记录 `<query> / <response> / <answer> / <query_closed>`
-- `response` 现在允许模型输出 `query_closed=yes|no`：
-  - `yes` 时，后续 step 的 `active_query` 会被清空
-  - `no` 时，query 继续保留，允许后续再次回答
-- `OVO sample_id=1` 已确认当前版本能完整跑通并答对，但暴露出两个关键误差模式：
-  - 过早作答：在真正投放进 bowl 之前，就因为“拿到深色蔬菜/拿着 eggplant 靠近 bowl”而持续输出 `C`
-  - 颜色/类别漂移：在 eggplant 切片后段，模型会把当前物体误写成 `green vegetable`，导致 response 短暂掉回 `silent`
-- `OVO sample_id=1 step 100` 是一个明确的 hallucination case：
-  - 保存帧仍以 cutting board 上切 eggplant 为主
-  - 轨迹却写成 “being transferred into the bowl”
-  - 后续需要专门压制这种“动作完成态脑补”
-- 新版加权 gate 在 `OVO sample_id=1` 上已经明显收紧：
-  - `note_count=13`
-  - `bridge_count=231`
-  - 首次作答推迟到 `step 9`
-  - 只回答一次，随后 query 关闭
-- 但后段仍存在两个明显问题：
-  - `step 8` 这类“拿着 eggplant 但还未形成直接证据”的 chunk 仍会被升成 `note`
-  - `step 235+` 到结尾出现多次 `note`，是否过密需要逐帧核实，当前不能只靠数量下结论
-- 后段还存在类别漂移：
-  - `eggplant` 会被写成 `zucchini / green vegetables`
-  - 这会污染 `note` 语义，也会误导后续 state gate
-- `bridge` 目前是“部分有效，部分过强”：
-  - 中段连续切菜阶段，bridge 基本能承担增量连接作用
-  - 早期取菜阶段，bridge 会提前写入过强空间关系或动作完成态，间接诱发 response 抢答
-- `response prompt` 虽然已经写了“证据不足必须 silent、不能猜未来动作”，但实际还不够硬：
-  - `step 9` 仍在没有直接证据时回答 `C`
-  - 说明当前需要更强的 answer gate，而不能只靠自然语言约束
-- 当前 state-side prompt 还被完整 query 及选项污染：
-- `query` 现在已经拆成两层：
-  - `state-side` 只看题面与选项
-  - `response-side` 才附加最终作答格式要求
-- 拆分之后：
-  - `ASSESS_TASK / RECONSTRUCT_TASK` 不再直接输出 `C`
-  - 这条协议违例已经被消掉
-  - 当前剩下的抢答主要来自 response 自身门槛过低
-- prompt 示例里不允许出现当前样本、当前视频、当前 query 的定制化内容：
-  - 例如直接写 `eggplant / bowl / sink` 这类与当前样本绑定的示例
-  - 这是严重错误，会造成任务泄漏、过拟合和伪提升
-  - 后续所有 prompt 示例必须改成任务无关、数据无关的中性示例
-- prompt 重写时，先用中文讨论版本，再转英文写入代码。
-- `OBSERVE_TASK` 当前定稿要求：
-  - 解释每个标签写什么
-  - 示例统一用 `xx`
-  - 不允许夹带具体样本内容
-- `BRIDGE_TASK` 当前定稿要求：
-  - 只看当前帧、当前激活 note 帧、bridge 链
-  - bridge 的作用要明说：用文本描述当前帧相对已有 memory 的变化
-  - 只能写事实，不允许猜测、推理、意图或未来动作
-- `ASSESS / NOTE / RESPONSE` 的示例也必须是中性占位：
-  - 不允许出现具体答案、具体物体、具体场景
-  - 统一使用 `xx`
-- prompt 清理后，`OVO sample_id=1 --max-chunks 5` 的短 smoke 已不再前 `5` 个 chunk 内抢答；
-  但当前 `note` 触发仍偏积极，前 `5` 个 chunk 的 memory 序列为 `note -> bridge -> note -> bridge -> note`。
-- 当前已新增批量评测入口 `eval_ovo_batch.py`：
-  - 不再需要 `xargs`
-  - 直接一条命令吃一个 OVO 标注文件
-  - 已支持样本级并发 `--max-workers`
-  - `results.jsonl / errors.jsonl` 改成边跑边写
-  - 修掉了批量结果重复写入 `results.jsonl` 的问题
-- 当前问题归因需要分开看：
-  - `bridge` 写得过强、过早拼答案链：主要是 prompt 问题
-  - `response` 抢答：主要是 prompt 问题
-  - `ASSESS_TASK / RECONSTRUCT_TASK` 直接输出 `C`：是 prompt 输入设计和格式约束都不够硬
-  - 协议违例后系统还继续往下算：这是代码问题
-  - `note` 触发过早或过密：prompt 问题和 gate 规则/权重问题同时存在
-- `HLD` 当前低分的直接原因：
-  - 系统容易把“局部可见线索 + 常识”当成充分证据，错误输出具体选项
-  - 也会在证据不足时一路 `silent` 到结束，但 benchmark 需要显式选择 `Unable to answer`
-- `EPM` 当前中等偏低的直接原因：
-  - 早期空间锚点有时能抓到，但后续答案会漂移，最后被较晚的错误回答覆盖
-  - 多个相似房间、相似家具、相似镜子出现时，query 容易绑定到错误目标
-- 当前 `response` 侧看不到完整历史：
-  - 只看 `active_query`
-  - 只看最近 `4` 条 `note_history`
-  - 只看最近 `6` 条 `bridge_history`
-  - 只看当前 `chunk_state`
-  - 看不到全部历史帧，也看不到全部历史 `note / bridge`
-- 这条截断会直接影响：
-  - `EPM`：较早空间锚点和历史状态容易丢失
-  - `HLD`：难以完整判断“历史中是否真的没有证据”
-- `StreamWeave-v2 OVO 1/8` 最新完成快照：
-  - 正常完成样本 `113/170 = 66.47%`
-  - 若把 error 按 0 分计为 `113/205 = 55.12%`
-  - 与 `Qwen3-VL-32B-Instruct plain / SimpleStream recent4` 在同 `170` 个正常样本上完全持平，都是 `113/170`
-  - 结构上不是完全无效：`EPM / FPD / ACR` 有收益，但被 `ASI / HLD / STU / OJR / OCR` 退化抵消
-  - 当前 `35` 个 error 中，`14` 个是 context length 超过 `32768`，`21` 个是 forward 类任务 `CRR/SSR/REC` 的视频路径读取问题
-- `StreamWeave-v2` 的历史优化经验：
-  - v2 的 forward 类任务路径曾未正确支持；V3 adapter 已改成对 `REC/SSR/CRR` 使用 `{id}_{i}.mp4` 子视频。
-  - 仍需在 V3 中控制 memory budget，限制 note/bridge 数量和单条文本长度，避免 context length error。
-  - HLD 仍需要 `Unable to answer` 校准，证据和选项不能严格绑定时优先选 Unable。
-  - ASI/forward/realtime 都需要严格时间建模，`eta` 必须使用视频内绝对时间戳。
-  - bridge 仍必须保持事实性，避免把“看到相关物体”写成“动作已完成”或把常识位置写成确定证据。
-- `TimeChat-Online-139K` 第一波子集已经复制到 `exp2/data/timechat_10k`，但当前先不作为主训练数据。
+- 输出固定为：
+
+```xml
+<eta>...</eta>
+<answer>...</answer>
+<bridge t="...">...</bridge>
+<note t="..." frame="..."></note>
+```
+
+- `note` 只保存视觉锚点，不保存文字。
+- `bridge` 保存文本压缩和绝对时间区间。
+- `qa_history` 是时间顺序日志，不维护 active query 配对。
+- `eta` 是视频内绝对秒级时间戳，不是相对 delay。
+- `<note .../>` 自闭合格式非法，必须使用 `<note ...></note>`。
+- `bridge` gap 完整性是硬约束，包括窗口边界、相邻 note 和 open-tail 继承。
+
+## 数据口径
+
+- 早期 `annotations_filtered_30s300s_key10to40.jsonl` 只是 VideoXum/ActivityNet 的视频与关键帧池，不是 SFT 或 RL 训练入口。
+- V4 SFT 入口是 `annotations_qa_filter_final.jsonl`。
+- 当前 V5 RL 使用 OVO 单 query 数据：
+  - `ovo_rl.json`：约 `600` 条
+  - `ovo_rl_lt120s.json`：`293` 条
+- OVO forward 样本会展开成子视频/sample；处理时必须确认 `sample_id` 和 `video_id` 是否已经展开，避免重复展开。
+
+## 评测口径
+
+- `full`、`1/8`、`1/4` 不能直接横比。
+- `task macro` 和 `sample weighted` 必须分开写。
+- V3/V4/V5 的 adapter 和 prompt 不同，跨版本只能做趋势判断，不能当严格同口径结论。
+- Gemini/API 请求失败不能当作答错；需要区分 error 和 wrong。
+- 如果结果突然 `0.00%`，先检查系统性 error、参数错误、认证/配额和是否错误读取 response 字段。
+
+## 避坑
+
+- 本地 `vllm` 使用 `--reasoning-parser qwen3` 时，答案可能在 `message.reasoning`，不一定在 `message.content`。
+- Codex 沙箱里的 `localhost` 连通性判断可能失真；本地服务是否可用以外部实际 HTTP 响应为准。
+- OVO 全量高并发容易触发视频解码或 API 资源问题；不稳时先降并发。
+- Gemini Pro 不支持把 Flash 的 thinking 参数直接照搬；`thinking_budget=0` 可能导致大量 `400 INVALID_ARGUMENT`。
+- retryable API 错误要 sample-level 重跑，不能把失败请求写成 done 后继续统计。
+- 共享磁盘上控制 GPU 占用的 pid/log 文件必须按 hostname 隔离，否则两台机器会互相覆盖。
+
+## 当前下一步
+
+1. 改 GRPO `save_freq`。
+2. 明确 RL 初始化模型。
+3. 重跑 `<120s` OVO RL 子集并确保 checkpoint 可恢复。
+4. 优化 `old_log_prob/update_actor`。
+5. 用首个完整 RL checkpoint 做 OVO 小规模回评。

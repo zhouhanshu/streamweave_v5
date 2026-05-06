@@ -1,51 +1,28 @@
 # Note README
 
-本目录用于维护 `StreamWeave` 主实验笔记。默认入口文件是 `experiment-log.md`。
+本目录维护 `StreamWeave` 实验笔记。默认先读 `experiment-log.md`，其中只保留当前结论、关键里程碑和下一步，不再堆完整聊天过程。
 
 ## 读取顺序
 
-1. `experiment-log.md`
-2. `00-overview.md`
-3. 当前阶段文件：目前优先读 `data_engine/sft/README.md`、`数据合成.md`、`04-sft-training.md` 和 `08-commands-and-tools.md`
-4. `02-data-construction.md`
-5. `实验跑分.md`
-6. `06-evaluation.md`
-7. `07-key-points.md`
-8. `08-commands-and-tools.md`
+1. `experiment-log.md`：当前状态和关键里程碑。
+2. `00-overview.md`：项目目标、当前实验口径和主路径。
+3. `05-rl-training.md`：当前 V5 GRPO/RL 状态与下一步。
+4. `实验跑分.md`：正式跑分主表，只保留可比较结果。
+5. `07-key-points.md`：关键结论和避坑。
+6. `08-commands-and-tools.md`：当前仍建议使用的命令。
+7. `04-sft-training.md`、`02-data-construction.md`、`数据合成.md`：SFT/数据历史和已知问题。
+
+## 当前口径
+
+- 当前主线：`exp3/streamweave_v5/RL` 的 GRPO stepwise 训练。
+- 最新事实：GRPO 链路已经跑通，但最近一次 run 在 `39/73` 后非正常中断，没有 checkpoint。
+- 当前优先级：先修 checkpoint 保存频率，再优化 `old_log_prob` 和 `update_actor` 慢的问题。
+- 历史 V4 SFT 数据合成已经不再是当前阻塞项；第一次 SFT 回评显示退化，不能直接当作可靠结论。
 
 ## 更新原则
 
-- 只保留当前有效信息，避免把聊天过程原样堆进笔记。
-- 错误步骤不保留完整过程，只在 `07-key-points.md` 中写“避免再犯”的摘要。
-- 命令文档只保留当前推荐命令；旧命令只做一句废弃说明。
-- 用户给出新进展后，至少同步更新：
-  - `experiment-log.md`
-  - 对应阶段文件
-- 新的坑、异常、经验结论统一写入 `07-key-points.md`。
-
-## 目录说明
-
-- `00-overview.md`：实验目标、当前策略、总体路线
-- `01-idea-validation.md`：Idea 验证阶段历史记录
-- `02-data-construction.md`：当前数据构造阶段主记录
-- `03-data-cleaning.md`：数据过滤、校验与清洗计划
-- `04-sft-training.md`：SFT 数据入口与训练计划
-- `05-rl-training.md`：RL 训练计划
-- `06-evaluation.md`：评测入口、对比原则与后续回评规则
-- `实验跑分.md`：本地跑分、外部参考表、smoke/debug 记录和可比性口径
-- `07-key-points.md`：关键结论、避坑记录
-- `08-commands-and-tools.md`：当前有效命令、环境与入口
-- `09-streamweave-proposal-draft.md`：完整提案原文，作为长期参考，不参与日常压缩
-- `数据合成.md`：第二阶段数据下载、解压、抽帧、过滤的详细过程记录
-
-## 当前外部主文档
-
-- `../data_engine/sft/README.md`：StreamWeave V4 当前 SFT 数据合成链路、输出文件、验证逻辑和使用命令。
-- `../代码重构.md`：StreamWeave V4 重构背景与对齐事项。
-- 历史参考：`../../streamweave_v3/docs/实验计划.md`、`../../streamweave_v3/docs/数据构造.md`。
-
-## Git 说明
-
-- `note/` 是独立 Git 仓库。
-- Git 提交和推送默认由用户手动处理。
-- 除非用户明确要求，否则不要处理 `git commit` / `git push`。
+- 当前状态只写一处：`experiment-log.md`。
+- 详细跑分只写一处：`实验跑分.md`。
+- 命令只保留当前推荐命令；废弃命令不再展开。
+- 历史阶段保留结论，不保留重复执行过程。
+- 新的异常和经验结论同步写入 `07-key-points.md`。
