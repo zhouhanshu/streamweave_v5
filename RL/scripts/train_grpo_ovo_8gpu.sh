@@ -205,7 +205,7 @@ cd "${RL_DIR}"
     ray_kwargs.ray_init.num_cpus=64 \
     +ray_kwargs.ray_init._temp_dir="${RAY_TMPDIR}" \
     +ray_kwargs.ray_init.include_dashboard=False \
-    trainer.save_freq=30 \
+    trainer.save_freq=20 \
     trainer.test_freq=-1 \
     trainer.total_epochs=2 \
     "$@" 2>&1 | tee "${LOG_FILE}"
