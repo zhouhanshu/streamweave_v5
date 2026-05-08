@@ -1,0 +1,77 @@
+Memory:
+note 0.0-1.0: dataset/ovo/video/12/000000.jpg (image_evicted)
+bridge 1.0-9.0: The camera pans left, showing a living room area with a couch and scattered items. It passes a person in a red plaid shirt standing near a wall with a large, colorful graphic. The camera continues to pan left, briefly losing sight of the person, before panning back to the right.
+note 9.0-10.0: dataset/ovo/video/12/000009.jpg (image_evicted)
+bridge 10.0-41.0: The camera pans right, past the person in the red plaid shirt, and continues across the room. It tilts up to show the industrial-style ceiling with exposed pipes and light fixtures, then pans down across a row of large windows and a couch. The camera then pans back up, briefly capturing a man in sunglasses, before the view becomes blurry. It then continues to pan across the ceiling and down towards the large windows again, then pans back up to scan the ceiling once more before panning left, returning to the initial view of the living room area with the scattered items on the floor.
+note 41.0-42.0: dataset/ovo/video/12/000041.jpg (image_evicted)
+bridge 42.0-48.0: The camera continues panning left, past a dark couch, and focuses on a white desk with a lit lamp, a globe, and a painting on the wall above it. A man in a black shirt and sunglasses enters the frame from the left.
+note 48.0-49.0: dataset/ovo/video/12/000048.jpg (image_evicted)
+bridge 49.0-52.0: The man approaches the desk and begins to unroll a poster that says "We Can Do It!".
+note 52.0-53.0: dataset/ovo/video/12/000052.jpg (image_evicted)
+bridge 53.0-56.0: He continues to hold up the "We Can Do It!" poster, then begins to flip it over.
+note 56.0-57.0: dataset/ovo/video/12/000056.jpg (image_evicted)
+bridge 57.0-60.0: He reveals the other side of the poster, which shows Uncle Sam and the text "I WANT YOU", before flipping it back to the "We Can Do It!" side.
+bridge 60.0-66.0: The man holds the "We Can Do It!" poster against the wall, adjusting its position, then begins to flip it over again.
+note 66.0-67.0: dataset/ovo/video/12/000066.jpg (image_evicted)
+bridge 67.0-73.0: After briefly showing the "I WANT YOU" side, the camera quickly moves to the man's face, then pans away from him, back towards the desk with the lamp and globe. The camera continues to pan right across the desk.
+note 73.0-74.0: dataset/ovo/video/12/000073.jpg (image_evicted)
+bridge 74.0-86.0: The camera pans back to the left, showing the man in sunglasses briefly, then pans away from him and the desk, moving up the wall until the view is just of the wall and ceiling. It then pans back down, briefly showing the lamp and the painting on the wall again, before the man turns towards the camera.
+note 86.0-87.0: dataset/ovo/video/12/000086.jpg (image_evicted)
+bridge 87.0-93.0: The man, wearing sunglasses and a black shirt, faces the camera and appears to be speaking while pointing down at the globe on the desk.
+note 93.0-94.0: dataset/ovo/video/12/000093.jpg (image_evicted)
+bridge 94.0-128.0: The camera quickly pans away from the man and the desk, moving right across the large, open-plan room, showing couches, large windows, and an industrial-style ceiling. The pan continues, becoming blurry and capturing glimpses of the ceiling and windows again, before the man's head partially re-enters the frame from the right. The camera then continues to pan right along the large windows, showing the view of trees outside, before turning left and panning past a doorway. The man in sunglasses then re-enters the frame from the left and is briefly visible.
+note 128.0-129.0: dataset/ovo/video/12/000128.jpg (image_evicted)
+bridge 129.0-130.0: The camera pans quickly into a bedroom, showing a bed with white pillows and a lit lamp on a nightstand.
+note 130.0-131.0: dataset/ovo/video/12/000130.jpg (image_evicted)
+bridge 131.0-138.0: The camera continues to pan left, showing more of the bedroom, including a small sofa at the foot of the bed and a doorway. The man in the dark shirt, previously seen with the poster, enters the frame from the right and walks towards the nightstand by the bed.
+note 138.0-139.0: dataset/ovo/video/12/000138.jpg
+bridge 139.0-142.0: He bends over, reaches for the switch on the lamp, and turns it on.
+note 142.0-143.0: dataset/ovo/video/12/000142.jpg
+bridge 143.0-146.0: After the man moves out of frame, the camera lingers on the lamp and bed.
+note 146.0-147.0: dataset/ovo/video/12/000146.jpg
+bridge 147.0-150.0: A hand holding a small, white-framed picture enters the frame from the bottom left. The camera then pans slightly, and the hand moves out of view.
+bridge 150.0-152.0: The man with white hair and sunglasses re-enters the frame, leaning over the bed near the lamp.
+note 152.0-153.0: dataset/ovo/video/12/000152.jpg
+bridge 153.0-157.0: The man looks up from the bed, smiles at the camera, and then the camera begins to pan away from him.
+note 157.0-158.0: dataset/ovo/video/12/000157.jpg
+bridge 158.0-160.0: The camera pans away from the bedroom, moving back into the main living/office area, showing a coat rack and windows before the man's head briefly re-enters the frame.
+bridge 160.0-168.0: The camera continues to pan left, away from the man, passing a clothing rack and moving back into the main living area, showing the couches and large windows again. It then turns quickly left towards a doorway.
+note 168.0-169.0: dataset/ovo/video/12/000168.jpg
+bridge 169.0-172.0: The camera pans away from the doorway, moving back towards the main living area with the large windows, as the man in sunglasses turns to face the camera.
+note 172.0-173.0: dataset/ovo/video/12/000172.jpg
+bridge 173.0-178.0: The camera quickly pans away from the man, becoming blurry, and then focuses on a kitchen counter area with a coffee maker and other items by a large window. The man's hand enters the frame.
+note 178.0-179.0: dataset/ovo/video/12/000178.jpg
+bridge 179.0-181.0: The man, wearing sunglasses, opens the lid of the coffee maker and looks down at it.
+note 181.0-182.0: dataset/ovo/video/12/000181.jpg
+bridge 182.0-188.0: The camera pans away from the man, focusing on the window view, and then pans back to show him again by the coffee maker. He appears to place a coffee filter into the machine.
+note 188.0-189.0: dataset/ovo/video/12/000188.jpg
+bridge 189.0-192.0: The man moves out of the frame to the right, then re-enters, holding something in his hand.
+note 192.0-193.0: dataset/ovo/video/12/000192.jpg
+bridge 193.0-203.0: He continues to pour coffee grounds from a packet into the filter in the coffee maker, finishing the process.
+note 203.0-204.0: dataset/ovo/video/12/000203.jpg
+bridge 204.0-209.0: The man moves the now-empty packet out of the frame and then closes the lid of the coffee maker.
+note 209.0-210.0: dataset/ovo/video/12/000209.jpg
+bridge 210.0-212.0: The man closes the lid of the coffee maker and then picks up the glass coffee pot.
+note 212.0-213.0: dataset/ovo/video/12/000212.jpg
+bridge 213.0-218.0: He holds the coffee pot and begins pouring water into the coffee maker's reservoir.
+note 218.0-219.0: dataset/ovo/video/12/000218.jpg
+bridge 219.0-221.0: After pouring the water, he places the empty coffee pot back onto the machine's heating plate and reaches to press the power button.
+note 221.0-222.0: dataset/ovo/video/12/000221.jpg
+bridge 222.0-225.0: He presses the button to start the coffee maker and then moves his hand away.
+bridge 225.0-229.0: The man waits for a moment after starting the coffee maker, then turns and walks a few steps away from the counter.
+note 229.0-230.0: dataset/ovo/video/12/000229.jpg
+bridge 230.0-238.0: The man keeps the small refrigerator open, looking inside. The camera then begins to pan right, away from the man and the fridge.
+note 238.0-239.0: dataset/ovo/video/12/000238.jpg
+bridge 239.0-244.0: The camera continues to pan right, showing a workout area with a weight bench, a large mirror, and exercise balls, then pans back left towards the man and the open refrigerator.
+note 244.0-245.0: dataset/ovo/video/12/000244.jpg
+bridge 245.0-249.0: The man reaches into the open refrigerator and takes out a small, light-colored carton.
+note 249.0-250.0: dataset/ovo/video/12/000249.jpg
+bridge 250.0-252.0: The man closes the refrigerator door, holding the carton he just retrieved.
+qa 252.0 q: Question: where is my packet of milk?
+Options:
+A. at the top of refrigerator; B. inside the box; C. under the table; D. in the kitchen;
+
+Respond only with the letter corresponding to your chosen option (e.g., A, B, C).
+Do not include any additional text or explanation in your response.
+
+qa 252.0 a: D

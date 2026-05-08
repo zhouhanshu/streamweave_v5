@@ -1,0 +1,56 @@
+Memory:
+note 0.0-1.0: dataset/ovo/video/4/000000.jpg
+bridge 1.0-9.0: The person cracks the egg into the bowl, disposes of the shell, and then picks up chopsticks.
+note 9.0-10.0: dataset/ovo/video/4/000009.jpg
+bridge 10.0-12.0: The person puts down the chopsticks, turns, and walks to the refrigerator, opening the door.
+note 12.0-13.0: dataset/ovo/video/4/000012.jpg
+bridge 13.0-17.0: The person takes a second egg from the refrigerator, closes the door, and walks back to the counter.
+note 17.0-18.0: dataset/ovo/video/4/000017.jpg
+bridge 18.0-21.0: The person cracks the second egg into the bowl, disposes of the shell, and picks up chopsticks.
+note 21.0-22.0: dataset/ovo/video/4/000021.jpg
+bridge 22.0-28.0: The person finishes whisking the two eggs together in the bowl with the chopsticks and sets the chopsticks down.
+note 28.0-29.0: dataset/ovo/video/4/000028.jpg
+bridge 29.0-32.0: The person reaches over, turns on the stovetop burner, and then moves a small pot onto the lit burner.
+note 32.0-33.0: dataset/ovo/video/4/000032.jpg
+bridge 33.0-36.0: The person then reaches down to the right, out of frame, picks up a plastic bag, and then picks up the small pot from the lit burner.
+note 36.0-37.0: dataset/ovo/video/4/000036.jpg
+bridge 37.0-40.0: The person turns towards the sink with the pot, then turns back and places it back on the lit burner.
+bridge 40.0-44.0: The person lets go of the pot, leaving it on the lit burner, and then reaches towards the bottles on the counter.
+note 44.0-45.0: dataset/ovo/video/4/000044.jpg
+bridge 45.0-46.0: The person, after reaching for the bottles, changes their mind and instead reaches up towards the range hood.
+note 46.0-47.0: dataset/ovo/video/4/000046.jpg
+bridge 47.0-50.0: The person presses a button on the range hood, turning on the fan.
+note 50.0-51.0: dataset/ovo/video/4/000050.jpg
+bridge 51.0-58.0: The person presses the button again, likely turning the fan off, then lowers their arm and reaches down towards the floor to their right, under the counter.
+note 58.0-59.0: dataset/ovo/video/4/000058.jpg
+bridge 59.0-61.0: The person picks up a black pot with two handles and places it on the stovetop next to the small pot.
+note 61.0-62.0: dataset/ovo/video/4/000061.jpg
+bridge 62.0-68.0: After placing the pot, the person turns back to face the counter where the meat and eggs are, then turns back towards the stove.
+note 68.0-69.0: dataset/ovo/video/4/000068.jpg
+bridge 69.0-72.0: The person reaches down to the right and picks up a plastic bag.
+note 72.0-73.0: dataset/ovo/video/4/000072.jpg
+bridge 73.0-75.0: The person then places the small pot back onto the lit burner.
+bridge 75.0-81.0: The person reaches down to the right, possibly into a trash bin, then stands up and turns to walk away from the counter.
+note 81.0-82.0: dataset/ovo/video/4/000081.jpg
+bridge 82.0-88.0: The person turns back towards the stove, picks up the small pot from the lit burner, and moves it to the side.
+note 88.0-89.0: dataset/ovo/video/4/000088.jpg
+bridge 89.0-93.0: The person, facing the counter, pauses for a moment and then picks up the chopsticks that were resting on the bowl of whisked eggs.
+note 93.0-94.0: dataset/ovo/video/4/000093.jpg
+bridge 94.0-99.0: The person continues to whisk the eggs with the chopsticks.
+note 99.0-100.0: dataset/ovo/video/4/000099.jpg
+note 100.0-101.0: dataset/ovo/video/4/000100.jpg
+bridge 101.0-107.0: The person picks up a paper towel from a roll near the sink and holds it in their hands, folding it.
+note 107.0-108.0: dataset/ovo/video/4/000107.jpg
+bridge 108.0-114.0: The person places the plate with the paper towel on the counter to the left of the egg bowl, then reaches for the tray of meat.
+note 114.0-115.0: dataset/ovo/video/4/000114.jpg
+bridge 115.0-116.0: The person, after reaching for the meat, instead reaches to the left towards the paper towel roll.
+note 116.0-117.0: dataset/ovo/video/4/000116.jpg
+bridge 117.0-119.0: The person picks up the entire paper towel roll and tears off another sheet.
+qa 119.0 q: Question: Where was the paper towel before I picked it?
+Options:
+A. on the counter; B. on the cupboard; C. on the table; D. in the dish washer;
+
+Respond only with the letter corresponding to your chosen option (e.g., A, B, C).
+Do not include any additional text or explanation in your response.
+
+qa 119.0 a: A

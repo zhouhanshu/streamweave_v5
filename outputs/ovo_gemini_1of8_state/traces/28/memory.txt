@@ -1,0 +1,76 @@
+Memory:
+note 0.0-1.0: dataset/ovo/video/28/000000.jpg (image_evicted)
+bridge 1.0-33.0: The person continues to handle the cards. Another person's hand enters the frame from the right, picks up a card from the table, and then retracts. The main person continues to look down at the cards in their hands, occasionally speaking, and then places a card from their hand onto the table. They then continue to look at and shuffle the cards in their hands before reaching out to place another card.
+note 33.0-34.0: dataset/ovo/video/28/000033.jpg (image_evicted)
+bridge 34.0-36.0: The person places a card from their hand onto the table and continues to look at the cards in their hands.
+note 36.0-37.0: dataset/ovo/video/28/000036.jpg (image_evicted)
+bridge 37.0-45.0: The other person's hand, holding the Queen of Hearts, moves out of frame. The main person continues to look down at the cards in their hands, occasionally speaking.
+bridge 45.0-49.0: The person continues to look down at the cards in their hands, occasionally speaking.
+note 49.0-50.0: dataset/ovo/video/28/000049.jpg (image_evicted)
+bridge 50.0-52.0: The person continues to look down at the cards in their hands, occasionally speaking.
+note 52.0-53.0: dataset/ovo/video/28/000052.jpg (image_evicted)
+bridge 53.0-58.8: The person taps on the 8 of clubs on the table, retracts their hand, and continues to look at the cards in their hand. They then reach out and place a card from their hand onto the table.
+note 59.0-60.0: dataset/ovo/video/28/000059.jpg (image_evicted)
+bridge 59.8-60.0: After placing the Queen of Hearts, the person returns to looking at the cards remaining in their hand.
+bridge 60.0-63.0: After placing the Queen of Hearts, the person returns to looking at the cards remaining in their hand, then places another card on the table.
+note 63.0-64.0: dataset/ovo/video/28/000063.jpg (image_evicted)
+bridge 64.0-68.0: The other person's hand, which entered the frame at t=64.0, picks up a card from the deck and retracts. The main person then starts to get up from their chair.
+note 68.0-69.0: dataset/ovo/video/28/000068.jpg (image_evicted)
+bridge 69.0-71.0: After sitting back down, the person resumes looking at the cards in their hand. The other person's hand is visible near the bottom of the frame.
+note 71.0-72.0: dataset/ovo/video/28/000071.jpg (image_evicted)
+bridge 72.0-78.0: The person continues to use the vape pen while looking down at the cards in their hand.
+note 78.0-79.0: dataset/ovo/video/28/000078.jpg (image_evicted)
+bridge 79.0-83.0: The person picks up the deck of cards from the table and continues to look at the cards in their other hand.
+note 83.0-84.0: dataset/ovo/video/28/000083.jpg (image_evicted)
+bridge 84.0-93.0: The person adjusts their glasses, continues to look down at the cards in their hands, and then places a card from their hand onto the table.
+note 93.0-94.0: dataset/ovo/video/28/000093.jpg
+bridge 94.0-96.0: After tapping on the 3 of hearts, the person picks up the 8 of clubs from the table.
+note 96.0-97.0: dataset/ovo/video/28/000096.jpg
+bridge 97.0-109.0: The other person's hand enters the frame, picks up a card from the deck, and retracts. The main person then adjusts their glasses, continues to look at the cards in their hands, and then starts to get up from their chair.
+note 109.0-110.0: dataset/ovo/video/28/000109.jpg
+bridge 110.0-112.0: The person continues to look at the cards in their hand as the other person's hand enters the frame.
+note 112.0-113.0: dataset/ovo/video/28/000112.jpg
+bridge 113.0-117.5: After the other person places the Jack of Spades on the table, the main person continues to look at the cards in their hand before reaching for the deck on the table.
+note 117.0-118.0: dataset/ovo/video/28/000117.jpg
+bridge 118.5-126.0: The person picks up the deck of cards from the table, looks at the cards in their other hand, and then takes a card from the deck.
+note 126.0-127.0: dataset/ovo/video/28/000126.jpg
+bridge 127.0-131.0: After placing a card on the table, the person continues to look at the cards in their hand.
+note 131.0-132.0: dataset/ovo/video/28/000131.jpg
+bridge 132.0-139.0: The other person's hand enters the frame and places a card on the table. The main person then picks up the deck of cards from the table and uses a vape pen while looking at the cards in their hand.
+note 139.0-140.0: dataset/ovo/video/28/000139.jpg
+bridge 140.0-143.0: The person places the deck of cards back on the table and continues to look at the cards in their hand. The other person's hand, holding their cards, becomes visible at the bottom of the frame.
+note 143.0-144.0: dataset/ovo/video/28/000143.jpg
+bridge 144.0-147.0: The other person plays the King of Clubs on the table. The main person, after looking at their own cards, reaches for the deck.
+note 147.0-148.0: dataset/ovo/video/28/000147.jpg
+bridge 148.0-152.0: The person, holding the deck, looks at the cards in their other hand, then places the deck back on the table.
+note 152.0-153.0: dataset/ovo/video/28/000152.jpg
+bridge 153.0-158.0: The person picks up the Ace of Spades from the table and continues to look at the cards in their hand.
+note 158.0-159.0: dataset/ovo/video/28/000158.jpg
+bridge 159.0-161.0: The person, who had moved out of view, returns to their seat and reaches for a card on the table.
+note 161.0-162.0: dataset/ovo/video/28/000161.jpg
+bridge 162.0-166.0: After picking up the Queen of Hearts, the person continues to look at the cards in their hand while the camera view pans. They then place the Queen of Hearts on the table.
+note 166.0-167.0: dataset/ovo/video/28/000166.jpg
+bridge 167.0-171.0: The person retracts their hand, looks at the cards remaining in their hand, and then places the 8 of diamonds on the table.
+note 171.0-172.0: dataset/ovo/video/28/000171.jpg
+bridge 172.0-175.0: After placing the card, the person returns to looking at the cards in their hand as the camera view pans slightly. The other person's hand becomes visible, holding their cards.
+note 175.0-176.0: dataset/ovo/video/28/000175.jpg
+bridge 176.0-182.0: The person, holding the Queen of Hearts, continues to look at their cards. The other person plays a card on the table. The main person then places the deck of cards on the table.
+note 182.0-183.0: dataset/ovo/video/28/000182.jpg
+bridge 183.0-186.0: The person continues to use the vape pen while looking at the cards on the table.
+note 186.0-187.0: dataset/ovo/video/28/000186.jpg
+bridge 187.0-190.0: The other person's hand enters the frame and they play a card. The main person continues to use the vape pen and then reaches to pick up a card from the table.
+note 190.0-191.0: dataset/ovo/video/28/000190.jpg
+bridge 191.0-197.0: The person picks up the Queen of Hearts from the table while exhaling vapor, then places the vape pen down on the table and starts to gather the cards from the center of the table.
+note 197.0-198.0: dataset/ovo/video/28/000197.jpg
+bridge 198.0-207.5: The person continues to gather the cards from the table into a pile.
+note 207.0-208.0: dataset/ovo/video/28/000207.jpg
+bridge 208.5-210.0: The person picks up the deck of cards, places the collected cards on top of it, and then places the combined deck back on the table.
+bridge 210.0-214.0: The person finishes placing the deck on the table. The other person's hands come into view, picking up and opening a spiral notebook that was on the table.
+qa 214.0 q: Question: Where was the book after I carried it?
+Options:
+A. on the table; B. in the hand; C. on the phone; D. in the deck of cards;
+
+Respond only with the letter corresponding to your chosen option (e.g., A, B, C).
+Do not include any additional text or explanation in your response.
+
+qa 214.0 a: A

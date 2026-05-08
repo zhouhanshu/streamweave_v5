@@ -1,0 +1,61 @@
+Memory:
+note 0.0-1.0: dataset/ovo/video/36/000000.jpg (image_evicted)
+bridge 1.0-3.0: The person, wearing safety glasses, adjusts their grip on the long object they are holding.
+note 3.0-4.0: dataset/ovo/video/36/000003.jpg (image_evicted)
+bridge 4.0-13.0: The camera view is in first-person, showing hands sorting through a round, compartmentalized tray filled with various small metal parts, including washers and screws. The person picks up and examines a few small items.
+note 13.0-14.0: dataset/ovo/video/36/000013.jpg (image_evicted)
+bridge 14.0-16.0: The camera view, in third-person, shows the person holding a wooden object, which appears to be part of a piece of furniture, and raising it.
+note 16.0-17.0: dataset/ovo/video/36/000016.jpg (image_evicted)
+bridge 17.0-20.0: The person moves the wooden object closer to a large mirror, examining their reflection and the object's alignment.
+bridge 20.0-22.0: After examining the wooden object in the mirror, the person puts it down and the camera view shifts back to a first-person perspective, looking down at the floor.
+note 22.0-23.0: dataset/ovo/video/36/000022.jpg (image_evicted)
+bridge 23.0-26.0: The person's hands are visible over a round, compartmentalized tray, sorting through small hardware parts. They pick up a small plastic bag containing a washer and another small part, and begin to open it.
+note 26.0-27.0: dataset/ovo/video/36/000026.jpg (image_evicted)
+bridge 27.0-30.0: After opening the bag, the person takes out a metal hook-shaped part and holds it in their hands, examining it. The camera then pans away from the hardware trays.
+bridge 30.0-32.0: The camera pans up from the hardware trays, showing more of the messy floor, including a power drill and tangled wires.
+note 32.0-33.0: dataset/ovo/video/36/000032.jpg
+bridge 33.0-38.0: The camera continues to pan up, revealing the other person sitting on the floor and working on the wooden furniture part. The camera then begins to pan back down.
+note 38.0-39.0: dataset/ovo/video/36/000038.jpg
+bridge 39.0-40.0: The camera view continues to pan down towards the hardware on the floor, with the person's hands becoming visible again at the bottom of the frame.
+note 40.0-41.0: dataset/ovo/video/36/000040.jpg
+bridge 41.0-45.0: The person continues to work on the wooden furniture base, attaching a caster wheel to its underside.
+bridge 45.0-47.0: After attaching the caster wheel, the person looks up towards the camera.
+note 47.0-48.0: dataset/ovo/video/36/000047.jpg
+bridge 48.0-50.0: The person smiles at the camera while sitting next to the partially assembled furniture.
+bridge 50.0-52.0: The person continues to smile at the camera while sitting next to the furniture piece. The camera then pans away from the person, focusing on the messy floor with boxes of hardware and tools.
+note 52.0-53.0: dataset/ovo/video/36/000052.jpg
+bridge 53.0-62.0: The camera pans back up from the floor to show the person again, who has turned back to the wooden furniture base and is continuing to work on it, focusing on the area around a caster wheel.
+note 62.0-63.0: dataset/ovo/video/36/000062.jpg
+bridge 63.0-67.0: The camera view is in first-person, looking down at the messy floor. The person's hands come into view and open a small blue case containing screwdriver bits.
+note 67.0-68.0: dataset/ovo/video/36/000067.jpg
+bridge 68.0-72.0: The camera view shifts to a third-person perspective, showing the person sitting on the floor next to the wooden furniture base and reaching for a part.
+note 72.0-73.0: dataset/ovo/video/36/000072.jpg
+bridge 73.0-78.0: The camera moves erratically, showing blurry views of the floor and the person working, then moves through a doorway into a dimly lit hallway.
+note 78.0-79.0: dataset/ovo/video/36/000078.jpg
+bridge 79.0-85.0: The camera continues into what appears to be a utility room, showing a water heater and other equipment. The view then becomes erratic and dark, panning over a cluttered area before settling on a first-person view of a hand selecting a part from a black hardware case.
+bridge 85.0-93.0: The camera view is dark and shaky, panning across a cluttered floor with storage bins and then moving back into the hallway, showing the carpeted floor and walls before the view goes dark.
+note 93.0-94.0: dataset/ovo/video/36/000093.jpg
+bridge 94.0-97.0: The camera operator opens the red drawer of a multi-colored rolling tool chest and takes out a tool.
+note 97.0-98.0: dataset/ovo/video/36/000097.jpg
+bridge 98.0-101.0: The camera view becomes blurry and then refocuses on a desk with a blue cutting mat. The operator's hands are visible at the bottom of the frame, holding a tool. On the desk are various items, including a white skull mask, a paper-mache-like object, and electronic components.
+note 101.0-102.0: dataset/ovo/video/36/000101.jpg
+bridge 102.0-107.0: The operator picks up a red tool with a silver tip and examines it, then places it down and arranges a series of small, round, dark objects in a line on the cutting mat. They then pick up the objects and begin connecting them.
+note 107.0-108.0: dataset/ovo/video/36/000107.jpg
+bridge 108.0-118.0: The camera view becomes blurry and shaky as the operator moves away from the desk, through a doorway, and into a hallway. The view continues to be dark and unsteady, panning across the hallway and then re-entering the messy room, showing the bed and desk area.
+note 118.0-119.0: dataset/ovo/video/36/000118.jpg
+bridge 119.0-127.0: The camera view is shaky and pans down towards the floor, showing the messy area with hardware. The operator's hands are visible holding a blue case of screwdriver bits. The camera then pans up.
+note 127.0-128.0: dataset/ovo/video/36/000127.jpg
+bridge 128.0-138.0: The person, sitting on the floor, continues to work on the wooden furniture base. A close-up shows their hand resting on the dark metal frame attached to the wood.
+note 138.0-139.0: dataset/ovo/video/36/000138.jpg
+bridge 139.0-142.0: The person reaches for something out of frame, and the camera pans away from the furniture assembly. The view shifts to a first-person perspective, showing a hand picking up a metal part from a plastic bag.
+note 142.0-143.0: dataset/ovo/video/36/000142.jpg
+bridge 143.0-145.0: The hand brings the metal part to the furniture base and begins to screw it into a black pipe fitting.
+bridge 145.0-150.0: The two people continue to work together on the furniture assembly, with their hands close together on the wooden base.
+qa 150.0 q: Question: where did I put the piece of metal?
+Options:
+A. on the desk; B. at the left side foot of table; C. on the chair; D. on the floor;
+
+Respond only with the letter corresponding to your chosen option (e.g., A, B, C).
+Do not include any additional text or explanation in your response.
+
+qa 150.0 a: A

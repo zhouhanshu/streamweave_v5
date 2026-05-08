@@ -1,0 +1,87 @@
+Memory:
+note 0.0-1.0: dataset/ovo/video/20/000000.jpg (image_evicted)
+bridge 1.0-12.0: The person surveys the kitchen counter, opens a drawer below it, retrieves a metal bowl and a colander, places them in the sink, and then picks up a bag of potatoes from the counter.
+note 12.0-13.0: dataset/ovo/video/20/000012.jpg (image_evicted)
+bridge 13.0-17.0: The person continues to untwist the tie on the bag of potatoes.
+note 17.0-18.0: dataset/ovo/video/20/000017.jpg (image_evicted)
+bridge 18.0-22.0: After successfully opening the bag, the person takes out one potato and places it in the sink, then reaches back into the bag for another one.
+note 22.0-23.0: dataset/ovo/video/20/000022.jpg (image_evicted)
+bridge 23.0-27.0: The person takes the second potato out of the bag, places it in the colander in the sink with the first one, and turns on the faucet.
+note 27.0-28.0: dataset/ovo/video/20/000027.jpg (image_evicted)
+bridge 28.0-38.0: The person continues to wash the two potatoes in the colander under the running water, then turns off the faucet.
+note 38.0-39.0: dataset/ovo/video/20/000038.jpg (image_evicted)
+bridge 39.0-41.0: The person picks up the colander with the washed potatoes, transfers them into the metal bowl on the counter, and then picks up one potato and a knife.
+note 41.0-42.0: dataset/ovo/video/20/000041.jpg (image_evicted)
+bridge 42.0-88.0: The person holds the potato and knife, and continues to peel the potato over the cutting board, letting the peels fall onto it. After finishing, they adjust their grip to begin cutting.
+note 88.0-89.0: dataset/ovo/video/20/000088.jpg (image_evicted)
+bridge 89.0-96.0: The person continues to cut the peeled potato into smaller pieces on the cutting board, transferring some of the cut pieces into the metal bowl.
+note 96.0-97.0: dataset/ovo/video/20/000096.jpg (image_evicted)
+bridge 97.0-103.0: After placing the last cut pieces of the first potato into the bowl, the person picks up the bowl and the knife.
+note 103.0-104.0: dataset/ovo/video/20/000103.jpg (image_evicted)
+bridge 104.0-109.0: The person rinses the cut potatoes in the bowl under running water, then turns off the faucet and places the bowl on the counter. They then pick up the second potato and the knife.
+note 109.0-110.0: dataset/ovo/video/20/000109.jpg (image_evicted)
+bridge 110.0-129.0: The person continues to peel the second potato with the knife over the cutting board, letting the peels fall onto it. After finishing, they adjust their grip on the potato and knife.
+note 129.0-130.0: dataset/ovo/video/20/000129.jpg (image_evicted)
+bridge 130.0-144.0: The person continues to cut the second peeled potato into smaller pieces on the cutting board, finishing the task.
+note 144.0-145.0: dataset/ovo/video/20/000144.jpg (image_evicted)
+bridge 145.0-150.0: The person picks up the cut pieces of the second potato from the cutting board and adds them to the metal bowl containing the pieces of the first potato.
+bridge 150.0-160.0: The person gathers the potato peels from the cutting board with the knife and moves them towards the sink to dispose of them.
+note 160.0-161.0: dataset/ovo/video/20/000160.jpg (image_evicted)
+bridge 161.0-177.0: The person continues to peel the onion with the knife over the cutting board, letting the peels fall onto it, and finishes peeling it.
+note 177.0-178.0: dataset/ovo/video/20/000177.jpg (image_evicted)
+bridge 178.0-180.0: The person holds the peeled onion and knife, preparing to cut it.
+note 180.0-181.0: dataset/ovo/video/20/000180.jpg (image_evicted)
+bridge 181.0-185.0: The person continues to cut the peeled onion into smaller pieces on the cutting board.
+bridge 185.0-186.0: The person continues to cut the peeled onion into smaller pieces on the cutting board.
+note 186.0-187.0: dataset/ovo/video/20/000186.jpg
+bridge 187.0-190.0: After finishing cutting the onion, the person adds the pieces to the metal bowl containing the cut potatoes.
+note 190.0-191.0: dataset/ovo/video/20/000190.jpg
+bridge 191.0-196.0: The person picks up the bowl containing the cut potatoes and onion, moves it to the sink, and then picks up the colander.
+note 196.0-197.0: dataset/ovo/video/20/000196.jpg
+bridge 197.0-200.0: The person places the colander in the sink, turns on the faucet, and begins rinsing the cut vegetables in the bowl.
+bridge 200.0-207.0: The person continues to rinse the cut potatoes and onions in the bowl under the faucet, then pours the contents into the colander to drain the water.
+note 207.0-208.0: dataset/ovo/video/20/000207.jpg
+bridge 208.0-210.0: After turning off the faucet, the person transfers the drained vegetables from the colander back into the metal bowl.
+note 210.0-211.0: dataset/ovo/video/20/000210.jpg
+bridge 211.0-216.0: The person leaves the sink area, walks to a white cabinet, opens it, and takes a white plate from a stack on the bottom shelf.
+note 216.0-217.0: dataset/ovo/video/20/000216.jpg
+bridge 217.0-222.0: The person closes the cabinet door, walks back to the sink area holding the plate, places it on the counter, and then pours the cut vegetables from the metal bowl onto the plate.
+note 222.0-223.0: dataset/ovo/video/20/000222.jpg
+bridge 223.0-227.0: The person turns towards the microwave, picks up a box of curry roux from the counter, and returns to the main work area.
+note 227.0-228.0: dataset/ovo/video/20/000227.jpg
+bridge 228.0-230.0: The person covers the plate of vegetables with plastic wrap, then turns back to the microwave and opens its door.
+bridge 230.0-232.0: The person picks up the plate of plastic-wrapped vegetables and walks towards the microwave.
+note 232.0-233.0: dataset/ovo/video/20/000232.jpg
+bridge 233.0-235.0: The person places the plate inside the microwave, closes the door, and presses a button to start it.
+bridge 235.0-237.0: After starting the microwave, the person turns back towards the main counter.
+note 237.0-238.0: dataset/ovo/video/20/000237.jpg
+bridge 238.0-245.0: The person uses the knife to gather the potato and onion peels on the cutting board, picks them up, disposes of them in the sink, and then returns to the cutting board.
+bridge 245.0-249.0: The person picks up the cutting board and knife, takes them to the sink, and begins rinsing them under the faucet.
+note 249.0-250.0: dataset/ovo/video/20/000249.jpg
+bridge 250.0-253.0: The person finishes rinsing the cutting board and knife, places them on the counter, and then begins washing their hands in the sink.
+note 253.0-254.0: dataset/ovo/video/20/000253.jpg
+bridge 254.0-259.0: After washing their hands and turning off the faucet, the person dries their hands and moves back to the main counter area.
+note 259.0-260.0: dataset/ovo/video/20/000259.jpg
+bridge 260.0-262.0: The person opens the drawer beneath the counter and takes out a small pot with a handle.
+note 262.0-263.0: dataset/ovo/video/20/000262.jpg
+bridge 263.0-265.0: The person moves the small pot towards the stove where another pot is already boiling.
+bridge 265.0-268.0: The person takes the pot of boiling water off the stove and carries it to the sink.
+note 268.0-269.0: dataset/ovo/video/20/000268.jpg
+bridge 269.0-270.0: The person pours the boiling water from the pot into the sink.
+note 270.0-271.0: dataset/ovo/video/20/000270.jpg
+bridge 271.0-283.0: After emptying the pot, the person places it in the sink and continues to rinse it with water from the faucet, then turns off the water.
+note 283.0-284.0: dataset/ovo/video/20/000283.jpg
+bridge 284.0-289.0: The person, who was moving the rinsed pot towards the stove, returns it to the sink and continues to rinse it under the faucet.
+note 289.0-290.0: dataset/ovo/video/20/000289.jpg
+bridge 290.0-291.0: The person finishes rinsing the pot and turns off the faucet.
+note 291.0-292.0: dataset/ovo/video/20/000291.jpg
+bridge 292.0-303.0: The person moves away from the sink, holding the now-empty pot, walks back towards the stove, and then returns to the counter, placing a frying pan from the dish rack onto the counter.
+note 303.0-304.0: dataset/ovo/video/20/000303.jpg
+qa 304.0 q: Question: What did I pick from the utensil holder?
+Options:
+A. Knife; B. Spoon; C. Dying pan; D. Fork;
+
+Respond only with the letter corresponding to your chosen option (e.g., A, B, C).
+Do not include any additional text or explanation in your response.
+
+qa 304.0 a: C
