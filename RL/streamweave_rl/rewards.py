@@ -160,6 +160,7 @@ def compute_step_reward(
             "judge_raw_score": judge_raw_score,
             "judge_status": judge_result.status if isinstance(judge_result, JudgeResult) else "disabled",
             "judge_scores": judge_result.scores if isinstance(judge_result, JudgeResult) else {},
+            "judge_reasons": judge_result.reasons if isinstance(judge_result, JudgeResult) else {},
             "judge_issues": judge_result.issues if isinstance(judge_result, JudgeResult) else [],
             "judge_error": judge_result.error if isinstance(judge_result, JudgeResult) else "",
         },

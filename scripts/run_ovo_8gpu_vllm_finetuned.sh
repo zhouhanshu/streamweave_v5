@@ -13,6 +13,7 @@ PYTHON="/mmu_mllm_hdd/zhouhanshu/conda/envs/simple/bin/python"
 VLLM="/mmu_mllm_hdd/zhouhanshu/conda/envs/vllm/bin/vllm"
 BASE_CONFIG="configs/batch_ovo_qwen3vl8b_finetuned_8gpu.yaml"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/ovo_qwen3vl8b_finetuned_1of8}"
+ANNO_PATH="${ANNO_PATH:-}"
 CONFIG="${OUTPUT_DIR}/run_config.yaml"
 LIMIT=""  # Set to e.g. "8" for smoke; keep empty for the configured annotation file.
 ALLOW_EXISTING_SERVERS="${ALLOW_EXISTING_SERVERS:-0}"
@@ -21,13 +22,13 @@ ALLOW_EXISTING_SERVERS="${ALLOW_EXISTING_SERVERS:-0}"
 [[ -x "$VLLM" ]] || VLLM="vllm"
 
 mkdir -p "$OUTPUT_DIR"
-"$PYTHON" - "$BASE_CONFIG" "$CONFIG" "$OUTPUT_DIR" "$MODEL" <<'PY'
+"$PYTHON" - "$BASE_CONFIG" "$CONFIG" "$OUTPUT_DIR" "$MODEL" "$ANNO_PATH" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
-base_config, output_config, output_dir, model = sys.argv[1:5]
+base_config, output_config, output_dir, model, anno_path = sys.argv[1:6]
 with open(base_config, encoding="utf-8") as handle:
     cfg = yaml.safe_load(handle) or {}
 
@@ -37,6 +38,8 @@ cfg.setdefault("trace", {})["experiment_name"] = ""
 cfg.setdefault("batch", {})["output"] = f"{output_dir}/results.jsonl"
 cfg.setdefault("batch", {})["worker_log_dir"] = f"{output_dir}/worker_logs"
 cfg.setdefault("backend", {})["model"] = model
+if anno_path:
+    cfg.setdefault("benchmark_args", {})["anno_path"] = anno_path
 
 Path(output_config).parent.mkdir(parents=True, exist_ok=True)
 with open(output_config, "w", encoding="utf-8") as handle:

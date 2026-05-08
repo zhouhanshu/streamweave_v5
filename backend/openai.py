@@ -69,7 +69,7 @@ class OpenAICompatibleBackend(BaseBackend):
                 }
             return text.strip(), usage_dict
 
-        (text, usage), attempt_count, retry_errors = run_with_retry(call, self.retry_policy)
+        (text, usage_dict), attempt_count, retry_errors = run_with_retry(call, self.retry_policy)
         return BackendResult(
             text=text,
             latency_seconds=time.time() - started,

@@ -11,7 +11,7 @@ import torch
 import verl.utils.torch_functional as verl_F
 from verl.trainer.ppo.core_algos import register_adv_est
 
-from .trace import env_flag, trace_print
+from .trace import env_flag, trace_group_allowed, trace_print
 
 
 def _to_numpy_int64(values: Any, *, factorize: bool = False) -> np.ndarray:
@@ -199,6 +199,8 @@ def _trace_grpo_groups(
     group_labels: dict[int, str],
 ) -> None:
     for group_id in sorted(group_to_traj_scores, key=lambda item: group_labels.get(int(item), str(item))):
+        if not trace_group_allowed(group_labels.get(int(group_id), str(group_id))):
+            continue
         items = sorted(group_to_traj_scores[group_id], key=lambda item: item[0])
         values = np.asarray([score for _, score in items], dtype=np.float32)
         mean = float(values.mean()) if values.size else 0.0

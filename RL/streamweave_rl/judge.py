@@ -26,7 +26,7 @@ class JudgeConfig:
     base_url: str = ""
     api_key: str = ""
     api_key_env: str = "STREAMWEAVE_JUDGE_API_KEY"
-    max_tokens: int = 768
+    max_tokens: int = 2048
     temperature: float = 0.0
     top_p: float = 0.1
     timeout_seconds: float = 120.0
@@ -46,6 +46,7 @@ class JudgeResult:
     status: str = "disabled"
     raw_response: str = ""
     scores: dict[str, float] = field(default_factory=dict)
+    reasons: dict[str, str] = field(default_factory=dict)
     issues: list[str] = field(default_factory=list)
     latency_seconds: float = 0.0
     error: str = ""
@@ -91,6 +92,7 @@ class StepJudge:
                     "temperature": self.config.temperature,
                     "top_p": self.config.top_p,
                     "max_output_tokens": self.config.max_tokens,
+                    "response_mime_type": "application/json",
                 },
             )
             parsed = _parse_judge_response(result.text)
@@ -142,6 +144,10 @@ def _build_judge_content(
     raw_output: str,
     quality: QualityReport,
 ) -> list[ContentItem]:
+    if frames:
+        frame_window = f't="{frames[0].start_time:.1f}-{frames[-1].end_time:.1f}"'
+    else:
+        frame_window = "<none>"
     frame_lines = "\n".join(
         f'- frame_{idx}: t="{frame.start_time:.1f}-{frame.end_time:.1f}", global_index={frame.global_index}'
         for idx, frame in enumerate(frames, start=1)
@@ -170,6 +176,9 @@ Do not infer hidden intent, identity, fine-grained counts, causes, or object att
 === Memory Before This Step ===
 {memory_before or "<empty/>"}
 
+=== Current Frame Window ===
+{frame_window}
+
 === Current Frame Index ===
 {frame_lines or "<none>"}
 
@@ -197,6 +206,9 @@ cannot reliably preserve.
 - 0.4: Weakly relevant, redundant, poorly timed, or only loosely useful as visual memory.
 - 0.0: Misses a clearly important anchor, selects irrelevant frames, or emits duplicate/unhelpful notes.
 If no current frame contains meaningful new visual evidence, no note can be acceptable; do not punish absence of a note solely for frequency, because a separate rule handles note frequency.
+Special first-window rule: if the current frame window spans exactly t="0.0-5.0" (or "0-5"),
+keyframe_selection may be 1.0 only when the output contains exactly one note with t="0.0-1.0" (or "0-1").
+For that first window, keyframe_selection must be 0.0 if the note is absent, duplicated, or uses any timing other than exactly t="0.0-1.0" (or "0-1").
 
 2. bridge_quality
 Evaluate whether <bridge> uses concise, faithful language to describe frame-to-frame changes.
@@ -285,7 +297,8 @@ def _parse_judge_response(raw: str) -> JudgeResult:
     caps = _string_list(parsed.get("caps_applied", []))
     if caps:
         issues.extend(f"cap: {item}" for item in caps)
-    return JudgeResult(score=overall, status="ok", scores=scores, issues=issues)
+    reasons = {key: _extract_reason(parsed.get(key, {})) for key in JUDGE_SCORE_KEYS}
+    return JudgeResult(score=overall, status="ok", scores=scores, reasons=reasons, issues=issues)
 
 
 def _mock_judge_result(action: ModelAction, quality: QualityReport) -> JudgeResult:
@@ -301,7 +314,17 @@ def _mock_judge_result(action: ModelAction, quality: QualityReport) -> JudgeResu
         "semantic_alignment": semantic,
         "state_factuality": state,
     }
-    return JudgeResult(score=sum(scores.values()) / len(scores), status="mock", scores=scores)
+    return JudgeResult(
+        score=sum(scores.values()) / len(scores),
+        status="mock",
+        scores=scores,
+        reasons={
+            "keyframe_selection": "Mock score from note count.",
+            "bridge_quality": "Mock score from bridge presence and non-empty text.",
+            "semantic_alignment": "Mock score from parser validity.",
+            "state_factuality": "Mock score from state presence.",
+        },
+    )
 
 
 def _extract_score(value: Any) -> float:
@@ -311,6 +334,12 @@ def _extract_score(value: Any) -> float:
                 return _clamp_score(value[key])
         return 0.0
     return _clamp_score(value)
+
+
+def _extract_reason(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("reason", "") or "").strip()
+    return ""
 
 
 def _clamp_score(value: Any) -> float:

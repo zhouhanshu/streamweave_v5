@@ -54,7 +54,7 @@ data:
       success_scorer: auto
       enable_note_frequency_reward: true
       note_frequency_weight: 1.0
-      judge_weight: 0.0
+      judge_weight: 1.0
       max_notes_per_step: 1
       stale_note_after_steps: 3
       note_frequency_penalty_score: 0.0
@@ -64,7 +64,7 @@ data:
         model: ""
         base_url: ""
         api_key_env: STREAMWEAVE_JUDGE_API_KEY
-        max_tokens: 768
+        max_tokens: 2048
         temperature: 0.0
         top_p: 0.1
         timeout_seconds: 120.0

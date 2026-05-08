@@ -132,15 +132,22 @@ def _add_metric_stats(metrics: dict[str, Any], prefix: str, values: Any) -> None
 def _compute_streamweave_stepwise_metrics(batch: DataProto) -> dict[str, Any]:
     metrics: dict[str, Any] = {}
     non_tensor_batch = batch.non_tensor_batch
+    traj_metric_aliases = {
+        "trajectory_score": "traj/score",
+        "success_score": "traj/success",
+    }
 
     for key in ("trajectory_score", "success_score"):
         if key not in non_tensor_batch:
             continue
         values = np.asarray(non_tensor_batch[key], dtype=object).reshape(-1)
         indices = _first_trajectory_indices(non_tensor_batch, len(values))
-        _add_metric_stats(metrics, f"streamweave/{key}", _select_array(values, indices))
+        selected_values = _select_array(values, indices)
+        _add_metric_stats(metrics, f"streamweave/{key}", selected_values)
+        _add_metric_stats(metrics, traj_metric_aliases[key], selected_values)
         if indices is not None:
             metrics["streamweave/num_trajectories"] = int(len(indices))
+            metrics["traj/num_trajectories"] = int(len(indices))
 
     for key in ("format_score", "step_score", "note_frequency_score", "judge_score", "turn_reward"):
         if key in non_tensor_batch:

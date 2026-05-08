@@ -77,7 +77,14 @@ class GeminiBackend(BaseBackend):
             "max_output_tokens": self.config.max_tokens,
         }
         if overrides:
-            for key in ("temperature", "top_p", "max_output_tokens"):
+            for key in (
+                "temperature",
+                "top_p",
+                "max_output_tokens",
+                "response_mime_type",
+                "response_schema",
+                "response_json_schema",
+            ):
                 if key in overrides and overrides[key] is not None:
                     kwargs[key] = overrides[key]
         budget = self.config.thinking_budget

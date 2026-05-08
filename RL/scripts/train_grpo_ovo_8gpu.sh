@@ -5,7 +5,7 @@ RL_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 V5_DIR="$(cd -- "${RL_DIR}/.." && pwd)"
 PYTHON_BIN="/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/python"
 
-RUN_NAME="${STREAMWEAVE_RUN_NAME:-grpo_ovo_8gpu}"
+RUN_NAME="${STREAMWEAVE_RUN_NAME:-grpo_ovo_8gpu_judge_debug}"
 RUN_DIR="${STREAMWEAVE_RUN_DIR:-${RL_DIR}/outputs/debug/${RUN_NAME}}"
 LOG_FILE="${RUN_DIR}/train.log"
 RAY_TMPDIR="/tmp/swray_$$"
@@ -21,7 +21,8 @@ export RAY_ENABLE_UV_RUN_RUNTIME_ENV=0
 export RAY_TMPDIR="${RAY_TMPDIR}"
 export TOKENIZERS_PARALLELISM=false
 export STREAMWEAVE_RL_DIR="${RL_DIR}"
-export STREAMWEAVE_MODEL_PATH="${STREAMWEAVE_MODEL_PATH:-/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm}"
+STREAMWEAVE_SOURCE_MODEL_PATH="${STREAMWEAVE_MODEL_PATH:-/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm}"
+export STREAMWEAVE_MODEL_PATH="$("${PYTHON_BIN}" "${RL_DIR}/scripts/prepare_qwen3vl_model_config.py" "${STREAMWEAVE_SOURCE_MODEL_PATH}" "${RUN_DIR}/model_config")"
 export STREAMWEAVE_DATASET_ROOT="/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset"
 export STREAMWEAVE_IMAGE_RESOLUTION=512
 export SWANLAB_LOG_DIR="${RUN_DIR}/swanlab"
@@ -30,7 +31,19 @@ export STREAMWEAVE_TRACE_FIRST_ROLLOUT="${STREAMWEAVE_TRACE_FIRST_ROLLOUT:-1}"
 export STREAMWEAVE_TRACE_TRAJ_INDEX="${STREAMWEAVE_TRACE_TRAJ_INDEX:-0}"
 export STREAMWEAVE_TRACE_MAX_CHARS="${STREAMWEAVE_TRACE_MAX_CHARS:-2000}"
 export STREAMWEAVE_TRACE_GRPO_GROUPS="${STREAMWEAVE_TRACE_GRPO_GROUPS:-1}"
-if [[ "${STREAMWEAVE_JUDGE_BACKEND:-openai_compatible}" == "gemini" ]]; then
+export STREAMWEAVE_TRACE_SAMPLE_EVERY="${STREAMWEAVE_TRACE_SAMPLE_EVERY:-32}"
+export STREAMWEAVE_TRACE_SAMPLE_OFFSET="${STREAMWEAVE_TRACE_SAMPLE_OFFSET:-0}"
+export STREAMWEAVE_REWARD_JUDGE_ENABLE="${STREAMWEAVE_REWARD_JUDGE_ENABLE:-true}"
+export STREAMWEAVE_REWARD_JUDGE_WEIGHT="${STREAMWEAVE_REWARD_JUDGE_WEIGHT:-1.0}"
+export STREAMWEAVE_JUDGE_BACKEND="${STREAMWEAVE_JUDGE_BACKEND:-gemini}"
+export STREAMWEAVE_JUDGE_MODEL="${STREAMWEAVE_JUDGE_MODEL:-gemini-2.5-flash}"
+export STREAMWEAVE_MICRO_BATCH_PER_GPU="${STREAMWEAVE_MICRO_BATCH_PER_GPU:-4}"
+export STREAMWEAVE_MAX_TOKEN_LEN_PER_GPU="${STREAMWEAVE_MAX_TOKEN_LEN_PER_GPU:-32768}"
+export STREAMWEAVE_GEN_BATCH_SIZE="${STREAMWEAVE_GEN_BATCH_SIZE:-4}"
+export STREAMWEAVE_AGENT_NUM_WORKERS="${STREAMWEAVE_AGENT_NUM_WORKERS:-32}"
+export STREAMWEAVE_VLLM_GPU_MEMORY_UTILIZATION="${STREAMWEAVE_VLLM_GPU_MEMORY_UTILIZATION:-0.7}"
+export STREAMWEAVE_VLLM_MAX_NUM_BATCHED_TOKENS="${STREAMWEAVE_VLLM_MAX_NUM_BATCHED_TOKENS:-32768}"
+if [[ "${STREAMWEAVE_JUDGE_BACKEND}" == "gemini" ]]; then
     export GOOGLE_APPLICATION_CREDENTIALS="${GOOGLE_APPLICATION_CREDENTIALS:-/mmu_ssd3/group_lisize/hetu/xujia10/joint_tags/scripts/gemini_client/config.json}"
 fi
 
@@ -41,7 +54,7 @@ if ! "${PYTHON_BIN}" -c "import swanlab" >/dev/null 2>&1; then
     echo "Install it first: ${PYTHON_BIN} -m pip install swanlab" >&2
     exit 2
 fi
-if [[ "${STREAMWEAVE_REWARD_JUDGE_ENABLE:-false}" == "true" && "${STREAMWEAVE_JUDGE_BACKEND:-openai_compatible}" == "gemini" && ! -f "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+if [[ "${STREAMWEAVE_REWARD_JUDGE_ENABLE}" == "true" && "${STREAMWEAVE_JUDGE_BACKEND}" == "gemini" && ! -f "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
     echo "Gemini judge requires GOOGLE_APPLICATION_CREDENTIALS to point to an existing file." >&2
     echo "Current GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-<unset>}" >&2
     exit 2
@@ -72,7 +85,12 @@ dump_debug_artifacts() {
 trap dump_debug_artifacts EXIT
 
 echo "Debug artifacts will be saved to ${RUN_DIR}"
-echo "StreamWeave trace first_rollout=${STREAMWEAVE_TRACE_FIRST_ROLLOUT} traj=${STREAMWEAVE_TRACE_TRAJ_INDEX} max_chars=${STREAMWEAVE_TRACE_MAX_CHARS} grpo_groups=${STREAMWEAVE_TRACE_GRPO_GROUPS}"
+echo "StreamWeave model source=${STREAMWEAVE_SOURCE_MODEL_PATH}"
+echo "StreamWeave model path=${STREAMWEAVE_MODEL_PATH}"
+echo "StreamWeave trace first_rollout=${STREAMWEAVE_TRACE_FIRST_ROLLOUT} traj=${STREAMWEAVE_TRACE_TRAJ_INDEX} max_chars=${STREAMWEAVE_TRACE_MAX_CHARS} grpo_groups=${STREAMWEAVE_TRACE_GRPO_GROUPS} sample_every=${STREAMWEAVE_TRACE_SAMPLE_EVERY} sample_offset=${STREAMWEAVE_TRACE_SAMPLE_OFFSET} sample_filter=${STREAMWEAVE_TRACE_SAMPLE_ID:-<none>}"
+echo "StreamWeave judge enable=${STREAMWEAVE_REWARD_JUDGE_ENABLE} weight=${STREAMWEAVE_REWARD_JUDGE_WEIGHT} backend=${STREAMWEAVE_JUDGE_BACKEND} model=${STREAMWEAVE_JUDGE_MODEL}"
+echo "StreamWeave micro_batch_per_gpu=${STREAMWEAVE_MICRO_BATCH_PER_GPU} max_token_len_per_gpu=${STREAMWEAVE_MAX_TOKEN_LEN_PER_GPU}"
+echo "StreamWeave gen_batch_size=${STREAMWEAVE_GEN_BATCH_SIZE} agent_num_workers=${STREAMWEAVE_AGENT_NUM_WORKERS} vllm_gpu_memory_utilization=${STREAMWEAVE_VLLM_GPU_MEMORY_UTILIZATION} vllm_max_num_batched_tokens=${STREAMWEAVE_VLLM_MAX_NUM_BATCHED_TOKENS}"
 
 cd "${RL_DIR}"
 
@@ -84,7 +102,7 @@ cd "${RL_DIR}"
     data.train_files="/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json" \
     data.val_files="/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json" \
     data.train_batch_size=32 \
-    +data.gen_batch_size=4 \
+    +data.gen_batch_size="${STREAMWEAVE_GEN_BATCH_SIZE}" \
     data.val_batch_size=4 \
     data.max_prompt_length=15360 \
     data.max_response_length=1024 \
@@ -107,13 +125,13 @@ cd "${RL_DIR}"
     data.streamweave.reward.max_notes_per_step="${STREAMWEAVE_REWARD_MAX_NOTES_PER_STEP:-1}" \
     data.streamweave.reward.stale_note_after_steps="${STREAMWEAVE_REWARD_STALE_NOTE_AFTER_STEPS:-3}" \
     data.streamweave.reward.note_frequency_penalty_score="${STREAMWEAVE_REWARD_NOTE_PENALTY_SCORE:-0.0}" \
-    data.streamweave.reward.judge.enable="${STREAMWEAVE_REWARD_JUDGE_ENABLE:-false}" \
-    data.streamweave.reward.judge_weight="${STREAMWEAVE_REWARD_JUDGE_WEIGHT:-0.0}" \
-    data.streamweave.reward.judge.backend="${STREAMWEAVE_JUDGE_BACKEND:-openai_compatible}" \
-    data.streamweave.reward.judge.model="${STREAMWEAVE_JUDGE_MODEL:-}" \
+    data.streamweave.reward.judge.enable="${STREAMWEAVE_REWARD_JUDGE_ENABLE}" \
+    data.streamweave.reward.judge_weight="${STREAMWEAVE_REWARD_JUDGE_WEIGHT}" \
+    data.streamweave.reward.judge.backend="${STREAMWEAVE_JUDGE_BACKEND}" \
+    data.streamweave.reward.judge.model="${STREAMWEAVE_JUDGE_MODEL}" \
     data.streamweave.reward.judge.base_url="${STREAMWEAVE_JUDGE_BASE_URL:-}" \
     data.streamweave.reward.judge.api_key_env="${STREAMWEAVE_JUDGE_API_KEY_ENV:-STREAMWEAVE_JUDGE_API_KEY}" \
-    data.streamweave.reward.judge.max_tokens="${STREAMWEAVE_JUDGE_MAX_TOKENS:-768}" \
+    data.streamweave.reward.judge.max_tokens="${STREAMWEAVE_JUDGE_MAX_TOKENS:-2048}" \
     data.streamweave.reward.judge.temperature="${STREAMWEAVE_JUDGE_TEMPERATURE:-0.0}" \
     data.streamweave.reward.judge.top_p="${STREAMWEAVE_JUDGE_TOP_P:-0.1}" \
     data.streamweave.reward.judge.timeout_seconds="${STREAMWEAVE_JUDGE_TIMEOUT_SECONDS:-180.0}" \
@@ -137,36 +155,36 @@ cd "${RL_DIR}"
     actor_rollout_ref.actor.strategy=fsdp \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \
     actor_rollout_ref.actor.ppo_mini_batch_size=32 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=1 \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=16384 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu="${STREAMWEAVE_MICRO_BATCH_PER_GPU}" \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu="${STREAMWEAVE_MAX_TOKEN_LEN_PER_GPU}" \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.kl_loss_coef=0.0 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
-    actor_rollout_ref.actor.fsdp_config.param_offload=True \
-    actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
+    actor_rollout_ref.actor.fsdp_config.param_offload=False \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
     actor_rollout_ref.ref.strategy=fsdp \
     actor_rollout_ref.ref.ulysses_sequence_parallel_size=1 \
     actor_rollout_ref.ref.fsdp_config.model_dtype=bfloat16 \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
-    actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=16384 \
-    actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu="${STREAMWEAVE_MICRO_BATCH_PER_GPU}" \
+    actor_rollout_ref.ref.log_prob_max_token_len_per_gpu="${STREAMWEAVE_MAX_TOKEN_LEN_PER_GPU}" \
+    actor_rollout_ref.ref.fsdp_config.param_offload=False \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.mode=async \
     actor_rollout_ref.rollout.n=8 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
-    actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=16384 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu="${STREAMWEAVE_MICRO_BATCH_PER_GPU}" \
+    actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu="${STREAMWEAVE_MAX_TOKEN_LEN_PER_GPU}" \
+    actor_rollout_ref.rollout.gpu_memory_utilization="${STREAMWEAVE_VLLM_GPU_MEMORY_UTILIZATION}" \
     actor_rollout_ref.rollout.max_model_len=16384 \
-    actor_rollout_ref.rollout.max_num_batched_tokens=16384 \
+    actor_rollout_ref.rollout.max_num_batched_tokens="${STREAMWEAVE_VLLM_MAX_NUM_BATCHED_TOKENS}" \
     actor_rollout_ref.rollout.max_num_seqs=2048 \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
     +actor_rollout_ref.rollout.engine_kwargs.vllm.disable_mm_preprocessor_cache=True \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.free_cache_engine=True \
-    actor_rollout_ref.rollout.agent.num_workers=16 \
+    actor_rollout_ref.rollout.agent.num_workers="${STREAMWEAVE_AGENT_NUM_WORKERS}" \
     algorithm.adv_estimator=streamweave_stepwise_traj_grpo \
     algorithm.use_kl_in_reward=False \
     critic.enable=False \

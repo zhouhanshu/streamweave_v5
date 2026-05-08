@@ -25,9 +25,10 @@ Rewards:
 
 The note frequency reward penalizes more than one note in a window and penalizes
 three or more consecutive windows without a note. The LLM judge is configured
-under `data.streamweave.reward.judge` and is disabled by default; enable it only
-when a judge backend is available, then set `judge_weight > 0` for it to affect
-`step_score`.
+under `data.streamweave.reward.judge`. The current 8GPU GRPO launcher enables
+Gemini judge debug by default with `STREAMWEAVE_REWARD_JUDGE_WEIGHT=0.0`, so it
+logs judge scores without changing `step_score`; set `judge_weight > 0` for it
+to affect training.
 
 The GRPO scripts expose the judge settings through environment variables:
 
@@ -35,7 +36,7 @@ The GRPO scripts expose the judge settings through environment variables:
 STREAMWEAVE_REWARD_JUDGE_ENABLE=true
 STREAMWEAVE_REWARD_JUDGE_WEIGHT=1.0
 STREAMWEAVE_JUDGE_BACKEND=gemini
-STREAMWEAVE_JUDGE_MODEL=gemini-2.5-pro
+STREAMWEAVE_JUDGE_MODEL=gemini-2.5-flash
 GOOGLE_APPLICATION_CREDENTIALS=/mmu_ssd3/group_lisize/hetu/xujia10/joint_tags/scripts/gemini_client/config.json
 STREAMWEAVE_JUDGE_MAX_TOKENS=768
 STREAMWEAVE_JUDGE_TIMEOUT_SECONDS=180

@@ -148,6 +148,8 @@ def main() -> None:
     assert nested_judge.score == 0.5
     assert nested_judge.scores["keyframe_selection"] == 0.8
     assert nested_judge.scores["state_factuality"] == 0.2
+    assert nested_judge.reasons["keyframe_selection"] == "useful anchor"
+    assert nested_judge.reasons["state_factuality"] == "speculative"
     assert "cap: contradiction cap" in nested_judge.issues
 
     data = FakeBatch()

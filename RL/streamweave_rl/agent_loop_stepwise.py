@@ -12,7 +12,7 @@ from verl.utils.profiler import simple_timer
 from verl.workers.rollout.replica import TokenOutput
 
 from .env import StreamWeaveRLEnv
-from .trace import env_flag, env_int, fmt, shorten, trace_print
+from .trace import fmt, shorten, trace_print, trace_rollout_allowed
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
@@ -29,9 +29,15 @@ class StreamWeaveAgentLoop(AgentLoopBase):
         request_id = uuid4().hex
         group_idx = kwargs.get("group_idx", kwargs.get("uid", request_id))
         traj_idx = int(kwargs.get("traj_idx", kwargs.get("rollout_n", 0)) or 0)
-        trace_rollout = _trace_rollout_enabled(traj_idx)
         sample_id = str(kwargs["sample_id"])
         video_id = str(kwargs["video_id"])
+        sample_index = _sample_index(kwargs)
+        trace_rollout = trace_rollout_allowed(
+            group_idx=group_idx,
+            traj_idx=traj_idx,
+            sample_id=sample_id,
+            sample_index=sample_index,
+        )
         env = StreamWeaveRLEnv(
             sample_id=sample_id,
             video_id=video_id,
@@ -50,6 +56,7 @@ class StreamWeaveAgentLoop(AgentLoopBase):
                 trace_print(
                     "[SW-TRACE rollout-start] "
                     f"group={group_idx} traj={traj_idx} sample={sample_id} video={video_id} "
+                    f"index={sample_index if sample_index is not None else '<na>'} "
                     f"steps={len(env.groups)} question={shorten(str(kwargs.get('question', '')))}"
                 )
             while True:
@@ -271,12 +278,6 @@ def _align_routed_experts(
     return routed_experts[: min(total_len, target_len)]
 
 
-def _trace_rollout_enabled(traj_idx: int) -> bool:
-    if not env_flag("STREAMWEAVE_TRACE_FIRST_ROLLOUT", default=False):
-        return False
-    return int(traj_idx) == env_int("STREAMWEAVE_TRACE_TRAJ_INDEX", default=0)
-
-
 def _trace_step(
     *,
     group_idx: Any,
@@ -290,6 +291,7 @@ def _trace_step(
 ) -> None:
     reward_info = info.get("reward_info", {}) or {}
     judge_scores = reward_info.get("judge_scores", {}) or {}
+    judge_reasons = reward_info.get("judge_reasons", {}) or {}
     trace_print(
         "[SW-TRACE step] "
         f"group={group_idx} traj={traj_idx} sample={sample_id} video={video_id} "
@@ -302,7 +304,8 @@ def _trace_step(
         f"note_reasons={reward_info.get('note_frequency_reasons', [])} "
         f"judge_status={reward_info.get('judge_status', 'disabled')} "
         f"judge_raw={fmt(reward_info.get('judge_raw_score', 0.0))} "
-        f"judge_dims={judge_scores} issues={info.get('issue_codes', [])}"
+        f"judge_dims={judge_scores} judge_reasons={shorten(str(judge_reasons), default_limit=320)} "
+        f"issues={info.get('issue_codes', [])}"
     )
     trace_print(
         "[SW-TRACE output-begin] "
@@ -310,6 +313,15 @@ def _trace_step(
         f"{shorten(response_text)}\n"
         "[SW-TRACE output-end]"
     )
+
+
+def _sample_index(kwargs: dict[str, Any]) -> Any:
+    if "index" in kwargs:
+        return kwargs.get("index")
+    extra_info = kwargs.get("extra_info")
+    if isinstance(extra_info, dict):
+        return extra_info.get("index")
+    return None
 
 
 def _trace_traj_done(

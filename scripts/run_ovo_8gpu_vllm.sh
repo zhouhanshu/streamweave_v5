@@ -11,17 +11,45 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 MODEL="${1:-/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct}"
 PYTHON="/mmu_mllm_hdd/zhouhanshu/conda/envs/simple/bin/python"
 VLLM="/mmu_mllm_hdd/zhouhanshu/conda/envs/vllm/bin/vllm"
-CONFIG="configs/batch_ovo_qwen3vl8b_8gpu_full.yaml"
+BASE_CONFIG="configs/batch_ovo_qwen3vl8b_8gpu_full.yaml"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/ovo_qwen3vl8b_8gpu_1of8_eval}"
+ANNO_PATH="${ANNO_PATH:-}"
+CONFIG="${OUTPUT_DIR}/run_config.yaml"
 LIMIT=""  # Set to e.g. "8" for smoke; keep empty for the configured annotation file.
 ALLOW_EXISTING_SERVERS="${ALLOW_EXISTING_SERVERS:-0}"
 
 [[ -x "$PYTHON" ]] || PYTHON="python"
 [[ -x "$VLLM" ]] || VLLM="vllm"
 
+mkdir -p "$OUTPUT_DIR"
+"$PYTHON" - "$BASE_CONFIG" "$CONFIG" "$OUTPUT_DIR" "$MODEL" "$ANNO_PATH" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+base_config, output_config, output_dir, model, anno_path = sys.argv[1:6]
+with open(base_config, encoding="utf-8") as handle:
+    cfg = yaml.safe_load(handle) or {}
+
+cfg["result_output"] = f"{output_dir}/results.jsonl"
+cfg.setdefault("trace", {})["output_root"] = f"{output_dir}/traces"
+cfg.setdefault("trace", {})["experiment_name"] = ""
+cfg.setdefault("batch", {})["output"] = f"{output_dir}/results.jsonl"
+cfg.setdefault("batch", {})["worker_log_dir"] = f"{output_dir}/worker_logs"
+cfg.setdefault("backend", {})["model"] = model
+if anno_path:
+    cfg.setdefault("benchmark_args", {})["anno_path"] = anno_path
+
+Path(output_config).parent.mkdir(parents=True, exist_ok=True)
+with open(output_config, "w", encoding="utf-8") as handle:
+    yaml.safe_dump(cfg, handle, allow_unicode=True, sort_keys=False)
+PY
+
 mkdir -p \
-  outputs/ovo_qwen3vl8b_8gpu_1of8_eval/vllm_logs \
-  outputs/ovo_qwen3vl8b_8gpu_1of8_eval/worker_logs \
-  outputs/ovo_qwen3vl8b_8gpu_1of8_eval/vllm_pids
+  "$OUTPUT_DIR/vllm_logs" \
+  "$OUTPUT_DIR/worker_logs" \
+  "$OUTPUT_DIR/vllm_pids"
 
 started_pids=()
 
@@ -70,7 +98,7 @@ wait_for_endpoint() {
 for gpu in 0 1 2 3 4 5 6 7; do
   port=$((8000 + gpu))
   endpoint="http://127.0.0.1:${port}/v1"
-  log_path="outputs/ovo_qwen3vl8b_8gpu_1of8_eval/vllm_logs/vllm_${port}.log"
+  log_path="$OUTPUT_DIR/vllm_logs/vllm_${port}.log"
 
   if check_endpoint "$endpoint"; then
     if [[ "$ALLOW_EXISTING_SERVERS" != "1" ]]; then
@@ -92,7 +120,7 @@ for gpu in 0 1 2 3 4 5 6 7; do
 
   pid=$!
   started_pids+=("$pid")
-  echo "$pid" > "outputs/ovo_qwen3vl8b_8gpu_1of8_eval/vllm_pids/vllm_${port}.pid"
+  echo "$pid" > "$OUTPUT_DIR/vllm_pids/vllm_${port}.pid"
 done
 
 for port in 8000 8001 8002 8003 8004 8005 8006 8007; do
@@ -111,8 +139,8 @@ eval_cmd=(
   --model "$MODEL"
   --endpoints "$endpoints"
   --workers 16
-  --output outputs/ovo_qwen3vl8b_8gpu_1of8_eval/results.jsonl
-  --worker-log-dir outputs/ovo_qwen3vl8b_8gpu_1of8_eval/worker_logs
+  --output "$OUTPUT_DIR/results.jsonl"
+  --worker-log-dir "$OUTPUT_DIR/worker_logs"
 )
 
 if [[ -n "$LIMIT" ]]; then
@@ -132,5 +160,5 @@ PY
 )"
 echo "[eval] path: $eval_profile"
 echo "[eval] endpoints=$endpoints"
-echo "[eval] output=outputs/ovo_qwen3vl8b_8gpu_1of8_eval/results.jsonl"
+echo "[eval] output=$OUTPUT_DIR/results.jsonl"
 "${eval_cmd[@]}"
