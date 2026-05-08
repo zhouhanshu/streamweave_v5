@@ -101,8 +101,7 @@ def _load_frame_refs(row: JsonDict, *, raw_data_root: str | Path, sample_fps: fl
         for offset in range(frame_count):
             frame_id = base + offset
             path = frames_dir / pattern.format(frame_id=frame_id)
-            if path.exists():
-                paths.append((frame_id, path))
+            paths.append((frame_id, path))
     else:
         for path in sorted(frames_dir.glob("*.jpg")) + sorted(frames_dir.glob("*.png")):
             frame_id = _parse_frame_id(path, fallback=len(paths) + base)

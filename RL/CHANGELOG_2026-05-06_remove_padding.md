@@ -7,6 +7,8 @@ This note records the recent StreamWeave RL changes made while debugging the slo
 All changes are limited to:
 
 - `RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_4gpu_3_4_6_7_lt120s_fused_chunked.sh`
+- `RL/verl/verl/trainer/ppo/core_algos.py`
+- `RL/verl/verl/trainer/ppo/ray_trainer.py`
 - `RL/verl/verl/workers/actor/dp_actor.py`
 - `RL/verl/verl/workers/critic/dp_critic.py`
 
@@ -34,6 +36,7 @@ actor_rollout_ref.actor.ppo_mini_batch_size=32
 actor_rollout_ref.rollout.gpu_memory_utilization=0.6
 actor_rollout_ref.rollout.max_num_seqs=2048
 actor_rollout_ref.rollout.enable_chunked_prefill=True
+actor_rollout_ref.rollout.engine_kwargs.vllm.disable_mm_preprocessor_cache=True
 trainer.total_epochs=2
 ```
 
@@ -43,7 +46,7 @@ Rationale:
 - `use_fused_kernels=True` is kept for the fused log-prob path.
 - `fsdp` is used instead of `fsdp2` because `fsdp2 + fused_kernels` hit a mixed `torch.Tensor` / `DTensor` error in the fused LM head path.
 - `enable_chunked_prefill=True` is kept for rollout-side prefill behavior, though earlier timing showed rollout is not the main bottleneck.
-- The previous `disable_mm_preprocessor_cache=True` override is not present in this experiment script.
+- `disable_mm_preprocessor_cache=True` is restored after vLLM raised `Expected a cached item for mm_hash=...` in the multimodal processor cache during async image rollout.
 - `data.train_batch_size` and `actor_rollout_ref.actor.ppo_mini_batch_size` are set to 32 so the actor mini-batch passes verl validation and matches the VAGEN script's explicit value.
 - `data.gen_batch_size` is added and set to 4. verl uses this field as the actual dataloader/rollout batch size when present, so each StreamWeave rollout step still starts from 4 original samples to limit Ray object-store spill.
 - `actor_rollout_ref.rollout.max_num_seqs` was raised from 16 to 2048. VAGEN does not set this in its script, but its rollout base config defaults to 1024, so 2048 is the strict "higher than VAGEN effective value" setting.
@@ -138,6 +141,44 @@ packed ids:     [0, 0, 0, 0, 1, 1, 1]
 ```
 
 This confirms that when remove-padding packs multiple samples into one sequence, the text-position reset can still identify sample boundaries for the SDPA packed-sequence mask path.
+
+## Stepwise Legacy Batch Padding Fix
+
+File:
+
+- `RL/verl/verl/trainer/ppo/ray_trainer.py`
+
+Problem:
+
+With `trainer.use_legacy_worker_impl=enable`, verl dispatches `DataProto` to data-parallel workers by equal chunks. StreamWeave stepwise rollout emits one row per turn, and different trajectories have different turn counts. A batch that starts as `data.gen_batch_size=4`, repeats with `rollout.n=8`, and then expands by turns can therefore produce a row count like 433.
+
+The legacy dispatch path then crashed before log-prob computation:
+
+```text
+AssertionError: only support equal chunk. Got size of DataProto 433 and chunk 8.
+```
+
+Change:
+
+- `_compute_old_log_prob(...)` now pads the legacy `DataProto` before `actor_rollout_wg.compute_log_prob(...)`, then unpads the returned log-prob tensors.
+- `_compute_ref_log_prob(...)` does the same for the legacy ref-log-prob path.
+- `_update_actor(...)` now pads the legacy actor-update batch to the actor mini-batch divisor and DP divisor, then zeros `response_mask` and `advantages` for the padding rows before dispatch.
+- `_compute_values(...)` and `_update_critic(...)` now apply the same legacy padding pattern for PPO / critic-enabled runs. The current GRPO script has `critic.enable=False`, but this keeps the stepwise framework consistent.
+- `agg_loss(...)` now adds a small epsilon to zero-mask-sensitive denominators. This prevents all-padding micro-batches from producing `0/0` when `ppo_micro_batch_size_per_gpu=1`.
+
+For the current config:
+
+```text
+rollout.n = 8
+actor.ppo_mini_batch_size = 32
+dp_size = 8
+```
+
+The actor update divisor is `lcm(8, 32 * 8) = 256`. So a 433-row stepwise batch is padded to 512 rows, each of 8 ranks receives 64 rows, and each rank can split its local batch into two 32-row actor mini-batches. The extra rows are duplicated only as transport padding and have zero loss weight.
+
+Important detail:
+
+The padding rows are appended at the end before legacy DP dispatch. With 433 -> 512 rows, the last rank can receive only padding rows. Since padding rows have `response_mask=0`, loss aggregation must be zero-mask safe; otherwise an all-padding micro-batch would compute `0/0`. The epsilon change makes that path return zero loss instead of NaN.
 
 ## Remaining Risk
 

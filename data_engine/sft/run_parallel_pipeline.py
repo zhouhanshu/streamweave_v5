@@ -33,12 +33,13 @@ from data_engine.sft.run_pipeline import (
     run_sharegpt,
     safe_file_stem,
     sample_manifest_row,
+    training_step_rows,
 )
 from data_engine.sft.sample_sources import load_sample_source, source_input_path
 
 
 DEFAULT_INPUT = Path(
-    "/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/streamweave_data/annotations_qa_filter_final.jsonl"
+    "/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/streamweave_data/annotations_qa_filter_answered.jsonl"
 )
 DEFAULT_RAW_DATA_ROOT = Path(
     "/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/streamweave_data"
@@ -338,6 +339,8 @@ def finalize_from_jobs(*, args: argparse.Namespace, db_path: Path) -> dict[str, 
     failed_samples = 0
     error_samples = 0
     attempted_steps = 0
+    variant_rescue_rows = 0
+    variant_rescue_variants = 0
 
     for row in rows:
         sample_path = args.output_dir / str(row["sample_path"])
@@ -349,15 +352,19 @@ def finalize_from_jobs(*, args: argparse.Namespace, db_path: Path) -> dict[str, 
             sample_record["path"] = relative_path(sample_path, args.output_dir)
         manifest_rows.append(sample_manifest_row(sample_record))
         attempted_steps += int(sample_record.get("num_steps", 0) or 0)
+        rows_to_export = training_step_rows(sample_record)
         if sample_record.get("usable_for_sft"):
             accepted_samples += 1
-            for step in sample_record.get("steps", []):
-                if not step.get("task_failed"):
-                    accepted_steps.append(step)
         elif sample_record.get("status") == "error":
             error_samples += 1
         else:
             failed_samples += 1
+        accepted_steps.extend(rows_to_export)
+        for step in rows_to_export:
+            metadata = step.get("metadata") or {}
+            if isinstance(metadata, dict) and metadata.get("variant_rescue"):
+                variant_rescue_rows += 1
+                variant_rescue_variants += 1 + len(step.get("answer_variants") or [])
 
     write_jsonl(manifest_rows, paths.sample_manifest)
     write_jsonl(accepted_steps, paths.intermediate)
@@ -372,6 +379,8 @@ def finalize_from_jobs(*, args: argparse.Namespace, db_path: Path) -> dict[str, 
         "num_error_samples": error_samples,
         "num_steps": len(accepted_steps),
         "num_attempted_steps": attempted_steps,
+        "num_variant_rescue_rows": variant_rescue_rows,
+        "num_variant_rescue_variants": variant_rescue_variants,
         "prompt_type": args.prompt_type,
         "policy": args.policy,
         "backend": args.backend,
@@ -580,6 +589,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=0)
     parser.add_argument("--keep-invalid", action="store_true")
     parser.add_argument("--max-attempts", type=int, default=3)
+    parser.add_argument("--max-notes-per-step", type=int, default=1)
+    parser.add_argument("--bridge-note-reminder-seconds", type=float, default=20.0)
+    parser.add_argument("--answer-step-rollouts", type=int, default=5)
+    parser.add_argument("--answer-step-temperature", type=float, default=0.3)
+    parser.add_argument("--answer-step-top-p", type=float, default=0.95)
 
     parser.add_argument("--backend", default="gemini")
     parser.add_argument("--model", default="gemini-2.5-pro")

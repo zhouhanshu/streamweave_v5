@@ -33,13 +33,13 @@ def score_raw_output(raw: str, context: QualityContext, reward_config: object | 
     for event_index, event in enumerate(action.events):
         extends_open_tail = False
         if event.kind == "note":
-            if event.frame_index is None or not (0 <= event.frame_index < len(context.frames)):
-                issues.append(ValidationIssue("note_frame_oob", "Note frame index is outside current frames."))
+            matching_frames = _matching_frames_for_note(event, context.frames)
+            if not matching_frames:
+                issues.append(ValidationIssue("note_time_unmatched", "Note time does not match any current frame."))
                 timing_reward = 0
                 continue
-            frame = context.frames[event.frame_index]
-            if abs(event.start_time - frame.start_time) > TIME_TOLERANCE or abs(event.end_time - frame.end_time) > TIME_TOLERANCE:
-                issues.append(ValidationIssue("note_time_mismatch", "Note time does not match referenced frame."))
+            if len(matching_frames) > 1:
+                issues.append(ValidationIssue("note_time_ambiguous", "Note time matches multiple current frames."))
                 timing_reward = 0
         elif event.kind == "bridge":
             if not event.text.strip():
@@ -93,6 +93,8 @@ def score_raw_output(raw: str, context: QualityContext, reward_config: object | 
         if enabled
     )
     metrics = {
+        "state_length": len(action.state.strip()),
+        "state_present": action.state_present,
         "num_events": len(action.events),
         "num_notes": sum(1 for event in action.events if event.kind == "note"),
         "num_bridges": sum(1 for event in action.events if event.kind == "bridge"),
@@ -181,6 +183,15 @@ def _same_interval(start: float, end: float, expected_start: float, expected_end
         abs(start - expected_start) <= BRIDGE_INTERVAL_TOLERANCE
         and abs(end - expected_end) <= BRIDGE_INTERVAL_TOLERANCE
     )
+
+
+def _matching_frames_for_note(event: ModelEvent, frames: list[FrameRef]) -> list[FrameRef]:
+    return [
+        frame
+        for frame in frames
+        if abs(event.start_time - frame.start_time) <= BRIDGE_INTERVAL_TOLERANCE
+        and abs(event.end_time - frame.end_time) <= BRIDGE_INTERVAL_TOLERANCE
+    ]
 
 
 def _enabled(config: object | None, name: str) -> bool:

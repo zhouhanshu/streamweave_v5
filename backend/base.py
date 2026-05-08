@@ -8,6 +8,15 @@ from typing import Any
 from streamweave.schemas import BackendResult, ContentItem
 
 
+FRAME_RE = re.compile(r'<frame\s+t="([0-9.]+)-([0-9.]+)">')
+OBS_RE = re.compile(
+    r'<note\b[^>]*\bt="(?P<note_t>[^"]+)"[^>]*>'
+    r'|<bridge\b[^>]*\bt="(?P<bridge_t>[^"]+)"[^>]*>',
+    flags=re.DOTALL,
+)
+ACTIVE_Q_RE = re.compile(r'<qa\s+t="[^"]+"\s+role="q">')
+
+
 class BaseBackend:
     def generate(
         self,
@@ -26,22 +35,76 @@ class MockBackend(BaseBackend):
         generate_kwargs: dict[str, Any] | None = None,
     ) -> BackendResult:
         text = "".join(item.text for item in content if item.type == "text")
-        intervals = re.findall(r'<frame id="(\d+)" t="([0-9.]+)-([0-9.]+)">', text)
+        actual_input = _actual_input_block(text)
+        current_frames = _section_between(actual_input, "=== Current frames ===", "=== QA History ===")
+        memory = _section_between(actual_input, "=== Memory ===", "=== Current frames ===")
+        qa_history = _section_after(actual_input, "=== QA History ===")
+        qa_history = qa_history.split("Task instructions:", 1)[0]
+
+        intervals = FRAME_RE.findall(current_frames)
         if intervals:
-            frame_id, start, end = intervals[0]
-            bridge_end = intervals[-1][2]
+            start, end = intervals[0]
+            bridge_end = intervals[-1][1]
         else:
-            frame_id, start, end, bridge_end = "1", "0.0", "1.0", "1.0"
-        if 'role="q"' in text:
+            start, end, bridge_end = "0.0", "1.0", "1.0"
+
+        open_tail_start = _open_tail_bridge_start(memory)
+        active_question = ACTIVE_Q_RE.search(qa_history) is not None
+        if active_question:
+            bridge_start = open_tail_start or start
             output = (
-                "<eta></eta>\n"
+                "<state>The current frames include an active question, and the mock backend returns a placeholder answer for validation.</state>\n"
                 "<answer>A</answer>\n"
-                f'<bridge t="{start}-{bridge_end}">Mock bridge for the current frames.</bridge>'
+                f'<bridge t="{bridge_start}-{bridge_end}">Mock bridge for the current frames.</bridge>'
             )
         else:
+            if open_tail_start is not None:
+                observation = f'<bridge t="{open_tail_start}-{bridge_end}">Mock bridge extends the open memory tail.</bridge>'
+            else:
+                observation = f'<note t="{start}-{end}"></note>'
+                if float(bridge_end) > float(end):
+                    observation += f'\n<bridge t="{end}-{bridge_end}">Mock bridge after the current anchor frame.</bridge>'
             output = (
-                "<eta></eta>\n"
+                "<state>The current frames are observed without an active question, so the mock backend keeps the answer empty.</state>\n"
                 "<answer></answer>\n"
-                f'<note t="{start}-{end}" frame="{frame_id}"/>'
+                f"{observation}"
             )
         return BackendResult(text=output, latency_seconds=0.0, endpoint_id="mock", attempt_count=1)
+
+
+def _actual_input_block(text: str) -> str:
+    return text.rsplit("[Actual Input]", 1)[-1]
+
+
+def _section_between(text: str, start_marker: str, end_marker: str) -> str:
+    if start_marker not in text:
+        return ""
+    after_start = text.split(start_marker, 1)[1]
+    if end_marker not in after_start:
+        return after_start
+    return after_start.split(end_marker, 1)[0]
+
+
+def _section_after(text: str, marker: str) -> str:
+    if marker not in text:
+        return ""
+    return text.split(marker, 1)[1]
+
+
+def _open_tail_bridge_start(memory: str) -> str | None:
+    last_kind = ""
+    last_bridge_start: str | None = None
+    for match in OBS_RE.finditer(memory):
+        if match.group("note_t") is not None:
+            last_kind = "note"
+            last_bridge_start = None
+            continue
+        bridge_t = match.group("bridge_t")
+        if bridge_t is None:
+            continue
+        start = bridge_t.split("-", 1)[0].strip()
+        if not start:
+            continue
+        last_kind = "bridge"
+        last_bridge_start = start
+    return last_bridge_start if last_kind == "bridge" else None

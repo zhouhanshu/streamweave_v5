@@ -41,7 +41,12 @@ def load_samples(args: dict[str, Any]) -> list[BenchmarkSample]:
                         video_id=video_id,
                         video_path=str(video_path),
                         query_events=[QueryEvent(timestamp=ts, text=_build_query(question))],
-                        metadata={"question": question, "split": split},
+                        metadata={
+                            "question": question,
+                            "split": split,
+                            "query_timestamp": ts,
+                            "target_timestamp": ts,
+                        },
                     )
                 )
                 if limit and len(samples) >= limit:

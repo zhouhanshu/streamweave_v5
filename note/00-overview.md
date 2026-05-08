@@ -14,16 +14,16 @@
 
 - `note`：长期保留的视觉锚点，只保存当前 step 的关键帧和时间信息。
 - `bridge`：用文本压缩两个视觉锚点之间的过渡。
-- `eta`：预测下一次应该回答或继续等待的绝对视频时间。
+- `state`：当前 step 的视频状态总结和回答判断，只用于本轮推理，不写回 Memory。
 - `answer`：当前能答则输出答案，证据不足则保持空/沉默。
 - 每一步输入：`memory + qa_history + current frames`。
 - 每一步输出：
 
 ```xml
-<eta>...</eta>
+<state>...</state>
 <answer>...</answer>
 <bridge t="...">...</bridge>
-<note t="..." frame="..."></note>
+<note t="..."></note>
 ```
 
 ## 当前主线

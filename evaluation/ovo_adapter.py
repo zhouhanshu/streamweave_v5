@@ -22,6 +22,7 @@ CATEGORY_TASKS = {
     "forward": FORWARD_TASKS,
 }
 TASK_CATEGORY = {task: category for category, tasks in CATEGORY_TASKS.items() for task in tasks}
+YES_NO_RE = re.compile(r"\b(YES|Y|NO|N)\b", flags=re.IGNORECASE)
 
 
 BR_PROMPT_TEMPLATE = """\
@@ -135,15 +136,26 @@ def score_rec(response: str | None, ground_truth: Any) -> int:
 
 
 def score_yes_no(response: str | None, ground_truth: Any) -> int:
-    if response is None or not str(response).strip():
+    pred = extract_yes_no(response)
+    if pred is None:
         return 0
-    text = str(response).strip().upper()
     gt = int(ground_truth)
-    if (text == "N" or "NO" in text) and gt == 0:
-        return 1
-    if (text == "Y" or "YES" in text) and gt == 1:
-        return 1
-    return 0
+    return int(pred == gt)
+
+
+def extract_yes_no(response: str | None) -> int | None:
+    if response is None or not str(response).strip():
+        return None
+    polarities = []
+    for match in YES_NO_RE.finditer(str(response).upper()):
+        token = match.group(1)
+        polarities.append(1 if token in {"Y", "YES"} else 0)
+    if not polarities:
+        return None
+    unique = set(polarities)
+    if len(unique) > 1:
+        return None
+    return polarities[0]
 
 
 def extract_mcq(response: str | None) -> str | None:
@@ -292,17 +304,20 @@ def _forward_sample(anno: dict[str, Any], video_dir: Path, idx: int, info: dict[
 def _mcq_sample(anno: dict[str, Any], video_dir: Path) -> BenchmarkSample:
     task = anno["task"]
     video_id = str(anno["id"])
+    query_timestamp = float(anno.get("realtime", 0.0))
     return BenchmarkSample(
         sample_id=video_id,
         video_id=video_id,
         video_path=str(video_dir / f"{video_id}.mp4"),
-        query_events=[QueryEvent(timestamp=float(anno.get("realtime", 0.0)), text=_build_query(task, anno, 0))],
+        query_events=[QueryEvent(timestamp=query_timestamp, text=_build_query(task, anno, 0))],
         metadata={
             "annotation_id": video_id,
             "test_index": None,
             "category": category_for_task(task),
             "task": task,
             "ground_truth": chr(65 + int(anno["gt"])),
+            "query_timestamp": query_timestamp,
+            "target_timestamp": query_timestamp,
         },
     )
 

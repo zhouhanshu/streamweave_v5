@@ -13,7 +13,7 @@ from streamweave.config import DatasetConfig, MemoryConfig, RewardConfig, Runtim
 from streamweave.env import StreamWeaveEnv
 from streamweave.frame_store import FrameStore
 from streamweave.policies import make_policy
-from streamweave.rollout import _group_frames, _query_events_by_frame
+from streamweave.rollout import _group_frames, _query_events_by_frame, _truncate_frames_at_timestamp
 from streamweave.schemas import BenchmarkSample, ContentItem, FrameRef, QARecord, QueryEvent
 
 from .rewards import (
@@ -93,6 +93,12 @@ class StreamWeaveRLEnv:
                 "StreamWeave RL expects pre-extracted frames. "
                 f"Missing frames for video_id={self.sample.video_id!r} under {frame_dir}."
             ) from exc
+        self.frames = _truncate_frames_at_timestamp(
+            self.frames,
+            self.sample.metadata.get("target_timestamp"),
+            sample_fps=runtime.sample_fps,
+            frame_id_base=self.settings.dataset.frame_id_base,
+        )
         self.groups = _group_frames(self.frames, runtime.frames_per_step)
         if runtime.max_steps:
             self.groups = self.groups[: runtime.max_steps]

@@ -77,6 +77,34 @@ step total:   1212s
 - memory 成本：note 数、bridge token、long bridge、open-tail bridge。
 - 语义保真：先做离线 evaluator，不要一开始塞进主训练阻塞链路。
 
+## Bridge Reward 设计
+
+Bridge 的目标不是写得长，而是把两个视觉 anchor 之间的状态变化压缩成后续推理可用的记忆。后续 reward 可以分三层推进：
+
+- 结构 reward：
+  - bridge 时间段必须准确覆盖 note/window gap。
+  - open-tail bridge 必须正确继承起点。
+  - bridge 不应和 note 时间重叠。
+- 信息 reward：
+  - bridge 应包含实体、动作、状态变化、数量变化、位置变化等可用于推理的信息。
+  - 对空泛句、重复上一段 memory、没有对象或状态描述的 bridge 给惩罚。
+- 一致性 reward：
+  - bridge 不能和相邻 note 图像矛盾。
+  - 可以先用 teacher/VLM judge 或 caption overlap 做弱 reward。
+  - 更稳的路线是先离线生成 reference bridge，再训练轻量 reward model 或用相似度打分。
+
+不要一开始把强 LLM/VLM judge 放进在线 RL 主链路：成本高、延迟大、稳定性差。更实用的路线是 SFT 阶段先生成高质量 bridge，RL 阶段主要奖励结构覆盖、非空泛、弱一致性和最终 QA 增益。
+
+## RL 训练课程
+
+提高图文交错记忆推理能力不能只调最终 reward，需要分阶段训练：
+
+1. SFT warmup：先让模型学会 XML 协议、note/bridge 风格、eta/answer 时机，减少 RL 在格式探索上的浪费。
+2. Process RL：先提高 `w_step`，重点训练 keyframe selection 和 bridge 行为；最终 QA reward 保留，但不要唯一主导。
+3. Answer RL：等 note/bridge 行为稳定后，再提高 `w_success`，让模型学习利用 memory 和当前帧进行问答。
+
+这条课程的核心假设是：先把“会记、会写、会按时间组织记忆”练稳，再让最终答案 reward 主导推理能力提升。
+
 ## 下一步
 
 1. 修改 GRPO 脚本，把 `save_freq` 改成 `5` 或 `10`。

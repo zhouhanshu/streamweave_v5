@@ -14,6 +14,7 @@ BACKWARD_TASKS = {"EPM", "ASI", "HLD"}
 REAL_TIME_TASKS = {"OCR", "ACR", "ATR", "STU", "FPD", "OJR"}
 FORWARD_TASKS = {"REC", "SSR", "CRR"}
 OVO_TASKS = BACKWARD_TASKS | REAL_TIME_TASKS | FORWARD_TASKS
+YES_NO_RE = re.compile(r"\b(YES|Y|NO|N)\b", flags=re.IGNORECASE)
 
 
 def score_answer(
@@ -96,17 +97,30 @@ def _score_ovo(answer: str, ground_truth: Any, metadata: Mapping[str, Any]) -> f
         nums = re.findall(r"\d+", str(answer or ""))
         return 1.0 if nums and "".join(nums) == str(gt).strip() else 0.0
     if task in {"SSR", "CRR"}:
-        text = str(answer or "").strip().upper()
+        pred = _extract_yes_no(answer)
+        if pred is None:
+            return 0.0
         try:
             gt_int = int(gt)
         except (TypeError, ValueError):
             return 0.0
-        if (text == "N" or "NO" in text) and gt_int == 0:
-            return 1.0
-        if (text == "Y" or "YES" in text) and gt_int == 1:
-            return 1.0
-        return 0.0
+        return 1.0 if pred == gt_int else 0.0
     return _score_default(answer, gt, mode="exact_or_contains")
+
+
+def _extract_yes_no(answer: str | None) -> int | None:
+    if answer is None or not str(answer).strip():
+        return None
+    polarities = []
+    for match in YES_NO_RE.finditer(str(answer).upper()):
+        token = match.group(1)
+        polarities.append(1 if token in {"Y", "YES"} else 0)
+    if not polarities:
+        return None
+    unique = set(polarities)
+    if len(unique) > 1:
+        return None
+    return polarities[0]
 
 
 def _normalize_options(value: Any) -> list[str]:

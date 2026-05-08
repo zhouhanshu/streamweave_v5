@@ -43,7 +43,7 @@ class OpenAICompatibleBackend(BaseBackend):
         overrides = generate_kwargs or {}
         temperature = overrides.get("temperature", self.config.temperature)
         max_tokens = overrides.get("max_output_tokens", self.config.max_tokens)
-        top_p = overrides.get("top_p")
+        top_p = overrides.get("top_p", self.config.top_p)
 
         def call() -> tuple[str, dict[str, Any]]:
             request: dict[str, Any] = {

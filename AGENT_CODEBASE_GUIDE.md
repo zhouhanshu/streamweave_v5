@@ -15,15 +15,15 @@ Memory + QA History + Current frame window -> model XML -> validate/repair -> co
 The model speaks a small XML protocol:
 
 ```xml
-<eta>...</eta>
+<state>...</state>
 <answer>...</answer>
-<note t="..." frame="N"></note>
+<note t="..."></note>
 <bridge t="...">...</bridge>
 ```
 
+- `state`: current-step summary used before answering. It is not committed to Memory.
 - `note`: visual anchor. It stores one current frame as evidence for future steps.
 - `bridge`: text summary between notes, or across a note/window gap.
-- `eta`: absolute timestamp for next/current answer.
 - `answer`: emitted only when the active QA should be answered or updated.
 
 The core runtime package is `streamweave/`. Evaluation, SFT, and RL all reuse the same prompt/parser/quality/memory logic, but differ in how model outputs are generated and accepted.
@@ -169,17 +169,16 @@ Evaluation adapters:
 
 Strict validation (`streamweave/parser.py`) requires:
 
-- exactly one `<eta>` and one `<answer>`;
-- output starts with `<eta>` then `<answer>`;
+- exactly one `<state>` and one `<answer>`;
+- output starts with `<state>` then `<answer>`;
 - all later tags are `<note>` or `<bridge>`;
-- notes use paired tags, not self-closing tags;
+- notes use paired tags with only a `t` attribute, not self-closing tags;
 - no text outside allowed XML tags;
 - at least one observation tag.
 
 Quality checks (`streamweave/quality.py`) add:
 
-- note frame id is in current window;
-- note time matches referenced frame;
+- note time matches exactly one current frame;
 - bridge text is non-empty;
 - bridge time is inside current step unless it is the first open-tail bridge;
 - events are chronological and non-overlapping;
@@ -262,12 +261,12 @@ run_parallel_pipeline.py
 SFT-only constraints in `data_engine/sft/rollout_sft.py`:
 
 - `_key_frame_context()` injects annotated key-frame constraints into teacher prompt.
-- `_apply_key_frame_quality_constraints()` requires exactly the annotated local note ids, no extras.
-- `_apply_qa_eta_answer_constraints()` enforces eta/answer scheduling:
-  - no question: empty eta/answer;
-  - already answered: empty eta/answer;
-  - realtime/backward: answer in target window;
-  - forward: predict eta before clue window, answer when due.
+- `_apply_key_frame_quality_constraints()` requires exactly the annotated note time ranges, no extras.
+- `_apply_qa_answer_constraints()` enforces answer scheduling:
+  - no question: empty answer;
+  - already answered: empty answer;
+  - realtime/backward: answer when the question is active;
+  - forward: keep answer empty before the clue window, answer when due.
 - `_check_sample_answer()` accepts a sample only when every emitted answer matches GT.
 
 Acceptance rule:
@@ -580,7 +579,7 @@ Parser/runtime package import:
 ```bash
 python - <<'PY'
 from streamweave.parser import strict_validate_raw_output
-raw = '<eta></eta><answer></answer><bridge t="0.0-1.0">x</bridge>'
+raw = '<state>x</state><answer></answer><bridge t="0.0-1.0">x</bridge>'
 print(strict_validate_raw_output(raw).parser_ok)
 PY
 ```

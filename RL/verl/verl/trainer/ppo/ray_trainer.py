@@ -1243,6 +1243,15 @@ class RayPPOTrainer:
             if key in batch.batch:
                 batch.batch[key][-pad_size:] = 0
 
+    @staticmethod
+    def _mask_critic_padding_loss(batch: DataProto, pad_size: int) -> None:
+        """Keep dispatch padding from contributing to the critic loss."""
+        if pad_size == 0:
+            return
+        for key in ("value_mask", "response_mask"):
+            if key in batch.batch:
+                batch.batch[key][-pad_size:] = 0
+
     def _balance_batch(self, batch: DataProto, metrics, logging_prefix="global_seqlen", keep_minibatch=False):
         """Reorder the data on single controller such that each dp rank gets similar total tokens.
 
@@ -1327,7 +1336,15 @@ class RayPPOTrainer:
             values = tu.get_tensordict({"values": values.float()})
             values = DataProto.from_tensordict(values)
         else:
-            values = self.critic_wg.compute_values(batch)
+            micro_batch_size_per_gpu = self.config.critic.get(
+                "forward_micro_batch_size_per_gpu",
+                self.config.critic.get("ppo_micro_batch_size_per_gpu", 1),
+            )
+            padded_batch, pad_size = self._pad_batch_to_logprob_divisor(
+                batch, self.critic_wg, "critic", micro_batch_size_per_gpu
+            )
+            values = self.critic_wg.compute_values(padded_batch)
+            values = unpad_dataproto(values, pad_size)
         return values
 
     def _compute_ref_log_prob(self, batch: DataProto) -> DataProto:
@@ -1364,7 +1381,20 @@ class RayPPOTrainer:
             ref_log_prob = DataProto.from_tensordict(ref_log_prob)
             ref_log_prob = unpad_dataproto(ref_log_prob, pad_size)
         else:
-            ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(batch)
+            if self.ref_in_actor:
+                micro_batch_size_per_gpu = self.config.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu
+                padded_batch, pad_size = self._pad_batch_to_logprob_divisor(
+                    batch, self.actor_rollout_wg, "actor", micro_batch_size_per_gpu
+                )
+                padded_batch.meta_info["is_lora"] = True
+                ref_log_prob = self.actor_rollout_wg.compute_log_prob(padded_batch)
+            else:
+                micro_batch_size_per_gpu = self.config.actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu
+                padded_batch, pad_size = self._pad_batch_to_logprob_divisor(
+                    batch, self.ref_policy_wg, "ref", micro_batch_size_per_gpu
+                )
+                ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(padded_batch)
+            ref_log_prob = unpad_dataproto(ref_log_prob, pad_size)
 
         return ref_log_prob
 
@@ -1400,7 +1430,12 @@ class RayPPOTrainer:
             old_log_prob = DataProto.from_tensordict(old_log_prob)
             old_log_prob = unpad_dataproto(old_log_prob, pad_size)
         else:
-            old_log_prob = self.actor_rollout_wg.compute_log_prob(batch)
+            micro_batch_size_per_gpu = self.config.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu
+            padded_batch, pad_size = self._pad_batch_to_logprob_divisor(
+                batch, self.actor_rollout_wg, "actor", micro_batch_size_per_gpu
+            )
+            old_log_prob = self.actor_rollout_wg.compute_log_prob(padded_batch)
+            old_log_prob = unpad_dataproto(old_log_prob, pad_size)
             old_log_prob_mfu = 0
         return old_log_prob, old_log_prob_mfu
 
@@ -1445,7 +1480,15 @@ class RayPPOTrainer:
             actor_output["perf/mfu/actor"] = actor_output.pop("actor/mfu")
             actor_output = DataProto.from_single_dict(data={}, meta_info={"metrics": actor_output})
         else:
-            actor_output = self.actor_rollout_wg.update_actor(batch)
+            ppo_mini_batch_size = self.config.actor_rollout_ref.actor.ppo_mini_batch_size
+            ppo_mini_batch_size = ppo_mini_batch_size * self.config.actor_rollout_ref.rollout.n
+            # Legacy worker dispatch also requires equal DP chunks. Stepwise rollout
+            # emits variable turn rows, so pad before dispatch and mask padding loss.
+            padded_batch, pad_size = self._pad_batch_to_dp_divisor(
+                batch, self.actor_rollout_wg, "actor", extra_divisor=ppo_mini_batch_size
+            )
+            self._mask_actor_padding_loss(padded_batch, pad_size)
+            actor_output = self.actor_rollout_wg.update_actor(padded_batch)
 
         return actor_output
 
@@ -1476,7 +1519,13 @@ class RayPPOTrainer:
             output["perf/mfu/critic"] = output.pop("critic/mfu")
             critic_output = DataProto.from_single_dict(data={}, meta_info={"metrics": output})
         else:
-            critic_output = self.critic_wg.update_critic(batch)
+            ppo_mini_batch_size = self.config.critic.ppo_mini_batch_size
+            ppo_mini_batch_size = ppo_mini_batch_size * self.config.actor_rollout_ref.rollout.n
+            padded_batch, pad_size = self._pad_batch_to_dp_divisor(
+                batch, self.critic_wg, "critic", extra_divisor=ppo_mini_batch_size
+            )
+            self._mask_critic_padding_loss(padded_batch, pad_size)
+            critic_output = self.critic_wg.update_critic(padded_batch)
         return critic_output
 
     def fit(self):

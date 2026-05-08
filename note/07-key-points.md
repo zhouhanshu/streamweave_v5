@@ -10,23 +10,26 @@
 - 当前性能瓶颈主要在 `old_log_prob` 和 `update_actor`，不是 vLLM 生成。
 - V4 第一次 SFT 在 OVO 1/8 上明显退化，不能默认当作更优 RL 起点。
 - V3 + Gemini 在 OVO full 上达到 `65.81`，证明方法上限存在，但 Forward/CRR 仍是核心短板。
+- RL 优化不要只押最终 QA reward；应分阶段做 `SFT warmup -> Process RL -> Answer RL`，先练 keyframe/bridge/记忆组织，再提高 `w_success` 训练最终推理。
+- Bridge reward 应分为结构覆盖、信息密度、一致性三类；在线 RL 先用轻量信号，强 VLM/LLM judge 更适合离线生成 reference 或训练 reward model。
 
 ## 协议硬约束
 
 - 输出固定为：
 
 ```xml
-<eta>...</eta>
+<state>...</state>
 <answer>...</answer>
 <bridge t="...">...</bridge>
-<note t="..." frame="..."></note>
+<note t="..."></note>
 ```
 
+- `state` 是当前 step 的状态总结和回答判断，不写回 Memory。
 - `note` 只保存视觉锚点，不保存文字。
 - `bridge` 保存文本压缩和绝对时间区间。
 - `qa_history` 是时间顺序日志，不维护 active query 配对。
-- `eta` 是视频内绝对秒级时间戳，不是相对 delay。
 - `<note .../>` 自闭合格式非法，必须使用 `<note ...></note>`。
+- `note` 只允许 `t` 属性，不再使用 `frame` 或局部 id。
 - `bridge` gap 完整性是硬约束，包括窗口边界、相邻 note 和 open-tail 继承。
 
 ## 数据口径

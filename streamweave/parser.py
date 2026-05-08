@@ -9,13 +9,14 @@ from .schemas import ModelAction, ModelEvent, ValidationIssue
 
 
 TOKEN_RE = re.compile(
-    r"<eta>(?P<eta>.*?)</eta>"
+    r"<state>(?P<state>.*?)</state>"
     r"|<answer>(?P<answer>.*?)</answer>"
-    r'|<note\s+t="(?P<note_t>[^"]+)"\s+frame="(?P<note_frame>\d+)">\s*</note>'
-    r'|<note\s+t="(?P<self_note_t>[^"]+)"\s+frame="(?P<self_note_frame>\d+)"\s*/>'
+    r'|<note\s+t="(?P<note_t>[^"]+)">\s*</note>'
     r'|<bridge\s+t="(?P<bridge_t>[^"]+)">(?P<bridge_text>.*?)</bridge>',
     flags=re.DOTALL,
 )
+
+SELF_CLOSING_NOTE_RE = re.compile(r'<note\b[^>]*\bt="[^"]+"[^>]*/>', flags=re.DOTALL)
 
 
 @dataclass(slots=True)
@@ -38,32 +39,35 @@ def strict_validate_raw_output(raw: str) -> ParseResult:
         issues.append(ValidationIssue("text_outside_tags", "Raw output contains trailing text outside XML tags."))
 
     if not tokens:
-        action = ModelAction(eta=None, answer="", events=[], raw=raw, eta_present=False, answer_present=False)
+        action = ModelAction(state="", answer="", events=[], raw=raw, state_present=False, answer_present=False)
         issues.append(ValidationIssue("no_tags", "No valid XML tags found."))
         return ParseResult(action=action, parser_ok=False, issues=issues)
 
     action, parse_issues = _tokens_to_action(raw, tokens)
     issues.extend(parse_issues)
     kinds = [_token_kind(match) for match in tokens]
-    for match in tokens:
-        if _is_self_closing_note(match):
-            issues.append(
-                ValidationIssue(
-                    "note_tag_format",
-                    'Current output notes must use paired tags like <note t="36.0-37.0" frame="2"></note>, not self-closing <note .../>.',
-                )
+    if SELF_CLOSING_NOTE_RE.search(raw):
+        issues.append(
+            ValidationIssue(
+                "note_tag_format",
+                'Current output notes must use paired tags like <note t="36.0-37.0"></note>, not self-closing <note .../>.',
             )
-    if kinds.count("eta") != 1:
-        issues.append(ValidationIssue("eta_count", "Raw output must contain exactly one <eta> tag."))
+        )
+    if kinds.count("state") != 1:
+        issues.append(ValidationIssue("state_count", "Raw output must contain exactly one <state> tag."))
+    if action.state_present and not action.state.strip():
+        issues.append(ValidationIssue("state_empty", "Raw output <state> must summarize the current state and QA decision."))
+    if action.state_present and re.search(r"</?\w", action.state):
+        issues.append(ValidationIssue("state_contains_xml", "Raw output <state> must not contain XML tags."))
     if kinds.count("answer") != 1:
         issues.append(ValidationIssue("answer_count", "Raw output must contain exactly one <answer> tag."))
     if not action.events:
         issues.append(ValidationIssue("missing_observation", "Raw output must contain at least one note or bridge tag."))
     if len(kinds) >= 2:
-        if kinds[0] != "eta" or kinds[1] != "answer":
-            issues.append(ValidationIssue("tag_order", "Raw output must start with <eta> then <answer>."))
+        if kinds[0] != "state" or kinds[1] != "answer":
+            issues.append(ValidationIssue("tag_order", "Raw output must start with <state> then <answer>."))
     else:
-        issues.append(ValidationIssue("tag_order", "Raw output must start with <eta> then <answer>."))
+        issues.append(ValidationIssue("tag_order", "Raw output must start with <state> then <answer>."))
     for kind in kinds[2:]:
         if kind not in {"note", "bridge"}:
             issues.append(ValidationIssue("tag_order", "Only note/bridge tags may appear after <answer>."))
@@ -81,34 +85,30 @@ def parse_for_repair(raw: str) -> ParseResult:
 
 def _tokens_to_action(raw: str, tokens: list[re.Match[str]]) -> tuple[ModelAction, list[ValidationIssue]]:
     issues: list[ValidationIssue] = []
-    eta = None
+    state = ""
     answer = ""
-    eta_present = False
+    state_present = False
     answer_present = False
     events: list[ModelEvent] = []
     for index, match in enumerate(tokens):
         kind = _token_kind(match)
         try:
-            if kind == "eta":
-                eta_present = True
-                value = (match.group("eta") or "").strip()
-                if value:
-                    eta = float(value)
+            if kind == "state":
+                state_present = True
+                state = (match.group("state") or "").strip()
             elif kind == "answer":
                 answer_present = True
                 answer = (match.group("answer") or "").strip()
             elif kind == "note":
-                note_t = match.group("note_t") or match.group("self_note_t")
-                note_frame = match.group("note_frame") or match.group("self_note_frame")
-                if note_t is None or note_frame is None:
-                    raise ValueError("Missing note time or frame attribute")
+                note_t = match.group("note_t")
+                if note_t is None:
+                    raise ValueError("Missing note time attribute")
                 start, end = _parse_interval(note_t)
                 events.append(
                     ModelEvent(
                         kind="note",
                         start_time=start,
                         end_time=end,
-                        frame_index=int(note_frame) - 1,
                     )
                 )
             elif kind == "bridge":
@@ -130,11 +130,11 @@ def _tokens_to_action(raw: str, tokens: list[re.Match[str]]) -> tuple[ModelActio
             )
     return (
         ModelAction(
-            eta=eta,
+            state=state,
             answer=answer,
             events=events,
             raw=raw,
-            eta_present=eta_present,
+            state_present=state_present,
             answer_present=answer_present,
         ),
         issues,
@@ -142,17 +142,13 @@ def _tokens_to_action(raw: str, tokens: list[re.Match[str]]) -> tuple[ModelActio
 
 
 def _token_kind(match: re.Match[str]) -> str:
-    if match.group("eta") is not None:
-        return "eta"
+    if match.group("state") is not None:
+        return "state"
     if match.group("answer") is not None:
         return "answer"
-    if match.group("note_t") is not None or match.group("self_note_t") is not None:
+    if match.group("note_t") is not None:
         return "note"
     return "bridge"
-
-
-def _is_self_closing_note(match: re.Match[str]) -> bool:
-    return match.group("self_note_t") is not None
 
 
 def _parse_interval(text: str) -> tuple[float, float]:

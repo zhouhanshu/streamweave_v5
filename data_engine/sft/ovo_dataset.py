@@ -25,12 +25,13 @@ def load_ovo_sample_plans(
     sample_ids: set[str] | None = None,
     task: str = "",
 ) -> list[SamplePlan]:
+    adapter_limit = offset + limit if limit else 0
     benchmark_args = {
         "anno_path": str(anno_path),
         "video_dir": str(video_dir),
         "sample_ids": sorted(sample_ids or []),
         "task": task,
-        "limit": limit,
+        "limit": adapter_limit,
     }
     samples = ovo_adapter.load_samples(benchmark_args)
     if offset:
@@ -84,6 +85,7 @@ def ovo_sample_to_plan(
     query = query_events[0]
     task = str(sample.metadata.get("task") or "")
     metadata: JsonDict = {
+        **dict(sample.metadata),
         "benchmark": "ovo",
         "sample_metadata": dict(sample.metadata),
         "video_path": sample.video_path,

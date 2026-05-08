@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import json
 import sys
 from dataclasses import dataclass
@@ -15,9 +16,11 @@ if __package__ in {None, ""}:
 from backend.factory import create_backend
 from streamweave.config import BackendConfig, RuntimeConfig
 
+from data_engine.sft.constraints import answer_matches_metadata
 from data_engine.sft.export_llamafactory import dataset_info, export_sharegpt
 from data_engine.sft.io_utils import read_jsonl, write_json, write_jsonl
-from data_engine.sft.rollout_sft import SFTMockBackend, SFTSynthesisConfig, iter_sft_sample_records
+from data_engine.sft.mock_backend import SFTMockBackend
+from data_engine.sft.rollout_sft import SFTSynthesisConfig, iter_sft_sample_records
 from data_engine.sft.sample_sources import (
     SampleSourceConfig,
     load_sample_source,
@@ -80,6 +83,8 @@ def run_finalize(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, in
     accepted_samples = 0
     failed_samples = 0
     attempted_steps = 0
+    variant_rescue_rows = 0
+    variant_rescue_variants = 0
     for sample_record in sample_records:
         path = sample_record.get("path")
         if not path:
@@ -87,13 +92,17 @@ def run_finalize(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, in
             sample_record["path"] = f"samples/{safe_file_stem(sample_id)}.json"
         manifest_rows.append(sample_manifest_row(sample_record))
         attempted_steps += int(sample_record.get("num_steps", 0) or 0)
+        rows = training_step_rows(sample_record)
         if sample_record.get("usable_for_sft"):
             accepted_samples += 1
-            for row in sample_record.get("steps", []):
-                if not row.get("task_failed"):
-                    accepted_steps.append(row)
         else:
             failed_samples += 1
+        accepted_steps.extend(rows)
+        for row in rows:
+            metadata = row.get("metadata") or {}
+            if isinstance(metadata, dict) and metadata.get("variant_rescue"):
+                variant_rescue_rows += 1
+                variant_rescue_variants += 1 + len(row.get("answer_variants") or [])
 
     write_jsonl(manifest_rows, paths.sample_manifest)
     write_jsonl(accepted_steps, paths.intermediate)
@@ -106,6 +115,8 @@ def run_finalize(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, in
         "num_failed_samples": failed_samples,
         "num_steps": len(accepted_steps),
         "num_attempted_steps": attempted_steps,
+        "num_variant_rescue_rows": variant_rescue_rows,
+        "num_variant_rescue_variants": variant_rescue_variants,
         "prompt_type": args.prompt_type,
         "policy": args.policy,
         "backend": args.backend,
@@ -204,6 +215,11 @@ def make_synthesis_config(args: argparse.Namespace, source_config: SampleSourceC
         media_dir=source_media_dir(source_config),
         keep_invalid=args.keep_invalid,
         max_attempts=args.max_attempts,
+        max_notes_per_step=args.max_notes_per_step,
+        bridge_note_reminder_seconds=args.bridge_note_reminder_seconds,
+        answer_step_rollouts=args.answer_step_rollouts,
+        answer_step_temperature=args.answer_step_temperature,
+        answer_step_top_p=args.answer_step_top_p,
     )
 
 
@@ -233,6 +249,7 @@ def relative_path(path: Path, root: Path) -> str:
 
 
 def sample_manifest_row(sample_record: dict) -> dict:
+    rescued_rows = rescued_variant_step_rows(sample_record)
     return {
         "sample_id": sample_record.get("sample_id"),
         "video_id": sample_record.get("video_id"),
@@ -246,6 +263,8 @@ def sample_manifest_row(sample_record: dict) -> dict:
         "failure_step_index": sample_record.get("failure_step_index"),
         "num_steps": sample_record.get("num_steps"),
         "num_expected_steps": sample_record.get("num_expected_steps"),
+        "variant_rescue_rows": len(rescued_rows),
+        "variant_rescue_variants": sum(1 + len(row.get("answer_variants") or []) for row in rescued_rows),
         "checks": sample_record.get("checks", {}),
     }
 
@@ -267,24 +286,88 @@ def accepted_step_rows(paths: PipelinePaths) -> list[dict]:
     if not paths.sample_manifest.exists():
         rows: list[dict] = []
         for sample_record in load_sample_records(paths):
-            if sample_record.get("usable_for_sft"):
-                rows.extend(row for row in sample_record.get("steps", []) if not row.get("task_failed"))
+            rows.extend(training_step_rows(sample_record))
         return rows
     rows: list[dict] = []
     for manifest in read_jsonl(paths.sample_manifest):
-        if not manifest.get("usable_for_sft"):
+        if not manifest.get("usable_for_sft") and not int(manifest.get("variant_rescue_rows", 0) or 0):
             continue
         sample_path = paths.sample_manifest.parent / str(manifest.get("path") or "")
         if not sample_path.exists():
-            raise FileNotFoundError(f"Accepted sample JSON does not exist: {sample_path}")
+            raise FileNotFoundError(f"SFT sample JSON does not exist: {sample_path}")
         import json
 
         with sample_path.open(encoding="utf-8") as f:
             sample_record = json.load(f)
-        for row in sample_record.get("steps", []):
-            if not row.get("task_failed"):
-                rows.append(row)
+        rows.extend(training_step_rows(sample_record))
     return rows
+
+
+def training_step_rows(sample_record: dict) -> list[dict]:
+    if sample_record.get("usable_for_sft"):
+        return [row for row in sample_record.get("steps", []) if not row.get("task_failed")]
+    return rescued_variant_step_rows(sample_record)
+
+
+def rescued_variant_step_rows(sample_record: dict) -> list[dict]:
+    if sample_record.get("usable_for_sft") or sample_record.get("status") == "error":
+        return []
+    if sample_record.get("failure_reason") != "answer_incorrect":
+        return []
+    checks = sample_record.get("checks") or {}
+    if not checks.get("all_steps_valid"):
+        return []
+
+    rescued: list[dict] = []
+    for step in sample_record.get("steps", []):
+        if step.get("task_failed"):
+            continue
+        variants = _correct_answer_variants(step)
+        if variants:
+            rescued.append(_variant_rescue_row(step, variants))
+    return rescued
+
+
+def _correct_answer_variants(step: dict) -> list[dict]:
+    variants = step.get("answer_variants") or []
+    if not isinstance(variants, list):
+        return []
+    metadata = step.get("metadata") or {}
+    annotation = metadata.get("annotation") if isinstance(metadata, dict) else {}
+    if not isinstance(annotation, dict):
+        annotation = {}
+    task = str(step.get("question_type") or "")
+
+    correct: list[dict] = []
+    for variant in variants:
+        if not isinstance(variant, dict) or not variant.get("accepted"):
+            continue
+        answer = str(variant.get("answer") or "").strip()
+        target_xml = str(variant.get("target_xml") or variant.get("raw_teacher_xml") or "").strip()
+        if not answer or not target_xml:
+            continue
+        if answer_matches_metadata(annotation, task, answer) is True:
+            correct.append(variant)
+    return correct
+
+
+def _variant_rescue_row(step: dict, variants: list[dict]) -> dict:
+    primary = variants[0]
+    remaining = variants[1:]
+    target_xml = str(primary.get("target_xml") or primary.get("raw_teacher_xml") or "").strip()
+    out = deepcopy(step)
+    out["sample_id"] = f"{step.get('sample_id')}_answer_variant_rescue_{int(primary.get('variant_index', 0)):04d}"
+    out["target_xml"] = target_xml
+    out["raw_teacher_xml"] = target_xml
+    out["target_raw_output"] = target_xml
+    out["quality"] = {"raw": primary.get("quality", {}), "target": primary.get("quality", {})}
+    out["answer_variants"] = remaining
+    out["task_failed"] = False
+    metadata = dict(out.get("metadata") or {})
+    metadata["variant_rescue"] = True
+    metadata["answer_variant_rescue_primary"] = primary
+    out["metadata"] = metadata
+    return out
 
 
 def resolve_stages(stage: str) -> list[str]:
@@ -338,6 +421,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--keep-invalid", action="store_true")
     parser.add_argument("--max-attempts", type=int, default=3)
+    parser.add_argument("--max-notes-per-step", type=int, default=1)
+    parser.add_argument("--bridge-note-reminder-seconds", type=float, default=20.0)
+    parser.add_argument("--answer-step-rollouts", type=int, default=5)
+    parser.add_argument("--answer-step-temperature", type=float, default=0.3)
+    parser.add_argument("--answer-step-top-p", type=float, default=0.95)
 
     parser.add_argument("--backend", default="mock")
     parser.add_argument("--model", default="mock")

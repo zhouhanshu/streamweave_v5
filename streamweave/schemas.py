@@ -73,16 +73,15 @@ class ModelEvent:
     start_time: float
     end_time: float
     text: str = ""
-    frame_index: int | None = None
 
 
 @dataclass(slots=True)
 class ModelAction:
-    eta: float | None
+    state: str
     answer: str
     events: list[ModelEvent]
     raw: str = ""
-    eta_present: bool = False
+    state_present: bool = False
     answer_present: bool = False
 
 

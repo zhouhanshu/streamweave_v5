@@ -6,8 +6,7 @@ V5_DIR="$(cd -- "${RL_DIR}/.." && pwd)"
 PYTHON_BIN="/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/python"
 
 RUN_NAME="grpo_ovo_qwen3vl8b_full_vllm_8gpu_lt120s_fused_chunked"
-RUN_STAMP="$(date -u +%Y%m%d.%H%M%S)"
-RUN_DIR="${RL_DIR}/outputs/debug/${RUN_NAME}_${RUN_STAMP}"
+RUN_DIR="${RL_DIR}/outputs/debug/${RUN_NAME}"
 LOG_FILE="${RUN_DIR}/train.log"
 RAY_TMPDIR="/tmp/swray_$$"
 
@@ -129,6 +128,7 @@ cd "${RL_DIR}"
     actor_rollout_ref.rollout.max_num_batched_tokens=16384 \
     actor_rollout_ref.rollout.max_num_seqs=2048 \
     actor_rollout_ref.rollout.enable_chunked_prefill=True \
+    +actor_rollout_ref.rollout.engine_kwargs.vllm.disable_mm_preprocessor_cache=True \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.free_cache_engine=True \
     actor_rollout_ref.rollout.agent.num_workers=16 \
@@ -146,7 +146,7 @@ cd "${RL_DIR}"
     trainer.project_name=streamweave_rl \
     trainer.experiment_name="${RUN_NAME}" \
     trainer.default_local_dir="${RUN_DIR}/checkpoints" \
-    trainer.resume_mode=disable \
+    trainer.resume_mode=auto \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     ray_kwargs.ray_init.num_cpus=64 \

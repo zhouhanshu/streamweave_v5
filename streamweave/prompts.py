@@ -9,11 +9,11 @@ from .schemas import ContentItem, FrameRef
 
 TEACHER_HEADER = """\
 [STREAM_AGENT]
-You are a streaming video agent that maintains a real-time Interleaved Memory to track the video stream and specifically answers queries from the QA History section.
-In QA History, role="q" means user question, role="a" means previous model answer.
+You are a streaming video agent that maintains an Interleaved Memory to understand a video stream, and you specifically answer questions in the QA History section.
+In QA History, role="q" indicates a user question, and role="a" indicates your previous answer.
 
-- <note>: **Visual Anchor**. Records representative or noteworthy frames that are difficult to describe in text, providing visual evidence for complex states or future questions.
-- <bridge>: **Semantic Link**. Describes the evolution between anchors, capturing changes between frames in text so that the entire process can be reconstructed even without images.
+- <note>: **visual anchor**. Records representative or noteworthy frames that are difficult to describe in text, providing visual evidence for complex states or future questions.
+- <bridge>: **semantic link**. Describes the evolution between visual anchors, using text to describe changes between frames so that the whole process can be reconstructed even without images.
 """
 
 
@@ -23,49 +23,86 @@ TEACHER_FEW_SHOT_EXAMPLE = """\
 === Memory ===
 <empty/>
 ...
+=== Current frames ===
+...
 [Output]
-<eta></eta>
+<state>At the beginning of the video, the operator enters the work area and starts preparing. There are currently no active questions.</state>
 <answer></answer>
-<note t="0.0-1.0" frame="1"></note>
-<bridge t="1.0-5.0">The operator enters the frame and begins setting up the task area at the workbench.</bridge>
+<note t="0.0-1.0"></note>
+<bridge t="1.0-5.0">The operator enters the frame and begins arranging the task area on the current workbench.</bridge>
 
-=== Few-shot Example 2 (Open-Tail Inheritance with Mid-step Note) ===
+=== Few-shot Example 2 (Open-tail inheritance, with an intermediate-step note) ===
 [Input]
 === Memory ===
-<bridge t="10.0-15.0">The operator is assembling a component.</bridge> (Comment: Ends with a bridge, with no note after it)
+<note t="0.0-1.0"></note>
+<bridge t="1.0-5.0">The camera moves left, and another workbench comes into view</bridge>
+<note t="5.0-6.0"></note>
+<bridge t="6.0-10.0">The operator is assembling a component on the new workbench.</bridge>(Annotation: ends with a bridge, with no note afterward)
 === Current frames ===
-15.0-20.0s (Around t=17 the operator picks up a red component.)
+<frame t="10.0-11.0"><image></frame>
+<frame t="11.0-12.0"><image></frame>
+<frame t="12.0-13.0"><image></frame>(Around t=12, the operator picks up a broken phone.)
+<frame t="13.0-14.0"><image></frame>
+<frame t="14.0-15.0"><image></frame>
 [Output]
-<eta></eta>
+<state>After entering the work area, the operator arranged objects on the workbench, then turned to another workbench and began assembling a component. The current frames show that he has picked up a broken phone. There is currently no question, so I do not need to answer</state>
 <answer></answer>
-<bridge t="10.0-17.0">The operator finishes the base alignment and reaches for a new component.</bridge>
-<note t="17.0-18.0" frame="3"></note>
-<bridge t="18.0-20.0">The operator inspects the red component and aligns it with the assembly.</bridge>
-(Comment: The first bridge inherits start '10.0' from Memory and ends at the note's start time. The note uses paired open/close tags with an empty body. A final bridge then fills the gap from the note's end to the step end.)
+<bridge t="6.0-12.0">The operator is assembling a component on this new workbench, then picks up a broken phone.</bridge>
+<note t="12.0-13.0"></note>
+<bridge t="13.0-15.0">The operator is inspecting the broken phone.</bridge>
+(Annotation: the first bridge inherits the start time '6.0' from the bridge in Memory and ends at the start time of the note. The note uses paired opening/closing tags and has an empty body. The final bridge fills the gap from the end of the note to the end of the step.)
 
-=== Few-shot Example 3 (Incremental QA Update) ===
+=== Few-shot Example 3 (Incremental QA update) ===
 [Input]
-=== QA History ===
-<qa t="12.0" role="q">What is the operator doing now?</qa>
-<qa t="13.0" role="a">Retrieving an eggplant from the refrigerator.</qa>
+=== Memory ===
+<note t="0.0-1.0"></note>
+<bridge t="1.0-5.0">The camera moves left, and another workbench comes into view</bridge>
+<note t="5.0-6.0"></note>
+<bridge t="6.0-12.0">The operator is assembling a component on this workbench, then picks up a broken phone.</bridge>
+<note t="12.0-13.0"></note>
+<bridge t="13.0-15.0">The operator is inspecting the broken phone.</bridge>
 === Current frames ===
-15.0-20.0s (The operator walks back to the counter with the eggplant)
+<frame t="15.0-16.0"><image></frame>
+<frame t="16.0-17.0"><image></frame>(Around t=16, the operator opens the phone's back cover.)
+<frame t="17.0-18.0"><image></frame>
+<frame t="18.0-19.0"><image></frame>
+<frame t="19.0-20.0"><image></frame>
+=== QA History ===
+<qa t="17.0" role="q">What is the operator doing now?</qa>
 [Output]
-<eta>25.0</eta>
-<answer>Walking back to the workbench with the eggplant, preparing to process it.</answer>
-<bridge t="15.0-20.0">The operator closes the refrigerator door and brings the eggplant back to the counter.</bridge>
+<state>After entering the work area, the operator first arranged items on one workbench, then turned to another workbench and assembled a component, then picked up a broken phone. The current frames show that he has opened the phone's back cover. The question asks what the operator is doing now, and I can answer based on what is visible in the current frames</state>
+<answer>The operator has opened the phone's back cover</answer>
+<bridge t="13.0-16.0">The operator is inspecting the broken phone.</bridge>
+<note t="16.0-17.0"></note>
+<bridge t="17.0-20.0">The operator has opened the phone's back cover and placed the cover on the table</bridge>
 
-=== Few-shot Example 4 (Silent Observation) ===
+=== Few-shot Example 4 (Silent observation) ===
 [Input]
-=== QA History ===
-<qa t="12.0" role="a">Walking back to the workbench with the eggplant.</qa> (Comment: No new question was asked)
+=== Memory ===
+<note t="0.0-1.0"></note>
+<bridge t="1.0-5.0">The camera moves left, and another workbench comes into view</bridge>
+<note t="5.0-6.0"></note>
+<bridge t="6.0-12.0">The operator is assembling a component on this workbench, then picks up a broken phone.</bridge>
+<note t="12.0-13.0"></note>
+<bridge t="13.0-16.0">The operator is inspecting the broken phone.</bridge>
+<note t="16.0-17.0"></note>
+<bridge t="17.0-20.0">The operator has opened the phone's back cover and placed the cover on the table</bridge>
 === Current frames ===
-20.0-25.0s (Action continues)
+<frame t="20.0-21.0"><image></frame>
+<frame t="21.0-22.0"><image></frame>(Around t=21, the operator picks up a new battery.)
+<frame t="22.0-23.0"><image></frame>
+<frame t="23.0-24.0"><image></frame>(Around t=23, the operator inserts the new battery into the broken phone.)
+<frame t="24.0-25.0"><image></frame>
+=== QA History ===
+<qa t="17.0" role="q">What is the operator doing now?</qa>
+<qa t="18.0" role="a">The operator has opened the phone's back cover</qa>
+<qa t="21.0" role="q">Please tell me when the operator turns on the phone</qa>
 [Output]
-<eta></eta>
+<state>After entering the work area, the operator first arranged a workbench, then turned to another workbench to assemble a component, then picked up a broken phone and opened the back cover. The current frames show that he is inserting a new battery into the phone. The question asks to tell the user when the operator turns on the phone; the phone has not been turned on yet, so no response is needed</state>
 <answer></answer>
-<bridge t="20.0-25.0">The operator reaches the counter and places the eggplant on the cutting board.</bridge>
-(Comment: <answer> is empty because there is no new question and no important conclusion has been reached.)
+<bridge t="17.0-21.0">The operator has opened the phone's back cover and placed the cover on the table</bridge>
+<note t="21.0-22.0"></note>
+<bridge t="22.0-25.0">The operator inserts the battery into the broken phone and tightens the screws</bridge>
 """
 
 
@@ -76,85 +113,76 @@ QA_SECTION = """\
 
 
 TEACHER_FOOTER = """\
-Task Instructions:
-1. **Dynamic QA Logic**:
-   - **Contextual Analysis**: Carefully examine the "QA History" log, and determine the appropriate evidence scope based on the question itself. As the video progresses, a question may require multiple updates. If the question concerns an action, state, or spatial relation currently happening, the judgment should mainly rely on the latest frames, with historical memory used only as background context. If the question concerns a previous process, object location, state change, or cumulative result, the judgment should mainly rely on the notes and bridges in Memory, supplemented by the current frames. Decide whether the current evidence is sufficient to provide a new answer, supplementary information, or a correction to a previous state.
-   - **<answer> Output**: Output <answer> only when the current evidence can provide new useful information, including answering the question, adding progress updates, correcting a previous judgment, or indicating that the evidence is insufficient. Strictly follow the required format. Clarification: Although you can see both history and current frames, you must respond only to active questions in QA History; otherwise, remain silent in this section. For questions with candidate options, choose the option most clearly supported by visual evidence; if the evidence is insufficient, the view is unclear, or multiple options cannot be ruled out, choose “Unable to answer” or the corresponding unanswerable option.
-   - **<eta> Prediction**: <eta> indicates the absolute timestamp, in seconds, when the agent should speak in <answer>. If <answer> is output now, <eta> must be the current speaking timestamp for that answer. If no <answer> is output now but an active QA is likely to need a future update, put the next expected speaking timestamp in <eta> and keep <answer> empty. If no current or future speaking is needed, leave both <eta> and <answer> empty. If future speaking is needed but the timing is unpredictable, leave <eta> empty.
-   - **Silent Criteria**: If QA History contains no active question requiring a current or future update, or if the current frames provide no useful update and no predictable future speaking time, <eta> and <answer> must remain empty.
+Task instructions:
+1. **State and answer**:
+   - Before writing <answer>, first write a brief <state> that summarizes the relevant Memory and current frames. Memory contains the video history observed so far, while current frames are the immediate video window; both are sorted by timestamp. Use both together to understand the video, but keep it as concise as possible. Check QA History to determine whether a question should be answered now. If you believe the question can be answered based on the video Memory or current frames, write the answer in <answer>. If there is no active question, or if you believe the question cannot currently be answered, keep <answer></answer> empty.
+   - When answering a question, follow the format of the question. The question may be multiple choice; in that case, answer with the option. If it cannot be answered, choose the "cannot answer" option if one exists.
+   - **Context analysis**: Carefully inspect the "QA History" log and determine the appropriate evidence scope based on the question itself. As the video progresses, a question may require multiple updates. If the question involves a currently ongoing action, state, or spatial relationship, the judgment should primarily rely on the latest frames, with historical memory used only as background context. If the question involves a past process, object location, state change, or cumulative result, the judgment should primarily rely on notes and bridges in Memory, supplemented by current frames.
+   - **Silence criterion**: If there is no active question in QA History, or if the current frames do not provide a useful update for a question that has already been answered, keep <answer> empty.
+   - **State is not memory**: <state> is only used for the judgment in the current round. It will not be written into Memory and will not be retained in later rounds. Any facts, locations, text, state changes, object attributes, or event outcomes that may be needed later must be preserved through <bridge> or <note>; do not write them only in <state>.
 
-2. **Note Anchoring Strategy**:
-   - **Mandatory Initialization**: If Memory is <empty/>, the first observation tag must be a <note> for <frame id="1">.
-   - **Anchoring Principle**: <note> is not used to record every minor motion, but to preserve key visual evidence that may need to be revisited later. If a frame carries information that cannot be reliably preserved by a bridge alone, a <note> should be created.
-   - **QA-related Anchoring**: When there is an active question in QA History, if the current frame can directly help answer, verify, disambiguate, or correct that question, a <note> should be created. In particular, anchor representative frames showing the queried object, person, location, state, or the moments around a key event.
-   - **State-change Anchoring**: When the scene, camera view, workspace layout, task phase, key object location, or visible state changes significantly, and that change may affect later understanding, a <note> should be created.
-   - **Representative Selection**: If multiple frames in the current window satisfy the anchoring conditions, select only the one that best represents the current state, best supports the QA, or best preserves key visual evidence. Do not create multiple notes for minor motion or pose changes.
-   - **Transcription**: When outputting a note, copy the frame id from the "Current frames" block into the `frame` attribute, and copy the time range into the `t` attribute to ensure precise anchoring.
+2. **Note anchoring strategy**:
+   - **Forced initialization**: If Memory is <empty/>, the first observation tag must be a <note> for the first frame in the window.
+   - **Anchoring principle**: <note> is used to preserve key visual evidence. If a frame carries information that cannot be reliably preserved by bridge alone, create a <note>.
+   - **State-change anchoring**: When the scene, camera viewpoint, work-area layout, task phase, key object location, or visible state changes significantly, and that change may affect later understanding, create a <note>.
+   - **Representative selection**: If multiple frames in the current window satisfy the anchoring condition, select only the frame that best represents the current state, best supports QA, or best preserves key visual evidence. Do not create multiple notes for subtle movements or posture changes.
+   - **Transcription**: When outputting a note, copy the time range from the "Current frames" block into the `t` attribute to ensure precise anchoring.
 
-3. **Bridge Compression & Inheritance**:
-   - **Open-Tail Inheritance (CRITICAL)**: Before outputting, you must check the last observation tag in Memory. If Memory ends with <bridge t="A-B">...</bridge> and no note follows it, the first output <bridge> must inherit A as its start time and rewrite/extend that original bridge, rather than starting a new time span. If there is no current <note>, write this first bridge as <bridge t="A-C">...</bridge>, where C is the current window end. If there is a current <note>, this first bridge must end at the first current note's start time, for example <bridge t="A-note_start">...</bridge>, then output the note.
-   - **Prohibit Incorrect Inheritance**: When open-tail inheritance is triggered, outputting <bridge t="B-C"> is prohibited, and creating a new bridge from the current window start time is also prohibited. This is the only case where time overlap with Memory is allowed.
-   - **Gap Uniqueness**: Between any two adjacent notes, or between a note and a window boundary, maintain exactly one bridge. This bridge should merge the main observations within that time gap; do not split them into multiple consecutive bridges.
-   - **Internal Alignment**: Except for open-tail inheritance, all output tags must follow chronological order and connect seamlessly in time without overlap.
-   - **Content Principle**: <bridge> is used to record observable action progression, state changes, and event boundaries, so that the process between adjacent notes can be reconstructed. Descriptions should be accurate and concise; do not fill in uncertain details just to make the description seem complete.
-   - **Repeated Actions**: If the current process contains repeated actions, <bridge> should try to preserve the completion boundary and cumulative change of each action. Only when an action cycle is clearly completed should it be written as completed; actions that are preparatory, ongoing, occluded, or uncertain should not be counted as completed.
-   - **Detail Reliability**: Details such as tools, colors, orientations, identities, text, and object attributes should be written only when they are clearly visible or explicitly confirmed by Memory. When uncertain, use conservative wording or omit the detail directly.
+3. **Bridge compression and inheritance**:
+   - **First determine the tail type**: Before outputting observation tags, inspect the last observation tag in Memory. If the last tag is <bridge t="A-B">...</bridge> and there is no note after it, treat it as an open tail. If the last tag is a note, there is no open tail. If Memory is <empty/>, first output the note for the first frame in the window according to the initialization rule.
+   - **Open-tail inheritance (critical)**: If an open tail exists, the first output bridge must inherit the original bridge's start time A and serve as a replacement-style update of the original bridge. Do not repeat the old bridge, and do not start a new bridge from the old bridge's end time B. If there is no new note in the current window, write it as <bridge t="A-C">...</bridge>, where C is the end time of the current window. If there is a new note in the current window, write it as <bridge t="A-N">...</bridge>, where N is the start time of the first current note, then output that note.
+   - **Non-open-tail start point**: If there is no open tail, new output starts from the end time of the last observation tag in Memory; if that time is earlier than the current window start, start from the current window start. Do not overwrite, repeat, or rewrite time spans in Memory that have already been closed.
+   - **Gap uniqueness**: Between any two adjacent notes, or between the final note and the end boundary of the current window, maintain exactly one bridge. Do not split the same time gap into multiple consecutive bridges; even if there is little change, use one brief bridge to describe the continuation of the state.
+   - **Time alignment**: Except for open-tail inheritance, all output tags must be ordered chronologically, with continuous time, no overlap, and no backward movement. The note's t attribute must exactly copy the time range of the corresponding frame in Current frames; the start and end times of bridges should connect adjacent notes or the current window boundary.
+   - **Content principles**: A bridge only describes the main observable actions, state changes, and event boundaries within that time span, accurately and concisely, without adding uncertain details. For repeated actions, preserve the cumulative result of completed actions; actions that are in preparation, ongoing, occluded, or uncertain must not be written as completed. Details such as tools, colors, orientation, identity, text, and object attributes should only be written when clearly visible or explicitly confirmed by Memory; if uncertain, describe conservatively or omit.
 
-Other Rules:
-- No text outside XML tags. bridge t uses absolute seconds.
-- Memory notes do not have a frame attribute; unexpired memory notes may contain images inside the <note> tag. Current output notes must include the frame attribute.
-- Current output notes must use paired tags: <note t="..." frame="N"></note>. Do not use self-closing note tags.
-
-Output Format:
-<eta>...</eta>
+The final output must contain only the specified XML tags. Do not output Markdown, explanations, annotations, code blocks, or extra text.
+The body of the <note> tag must be empty; it should reference the corresponding frame only through the t attribute. Do not write descriptive text inside <note>.
+Output format:
+<state>...</state>
 <answer>...</answer>
 <bridge t="t1-t2">...</bridge>
-<note t="t2-t3" frame="N"></note>
+<note t="t2-t3"></note>
 <bridge t="t3-t4">...</bridge>
 ...
 """
 
 
 SYNTHESIS_EXTRA = """\
-For synthesis, if retry feedback is provided, apply the listed corrections and produce a fresh full XML answer. Do not explain.
+When used for the synthesis stage, if retry feedback is provided, apply the listed corrections and generate a completely new full XML answer. Do not explain.
 """
 
 
 INFERENCE_PROMPT = """\
 [STREAM_AGENT]
-You are a streaming video agent that maintains a real-time Interleaved Memory to track the video stream and specifically answers queries from the QA History section.
-In QA History, role="q" means user question, role="a" means previous model answer.
+You are a streaming video agent that maintains an Interleaved Memory to understand a video stream, and you specifically answer questions in the QA History section.
+In QA History, role="q" indicates a user question, and role="a" indicates your previous answer.
 
-- <note>: **Visual Anchor**. Records representative or noteworthy frames that are difficult to describe in text, providing visual evidence for complex states or future questions.
-- <bridge>: **Semantic Link**. Describes the evolution between anchors, capturing changes between frames in text so that the entire process can be reconstructed even without images.
+- <note>: **visual anchor**. Records representative or noteworthy frames that are difficult to describe in text, providing visual evidence for complex states or future questions.
+- <bridge>: **semantic link**. Describes the evolution between visual anchors, using text to describe changes between frames so that the whole process can be reconstructed even without images.
 
+Task instructions:
+1. **State and answer**:
+   - Before writing <answer>, first write a brief <state> that summarizes the relevant Memory and current frames. Memory contains the video history observed so far, while current frames are the immediate video window; both are sorted by timestamp. Use both together to understand the video, but keep it as concise as possible. Check QA History to determine whether a question should be answered now. If you believe the question can be answered based on the video Memory or current frames, write the answer in <answer>. If there is no active question, or if you believe the question cannot currently be answered, keep <answer></answer> empty.
+   - When answering a question, follow the format of the question. The question may be multiple choice; in that case, answer with the option. If it cannot be answered, choose the "cannot answer" option if one exists.
+   - **Context analysis**: Carefully inspect the "QA History" log and determine the appropriate evidence scope based on the question itself. As the video progresses, a question may require multiple updates. If the question involves a currently ongoing action, state, or spatial relationship, the judgment should primarily rely on the latest frames, with historical memory used only as background context. If the question involves a past process, object location, state change, or cumulative result, the judgment should primarily rely on notes and bridges in Memory, supplemented by current frames.
+   - **Silence criterion**: If there is no active question in QA History, or if the current frames do not provide a useful update for a question that has already been answered, keep <answer> empty.
+   - **State is not memory**: <state> is only used for the judgment in the current round. It will not be written into Memory and will not be retained in later rounds. Any facts, locations, text, state changes, object attributes, or event outcomes that may be needed later must be preserved through <bridge> or <note>; do not write them only in <state>.
 
-Task Instructions:
-1. Dynamic QA
-- Read QA History carefully and respond only to active questions there.
-- Choose evidence by the question: use latest frames for current action/state/spatial questions; use Memory plus current frames for past events, cumulative results, object locations, or state changes.
-- Output <answer> only when current evidence provides useful new information: an answer, update, correction, or explicit uncertainty. For multiple-choice questions, choose the best visually supported option; if unclear, choose the unanswerable option.
-- <eta> is the absolute timestamp for the next <answer>. If answering now, set <eta> to the current speaking time. If no answer now but a future update is expected, set <eta> to that future time and keep <answer> empty. If no future speaking is needed or timing is unpredictable, leave <eta> empty.
-- If there is no active QA or no useful update, keep both <eta> and <answer> empty.
+2. **Note anchoring strategy**:
+   - **Forced initialization**: If Memory is <empty/>, the first observation tag must be a <note> for the first frame in the window.
+   - **Anchoring principle**: <note> is used to preserve key visual evidence. If a frame carries information that cannot be reliably preserved by bridge alone, create a <note>.
+   - **State-change anchoring**: When the scene, camera viewpoint, work-area layout, task phase, key object location, or visible state changes significantly, and that change may affect later understanding, create a <note>.
+   - **Representative selection**: If multiple frames in the current window satisfy the anchoring condition, select only the frame that best represents the current state, best supports QA, or best preserves key visual evidence. Do not create multiple notes for subtle movements or posture changes.
+   - **Transcription**: When outputting a note, copy the time range from the "Current frames" block into the `t` attribute to ensure precise anchoring.
 
-2. Note Anchoring
-- If Memory is <empty/>, the first observation must be a <note> for current frame id="1".
-- Use <note> only for key visual evidence worth preserving, not trivial motion.
-- Create a <note> when a frame directly helps answer, verify, disambiguate, or correct an active QA.
-- Also create a <note> for significant scene, viewpoint, layout, task-stage, object-location, or visible-state changes.
-- If multiple frames qualify, choose the most representative one.
-- Copy the current frame id into frame="N" and copy its time range into t="...".
-
-3. Bridge Compression and Inheritance
-- If Memory ends with <bridge t="A-B">...</bridge> and no later note follows, the first output <bridge> must inherit A and rewrite/extend that bridge.
-- With no current note, write it as <bridge t="A-C">...</bridge>, where C is the current window end.
-- With current notes, the inherited first bridge must end at the first note start, e.g. <bridge t="A-note_start">...</bridge>, then output the note.
-- Do not output <bridge t="B-C"> or start a new bridge from the current window start when open-tail inheritance applies.
-- Between adjacent notes, or between a note and a window boundary, keep exactly one bridge.
-- Except for open-tail inheritance, all events must be chronological, non-overlapping, and time-contiguous.
-- Bridges should concisely describe observable progress, state changes, and event boundaries. Do not add uncertain details.
-- For repeated actions, mark completion only when clearly completed.
-- Mention tools, colors, directions, identities, text, and attributes only when clearly visible or confirmed by Memory.
+3. **Bridge compression and inheritance**:
+   - **First determine the tail type**: Before outputting observation tags, inspect the last observation tag in Memory. If the last tag is <bridge t="A-B">...</bridge> and there is no note after it, treat it as an open tail. If the last tag is a note, there is no open tail. If Memory is <empty/>, first output the note for the first frame in the window according to the initialization rule.
+   - **Open-tail inheritance (critical)**: If an open tail exists, the first output bridge must inherit the original bridge's start time A and serve as a replacement-style update of the original bridge. Do not repeat the old bridge, and do not start a new bridge from the old bridge's end time B. If there is no new note in the current window, write it as <bridge t="A-C">...</bridge>, where C is the end time of the current window. If there is a new note in the current window, write it as <bridge t="A-N">...</bridge>, where N is the start time of the first current note, then output that note.
+   - **Non-open-tail start point**: If there is no open tail, new output starts from the end time of the last observation tag in Memory; if that time is earlier than the current window start, start from the current window start. Do not overwrite, repeat, or rewrite time spans in Memory that have already been closed.
+   - **Gap uniqueness**: Between any two adjacent notes, or between the final note and the end boundary of the current window, maintain exactly one bridge. Do not split the same time gap into multiple consecutive bridges; even if there is little change, use one brief bridge to describe the continuation of the state.
+   - **Time alignment**: Except for open-tail inheritance, all output tags must be ordered chronologically, with continuous time, no overlap, and no backward movement. The note's t attribute must exactly copy the time range of the corresponding frame in Current frames; the start and end times of bridges should connect adjacent notes or the current window boundary.
+   - **Content principles**: A bridge only describes the main observable actions, state changes, and event boundaries within that time span, accurately and concisely, without adding uncertain details. For repeated actions, preserve the cumulative result of completed actions; actions that are in preparation, ongoing, occluded, or uncertain must not be written as completed. Details such as tools, colors, orientation, identity, text, and object attributes should only be written when clearly visible or explicitly confirmed by Memory; if uncertain, describe conservatively or omit.
 
 === Memory ===
 {memory_content}
@@ -165,16 +193,15 @@ Task Instructions:
 === QA History ===
 {qa_content}
 
-Other Rules:
-- No text outside XML tags. bridge t uses absolute seconds.
-- Memory notes do not have a frame attribute; unexpired memory notes may contain images inside the <note> tag. Current output notes must include the frame attribute.
-- Current output notes must use paired tags: <note t="..." frame="N"></note>. Do not use self-closing note tags.
-
-Output Format:
-<eta>...</eta>
+The final output must contain only the specified XML tags. Do not output Markdown, explanations, annotations, code blocks, or extra text.
+The body of the <note> tag must be empty; it should reference the corresponding frame only through the t attribute. Do not write descriptive text inside <note>.
+Output format:
+<state>...</state>
 <answer>...</answer>
-<note t="..." frame="N"></note> (optional)
-<bridge t="...">...</bridge>
+<bridge t="t1-t2">...</bridge>
+<note t="t2-t3"></note>
+<bridge t="t3-t4">...</bridge>
+...
 """
 
 
@@ -242,7 +269,7 @@ def _append_frames(content: list[ContentItem], frames: list[FrameRef]) -> None:
         content.append(ContentItem("text", text="<empty/>"))
         return
     for frame in frames:
-        content.append(ContentItem("text", text=f'<frame id="{frame.step_local_id}" t="{frame.start_time:.1f}-{frame.end_time:.1f}">'))
+        content.append(ContentItem("text", text=f'<frame t="{frame.start_time:.1f}-{frame.end_time:.1f}">'))
         content.append(ContentItem("image", image_path=frame.image_path))
         content.append(ContentItem("text", text="</frame>\n"))
 

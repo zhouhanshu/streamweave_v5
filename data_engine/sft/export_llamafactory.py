@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 import sys
 from pathlib import Path
 from typing import Iterable
@@ -11,6 +12,7 @@ from typing import Iterable
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from data_engine.sft.constraints import answer_matches_metadata
 from data_engine.sft.io_utils import JsonDict, read_jsonl, write_json, write_jsonl
 from streamweave.prompts import PromptContext, build_prompt
 from streamweave.schemas import ContentItem, FrameRef
@@ -23,7 +25,8 @@ def export_sharegpt(
     dataset_name: str = "streamweave_sft",
     train_prompt_type: str = "production",
 ) -> dict[str, int | str]:
-    out_rows = [to_sharegpt_row(row, train_prompt_type=train_prompt_type) for row in rows]
+    expanded_rows = list(expand_training_rows(rows))
+    out_rows = [to_sharegpt_row(row, train_prompt_type=train_prompt_type) for row in expanded_rows]
     count = write_jsonl(out_rows, output_path)
     return {
         "dataset_name": dataset_name,
@@ -31,6 +34,12 @@ def export_sharegpt(
         "output_path": str(output_path),
         "train_prompt_type": train_prompt_type,
     }
+
+
+def expand_training_rows(rows: Iterable[JsonDict]) -> Iterable[JsonDict]:
+    for row in rows:
+        yield row
+        yield from _variant_rows(row)
 
 
 def to_sharegpt_row(row: JsonDict, *, train_prompt_type: str = "production") -> JsonDict:
@@ -48,6 +57,39 @@ def to_sharegpt_row(row: JsonDict, *, train_prompt_type: str = "production") -> 
         ],
         "images": images,
     }
+
+
+def _variant_rows(row: JsonDict) -> Iterable[JsonDict]:
+    variants = row.get("answer_variants") or []
+    if not isinstance(variants, list):
+        return
+    for variant in variants:
+        if not isinstance(variant, dict) or not _variant_is_exportable(row, variant):
+            continue
+        out = deepcopy(row)
+        out["sample_id"] = f"{row.get('sample_id')}_answer_variant_{int(variant.get('variant_index', 0)):04d}"
+        out["target_xml"] = str(variant.get("target_xml") or variant.get("raw_teacher_xml") or "").strip()
+        out["raw_teacher_xml"] = out["target_xml"]
+        out["target_raw_output"] = out["target_xml"]
+        out["quality"] = {"raw": variant.get("quality", {}), "target": variant.get("quality", {})}
+        out["metadata"] = dict(out.get("metadata") or {})
+        out["metadata"]["answer_variant"] = variant
+        yield out
+
+
+def _variant_is_exportable(row: JsonDict, variant: JsonDict) -> bool:
+    if not variant.get("accepted"):
+        return False
+    target_xml = str(variant.get("target_xml") or variant.get("raw_teacher_xml") or "").strip()
+    answer = str(variant.get("answer") or "").strip()
+    if not target_xml or not answer:
+        return False
+    metadata = row.get("metadata") or {}
+    annotation = metadata.get("annotation") if isinstance(metadata, dict) else {}
+    if not isinstance(annotation, dict):
+        annotation = {}
+    match = answer_matches_metadata(annotation, str(row.get("question_type") or ""), answer)
+    return True if match is None else bool(match)
 
 
 def dataset_info(dataset_name: str, file_name: str) -> JsonDict:

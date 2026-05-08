@@ -32,6 +32,12 @@ class MemoryStore:
     def has_question(self) -> bool:
         return any(qa.role == "q" for qa in self.qa_history)
 
+    def has_unanswered_question(self) -> bool:
+        if not self.qa_history:
+            return False
+        latest = sorted(self.qa_history, key=lambda qa: qa.timestamp)[-1]
+        return latest.role == "q"
+
     def evict(self, current_time: float) -> None:
         cutoff = current_time - self.memory_window
         for note in self.notes:

@@ -6,7 +6,13 @@ import re
 
 from .parser import parse_for_repair
 from .quality import QualityContext
-from .schemas import AppliedAction, BridgeRecord, ModelAction, ModelEvent, NoteRecord, QARecord
+from .schemas import AppliedAction, BridgeRecord, FrameRef, ModelAction, ModelEvent, NoteRecord, QARecord
+
+
+NOTE_TIME_TOLERANCE = 0.11
+BRIDGE_GAP_TOLERANCE = 1e-6
+BRIDGE_INTERVAL_TOLERANCE = 0.11
+FALLBACK_BRIDGE_TEXT = "The video continues through this interval, but no reliable bridge description was recovered."
 
 
 def repair_for_execution(raw: str, context: QualityContext) -> AppliedAction:
@@ -25,30 +31,18 @@ def repair_for_execution(raw: str, context: QualityContext) -> AppliedAction:
         events.extend(repaired_from_malformed)
         repair_types.append("repair_malformed_note_tags")
 
-    seen_bridge = False
-    for event in events:
+    for event_index, event in enumerate(events):
         if event.kind == "note":
-            if event.frame_index is None or not (0 <= event.frame_index < len(context.frames)):
-                repair_types.append("drop_note_frame_oob")
+            frame, match_issue = _match_note_frame(event, context.frames)
+            if frame is None:
+                repair_types.append(f"drop_note_time_{match_issue}")
                 continue
-            frame = context.frames[event.frame_index]
-            if abs(event.start_time - frame.start_time) > 0.51 or abs(event.end_time - frame.end_time) > 0.51:
-                repair_types.append("repair_note_time")
             repaired = ModelEvent(
                 kind="note",
                 start_time=frame.start_time,
                 end_time=frame.end_time,
-                frame_index=event.frame_index,
             )
             repaired_events.append(repaired)
-            notes.append(
-                NoteRecord(
-                    start_time=frame.start_time,
-                    end_time=frame.end_time,
-                    image_path=frame.image_path,
-                    global_frame_index=frame.global_index,
-                )
-            )
             continue
 
         if event.kind != "bridge":
@@ -57,13 +51,10 @@ def repair_for_execution(raw: str, context: QualityContext) -> AppliedAction:
         if not text:
             repair_types.append("drop_empty_bridge")
             continue
-        is_first_bridge = not seen_bridge
-        seen_bridge = True
+        is_first_event_bridge = event_index == 0
         start = event.start_time
         end = event.end_time
-        if is_first_bridge and context.open_tail_bridge is not None:
-            if abs(start - context.open_tail_bridge.start_time) > 0.51:
-                repair_types.append("repair_open_tail_start")
+        if context.open_tail_bridge is not None and abs(start - context.open_tail_bridge.start_time) <= 0.51:
             start = context.open_tail_bridge.start_time
             if end > context.step_end:
                 repair_types.append("clamp_open_tail_end")
@@ -73,6 +64,8 @@ def repair_for_execution(raw: str, context: QualityContext) -> AppliedAction:
                 end = context.step_end
             replace_open_tail = True
         else:
+            if is_first_event_bridge and context.open_tail_bridge is not None:
+                repair_types.append("skip_open_tail_start_repair")
             new_start = max(start, context.step_start)
             new_end = min(end, context.step_end)
             if new_start != start or new_end != end:
@@ -83,16 +76,28 @@ def repair_for_execution(raw: str, context: QualityContext) -> AppliedAction:
             continue
         repaired = ModelEvent(kind="bridge", start_time=start, end_time=end, text=text)
         repaired_events.append(repaired)
-        bridges.append(BridgeRecord(start_time=start, end_time=end, text=text))
+
+    repaired_events, notes, bridges, normalized_replace_open_tail = _normalize_observation_events(
+        repaired_events,
+        context,
+        repair_types,
+    )
+    replace_open_tail = replace_open_tail or normalized_replace_open_tail
 
     answer_text = action.answer.strip()
     answer = QARecord(timestamp=context.step_end, text=answer_text, role="a") if answer_text else None
+    state_text = action.state.strip()
+    state_present = action.state_present
+    if not state_text:
+        state_text = "No usable state was recovered from the raw output."
+        state_present = True
+        repair_types.append("fill_empty_state")
     repaired_action = ModelAction(
-        eta=action.eta,
+        state=state_text,
         answer=answer_text,
-        events=sorted(repaired_events, key=lambda event: (event.start_time, event.end_time, event.kind != "bridge")),
+        events=repaired_events,
         raw=raw,
-        eta_present=action.eta_present,
+        state_present=state_present,
         answer_present=action.answer_present,
     )
     return AppliedAction(
@@ -111,12 +116,14 @@ def apply_raw_action(action: ModelAction, context: QualityContext) -> AppliedAct
     bridges: list[BridgeRecord] = []
     replace_open_tail = False
     for event_index, event in enumerate(action.events):
-        if event.kind == "note" and event.frame_index is not None and 0 <= event.frame_index < len(context.frames):
-            frame = context.frames[event.frame_index]
+        if event.kind == "note":
+            frame, _match_issue = _match_note_frame(event, context.frames)
+            if frame is None:
+                continue
             notes.append(
                 NoteRecord(
-                    start_time=event.start_time,
-                    end_time=event.end_time,
+                    start_time=frame.start_time,
+                    end_time=frame.end_time,
                     image_path=frame.image_path,
                     global_frame_index=frame.global_index,
                 )
@@ -132,6 +139,183 @@ def apply_raw_action(action: ModelAction, context: QualityContext) -> AppliedAct
     answer_text = action.answer.strip()
     answer = QARecord(timestamp=context.step_end, text=answer_text, role="a") if answer_text else None
     return AppliedAction(action=action, notes=notes, bridges=bridges, answer=answer, replace_open_tail=replace_open_tail)
+
+
+def _match_note_frame(event: ModelEvent, frames: list[FrameRef]) -> tuple[FrameRef | None, str]:
+    matches = [
+        frame
+        for frame in frames
+        if abs(event.start_time - frame.start_time) <= NOTE_TIME_TOLERANCE
+        and abs(event.end_time - frame.end_time) <= NOTE_TIME_TOLERANCE
+    ]
+    if len(matches) == 1:
+        return matches[0], ""
+    if not matches:
+        return None, "unmatched"
+    return None, "ambiguous"
+
+
+def _normalize_observation_events(
+    events: list[ModelEvent],
+    context: QualityContext,
+    repair_types: list[str],
+) -> tuple[list[ModelEvent], list[NoteRecord], list[BridgeRecord], bool]:
+    notes = _dedupe_note_events(events, repair_types)
+    source_bridges = [event for event in events if event.kind == "bridge" and event.text.strip()]
+    expected_gaps = _expected_bridge_gaps(notes, context)
+    normalized_bridges: list[ModelEvent] = []
+    used_bridge_indexes: set[int] = set()
+
+    for gap_start, gap_end in expected_gaps:
+        match_index = _find_matching_bridge(source_bridges, gap_start, gap_end, used_bridge_indexes)
+        text = ""
+        if match_index is not None:
+            used_bridge_indexes.add(match_index)
+            source = source_bridges[match_index]
+            text = source.text.strip()
+            if not _same_interval(source.start_time, source.end_time, gap_start, gap_end):
+                repair_types.append("adjust_bridge_gap")
+            if (
+                context.open_tail_bridge is not None
+                and abs(gap_start - context.open_tail_bridge.start_time) <= BRIDGE_INTERVAL_TOLERANCE
+                and source.start_time > context.open_tail_bridge.start_time + BRIDGE_INTERVAL_TOLERANCE
+            ):
+                text = _merge_bridge_text(context.open_tail_bridge.text, text)
+                repair_types.append("merge_open_tail_bridge_text")
+        elif (
+            context.open_tail_bridge is not None
+            and abs(gap_start - context.open_tail_bridge.start_time) <= BRIDGE_INTERVAL_TOLERANCE
+            and context.open_tail_bridge.text.strip()
+        ):
+            text = context.open_tail_bridge.text.strip()
+            repair_types.append("add_missing_bridge_gap")
+        else:
+            text = FALLBACK_BRIDGE_TEXT
+            repair_types.append("add_missing_bridge_gap")
+        normalized_bridges.append(ModelEvent(kind="bridge", start_time=gap_start, end_time=gap_end, text=text))
+
+    if len(used_bridge_indexes) < len(source_bridges):
+        repair_types.append("drop_invalid_bridge_gap")
+
+    normalized_events = sorted(
+        [*notes, *normalized_bridges],
+        key=lambda event: (event.start_time, event.end_time, event.kind != "bridge"),
+    )
+    note_records = _note_records_from_events(notes, context)
+    bridge_records = [
+        BridgeRecord(start_time=event.start_time, end_time=event.end_time, text=event.text.strip())
+        for event in normalized_bridges
+    ]
+    replace_open_tail = bool(
+        normalized_bridges
+        and context.open_tail_bridge is not None
+        and abs(normalized_bridges[0].start_time - context.open_tail_bridge.start_time) <= BRIDGE_INTERVAL_TOLERANCE
+    )
+    return normalized_events, note_records, bridge_records, replace_open_tail
+
+
+def _dedupe_note_events(events: list[ModelEvent], repair_types: list[str]) -> list[ModelEvent]:
+    notes: list[ModelEvent] = []
+    seen: set[tuple[float, float]] = set()
+    for event in sorted(
+        (event for event in events if event.kind == "note"),
+        key=lambda item: (item.start_time, item.end_time),
+    ):
+        key = (round(event.start_time, 3), round(event.end_time, 3))
+        if key in seen:
+            repair_types.append("drop_duplicate_note")
+            continue
+        seen.add(key)
+        notes.append(event)
+    return notes
+
+
+def _expected_bridge_gaps(notes: list[ModelEvent], context: QualityContext) -> list[tuple[float, float]]:
+    if not notes:
+        start = context.open_tail_bridge.start_time if context.open_tail_bridge is not None else context.step_start
+        return [(start, context.step_end)] if context.step_end > start + BRIDGE_GAP_TOLERANCE else []
+
+    gaps: list[tuple[float, float]] = []
+    first_note = notes[0]
+    if context.open_tail_bridge is not None:
+        if first_note.start_time > context.open_tail_bridge.start_time + BRIDGE_GAP_TOLERANCE:
+            gaps.append((context.open_tail_bridge.start_time, first_note.start_time))
+    elif first_note.start_time > context.step_start + BRIDGE_GAP_TOLERANCE:
+        gaps.append((context.step_start, first_note.start_time))
+
+    previous_end = first_note.end_time
+    for note in notes[1:]:
+        if note.start_time > previous_end + BRIDGE_GAP_TOLERANCE:
+            gaps.append((previous_end, note.start_time))
+        previous_end = note.end_time
+
+    if context.step_end > previous_end + BRIDGE_GAP_TOLERANCE:
+        gaps.append((previous_end, context.step_end))
+    return gaps
+
+
+def _find_matching_bridge(
+    bridges: list[ModelEvent],
+    gap_start: float,
+    gap_end: float,
+    used_indexes: set[int],
+) -> int | None:
+    for index, bridge in enumerate(bridges):
+        if index in used_indexes:
+            continue
+        if _same_interval(bridge.start_time, bridge.end_time, gap_start, gap_end):
+            return index
+
+    best_index: int | None = None
+    best_score: tuple[float, float] | None = None
+    for index, bridge in enumerate(bridges):
+        if index in used_indexes:
+            continue
+        overlap = min(bridge.end_time, gap_end) - max(bridge.start_time, gap_start)
+        start_close = abs(bridge.start_time - gap_start) <= 0.51
+        end_close = abs(bridge.end_time - gap_end) <= 0.51
+        if overlap <= 0 and not (start_close or end_close):
+            continue
+        distance = abs(bridge.start_time - gap_start) + abs(bridge.end_time - gap_end)
+        score = (-max(overlap, 0.0), distance)
+        if best_score is None or score < best_score:
+            best_score = score
+            best_index = index
+    return best_index
+
+
+def _same_interval(start: float, end: float, expected_start: float, expected_end: float) -> bool:
+    return (
+        abs(start - expected_start) <= BRIDGE_INTERVAL_TOLERANCE
+        and abs(end - expected_end) <= BRIDGE_INTERVAL_TOLERANCE
+    )
+
+
+def _merge_bridge_text(old_text: str, new_text: str) -> str:
+    old = old_text.strip()
+    new = new_text.strip()
+    if not old:
+        return new or FALLBACK_BRIDGE_TEXT
+    if not new or new == old:
+        return old
+    return f"{old} {new}"
+
+
+def _note_records_from_events(notes: list[ModelEvent], context: QualityContext) -> list[NoteRecord]:
+    records: list[NoteRecord] = []
+    for note in notes:
+        frame, _match_issue = _match_note_frame(note, context.frames)
+        if frame is None:
+            continue
+        records.append(
+            NoteRecord(
+                start_time=frame.start_time,
+                end_time=frame.end_time,
+                image_path=frame.image_path,
+                global_frame_index=frame.global_index,
+            )
+        )
+    return records
 
 
 def synthesis_feedback(
@@ -193,8 +377,8 @@ def synthesis_feedback(
         sections.append("Other reported errors:")
         sections.extend(other_errors)
     sections.append(
-        "Output format: <eta>...</eta>, <answer>...</answer>, then bridge/note tags in chronological order, "
-        "no overlap and no text outside tags. Notes use paired <note t=\"...\" frame=\"N\"></note>."
+        "Output format: <state>...</state>, <answer>...</answer>, then bridge/note tags in chronological order, "
+        "no overlap and no text outside tags. Notes use paired <note t=\"...\"></note>."
     )
     return "\n".join(sections)
 
@@ -305,15 +489,15 @@ def _zero_duration_bridge_fixes(codes: list[str], messages: list[str], raw_outpu
 def _unclosed_note_fixes(codes: list[str], raw_output: str) -> list[str]:
     if "text_outside_tags" not in codes and "tag_parse_error" not in codes:
         return []
-    open_tags = re.findall(r'<note\b[^>]*frame="(\d+)"[^/>]*>', raw_output)
+    open_tags = re.findall(r'<note\b[^>/]*\bt="([^"]+)"[^>/]*>', raw_output)
     closed_count = len(re.findall(r"</note>", raw_output))
     if not open_tags or len(open_tags) <= closed_count:
         return []
-    unclosed_frames = open_tags[closed_count:]
-    label = ", ".join(f"frame={frame}" for frame in _unique_keep_order(unclosed_frames))
+    unclosed_times = open_tags[closed_count:]
+    label = ", ".join(f't="{time_range}"' for time_range in _unique_keep_order(unclosed_times))
     return [
         f"- Note tag for {label} was opened but never closed. "
-        'Always pair: `<note t="..." frame="N"></note>`.',
+        'Always pair: `<note t="..."></note>`.',
     ]
 
 
@@ -393,30 +577,25 @@ def _unique_keep_order(values: list[str]) -> list[str]:
     return out
 
 
-NOTE_TAG_RE = re.compile(r"<note\b(?P<attrs>[^>]*)>(?P<body>.*?)</note>|<note\b(?P<self_attrs>[^>]*)/>", re.DOTALL)
+NOTE_TAG_RE = re.compile(r"<note\b(?P<attrs>[^>]*)>(?P<body>.*?)</note>", re.DOTALL)
 ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
 
 
 def _extract_malformed_notes(raw: str, context: QualityContext) -> list[ModelEvent]:
     events: list[ModelEvent] = []
     for match in NOTE_TAG_RE.finditer(raw):
-        attrs_text = match.group("attrs") if match.group("attrs") is not None else match.group("self_attrs")
+        attrs_text = match.group("attrs")
         attrs = {key: value for key, value in ATTR_RE.findall(attrs_text or "")}
-        frame_text = attrs.get("frame") or attrs.get("id")
-        if not frame_text or not frame_text.isdigit():
+        if "frame" in attrs or "id" in attrs:
             continue
-        frame_index = int(frame_text) - 1
-        if not (0 <= frame_index < len(context.frames)):
+        time_text = attrs.get("t")
+        if not time_text:
             continue
-        if attrs.get("t"):
-            interval = _parse_interval(attrs["t"])
-            if interval is None:
-                continue
-            start, end = interval
-        else:
-            frame = context.frames[frame_index]
-            start, end = frame.start_time, frame.end_time
-        events.append(ModelEvent(kind="note", start_time=start, end_time=end, frame_index=frame_index))
+        interval = _parse_interval(time_text)
+        if interval is None:
+            continue
+        start, end = interval
+        events.append(ModelEvent(kind="note", start_time=start, end_time=end))
     return events
 
 
@@ -432,13 +611,10 @@ def _parse_interval(text: str) -> tuple[float, float] | None:
 
 
 def _dedupe_events(existing: list[ModelEvent], candidates: list[ModelEvent]) -> list[ModelEvent]:
-    seen = {
-        (event.kind, event.frame_index, round(event.start_time, 3), round(event.end_time, 3), event.text)
-        for event in existing
-    }
+    seen = {(event.kind, round(event.start_time, 3), round(event.end_time, 3), event.text) for event in existing}
     out: list[ModelEvent] = []
     for event in candidates:
-        key = (event.kind, event.frame_index, round(event.start_time, 3), round(event.end_time, 3), event.text)
+        key = (event.kind, round(event.start_time, 3), round(event.end_time, 3), event.text)
         if key in seen:
             continue
         seen.add(key)

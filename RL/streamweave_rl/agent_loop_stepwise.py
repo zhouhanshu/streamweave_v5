@@ -178,7 +178,9 @@ class StreamWeaveAgentLoop(AgentLoopBase):
 
     def _build_abort_output(self, reason: str, prompt_ids: list[int] | None = None) -> AgentLoopOutput:
         prompt = (prompt_ids or _encode_text(self.tokenizer, "[StreamWeave rollout aborted]"))[-self.prompt_length :]
-        response = _encode_text(self.tokenizer, "<eta></eta><answer></answer>")[: max(1, self.response_length)]
+        response = _encode_text(self.tokenizer, "<state>Rollout aborted before a valid step could be completed.</state><answer></answer>")[
+            : max(1, self.response_length)
+        ]
         if not response:
             response = [self.tokenizer.eos_token_id or self.tokenizer.pad_token_id or 0]
         return AgentLoopOutput(

@@ -37,12 +37,14 @@ def export_qa_annotations(filtered_records: list[JsonDict], output_path: Path) -
 def build_qa_annotations(filtered_records: list[JsonDict]) -> list[JsonDict]:
     rows: list[JsonDict] = []
     for record in filtered_records:
-        row = make_video_row(record)
         accepted = [qa for qa in record.get("accepted_qa", []) if isinstance(qa, dict)]
-        if accepted:
-            qa_fields = make_qa_fields(accepted[0], len(rows))
-            if qa_fields:
-                row.update(qa_fields)
+        if not accepted:
+            continue
+        qa_fields = make_qa_fields(accepted[0], len(rows))
+        if not qa_fields:
+            continue
+        row = make_video_row(record)
+        row.update(qa_fields)
         rows.append(row)
     return rows
 

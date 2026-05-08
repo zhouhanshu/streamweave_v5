@@ -37,7 +37,7 @@ class TraceWriter:
             f.write(f"{'=' * 60}\n")
             f.write("Current frame paths:\n")
             for frame in current_frames:
-                f.write(f"- local={frame.step_local_id} global={frame.global_index} t={frame.start_time:.1f}-{frame.end_time:.1f} path={frame.image_path}\n")
+                f.write(f"- t={frame.start_time:.1f}-{frame.end_time:.1f} path={frame.image_path}\n")
             f.write("Prompt images:\n")
             for image in prompt_images:
                 f.write(f"- {image}\n")
@@ -128,13 +128,12 @@ class TraceWriter:
 def _action_to_text(applied: AppliedAction) -> str:
     action = applied.action
     lines = [
-        f"<eta>{'' if action.eta is None else action.eta}</eta>",
+        f"<state>{action.state}</state>",
         f"<answer>{action.answer}</answer>",
     ]
     for event in action.events:
         if event.kind == "note":
-            frame = "" if event.frame_index is None else event.frame_index + 1
-            lines.append(f'<note t="{event.start_time:.1f}-{event.end_time:.1f}" frame="{frame}"></note>')
+            lines.append(f'<note t="{event.start_time:.1f}-{event.end_time:.1f}"></note>')
         elif event.kind == "bridge":
             lines.append(f'<bridge t="{event.start_time:.1f}-{event.end_time:.1f}">{event.text}</bridge>')
     return "\n".join(lines)

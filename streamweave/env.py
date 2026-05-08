@@ -65,13 +65,13 @@ class StreamWeaveEnv:
         context = self.quality_context(local_frames)
         raw_action, quality = score_raw_output(raw_output, context, reward_config=reward_config)
         applied = repair_for_execution(raw_output, context) if repair else apply_raw_action(raw_action, context)
-        if applied.answer is not None and not self.memory.has_question():
+        if applied.answer is not None and not self.memory.has_unanswered_question():
             applied = replace(
                 applied,
                 action=replace(applied.action, answer=""),
                 answer=None,
                 repair_count=applied.repair_count + 1,
-                repair_types=[*applied.repair_types, "drop_answer_without_question"],
+                repair_types=[*applied.repair_types, "drop_answer_without_active_question"],
             )
         return raw_action, quality, applied
 

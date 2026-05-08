@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,6 +70,12 @@ class RolloutRunner:
             video_path=sample.video_path,
             sample_fps=self.runtime.sample_fps,
             max_frames=self.runtime.max_frames,
+        )
+        frames = _truncate_frames_at_timestamp(
+            frames,
+            sample.metadata.get("target_timestamp"),
+            sample_fps=self.runtime.sample_fps,
+            frame_id_base=self.frame_store.config.frame_id_base,
         )
         env = StreamWeaveEnv(
             prompt_profile=self.prompt_profile,
@@ -287,6 +294,32 @@ def _group_frames(frames: list, size: int) -> list[list]:
     return [frames[idx : idx + size] for idx in range(0, len(frames), size)]
 
 
+def _truncate_frames_at_timestamp(
+    frames: list[FrameRef],
+    timestamp: object,
+    *,
+    sample_fps: float,
+    frame_id_base: int,
+) -> list[FrameRef]:
+    if timestamp is None or not frames:
+        return frames
+    try:
+        target_timestamp = float(timestamp)
+    except (TypeError, ValueError):
+        return frames
+
+    min_frame_id = min(frame.global_index for frame in frames)
+    max_frame_id = max(frame.global_index for frame in frames)
+    target_frame_id = _timestamp_to_frame_id(
+        target_timestamp,
+        sample_fps=sample_fps,
+        frame_id_base=frame_id_base,
+        min_frame_id=min_frame_id,
+        max_frame_id=max_frame_id,
+    )
+    return [frame for frame in frames if frame.global_index <= target_frame_id]
+
+
 def _query_events_by_frame(
     frames: list[FrameRef],
     query_events: list[QueryEvent],
@@ -298,11 +331,31 @@ def _query_events_by_frame(
         return {}
     min_frame_id = min(frame.global_index for frame in frames)
     max_frame_id = max(frame.global_index for frame in frames)
-    seconds_per_frame = 1.0 / max(sample_fps, 1e-6)
     out: dict[int, list[QueryEvent]] = {}
     for event in sorted(query_events, key=lambda item: item.timestamp):
-        frame_offset = int(event.timestamp // seconds_per_frame)
-        frame_id = frame_id_base + frame_offset
-        frame_id = min(max(frame_id, min_frame_id), max_frame_id)
+        frame_id = _timestamp_to_frame_id(
+            event.timestamp,
+            sample_fps=sample_fps,
+            frame_id_base=frame_id_base,
+            min_frame_id=min_frame_id,
+            max_frame_id=max_frame_id,
+        )
         out.setdefault(frame_id, []).append(event)
     return out
+
+
+def _timestamp_to_frame_id(
+    timestamp: float,
+    *,
+    sample_fps: float,
+    frame_id_base: int,
+    min_frame_id: int,
+    max_frame_id: int,
+) -> int:
+    seconds_per_frame = 1.0 / max(sample_fps, 1e-6)
+    if timestamp <= 0:
+        frame_id = frame_id_base
+    else:
+        frame_offset = max(0, math.ceil((float(timestamp) - 1e-9) / seconds_per_frame) - 1)
+        frame_id = frame_id_base + frame_offset
+    return min(max(frame_id, min_frame_id), max_frame_id)
