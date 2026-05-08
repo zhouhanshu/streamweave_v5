@@ -10,6 +10,8 @@ from typing import Any
 class StepRewardResult:
     format_score: float
     step_score: float = 0.0
+    note_frequency_score: float = 0.0
+    judge_score: float = 0.0
     turn_reward: float = 0.0
     info: dict[str, Any] = field(default_factory=dict)
 

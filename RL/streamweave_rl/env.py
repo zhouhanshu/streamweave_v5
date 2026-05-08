@@ -16,13 +16,17 @@ from streamweave.policies import make_policy
 from streamweave.rollout import _group_frames, _query_events_by_frame, _truncate_frames_at_timestamp
 from streamweave.schemas import BenchmarkSample, ContentItem, FrameRef, QARecord, QueryEvent
 
+from .judge import JudgeResult, StepJudge
 from .rewards import (
     StreamWeaveRewardConfig,
+    compute_note_frequency_score,
     compute_step_reward,
     compute_trajectory_reward,
+    judge_blocked_by_note_frequency,
     reward_config_from_mapping,
 )
 from .schemas import StepRecord, StepRewardResult, TrajectoryRewardResult
+
 
 @dataclass(slots=True)
 class StreamWeaveRLSettings:
@@ -76,6 +80,8 @@ class StreamWeaveRLEnv:
         self.step_rewards: list[StepRewardResult] = []
         self.records: list[StepRecord] = []
         self.trajectory_reward: TrajectoryRewardResult | None = None
+        self.no_note_streak = 0
+        self.judge = StepJudge(self.settings.rl_reward.judge)
 
     async def reset(self, seed: int | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         del seed
@@ -130,6 +136,7 @@ class StreamWeaveRLEnv:
         self.step_rewards = []
         self.records = []
         self.trajectory_reward = None
+        self.no_note_streak = 0
         obs = self._prepare_current_turn()
         return obs, {"sample_id": self.sample.sample_id, "video_id": self.sample.video_id}
 
@@ -143,14 +150,47 @@ class StreamWeaveRLEnv:
             reward_config=self.settings.reward_config,
             repair=True,
         )
+        note_frequency_result = compute_note_frequency_score(
+            action=raw_action,
+            previous_no_note_streak=self.no_note_streak,
+            cfg=self.settings.rl_reward,
+        )
+        note_frequency_score, _next_no_note_streak, note_frequency_reasons = note_frequency_result
+        judge_allowed = not judge_blocked_by_note_frequency(
+            note_frequency_score=note_frequency_score,
+            cfg=self.settings.rl_reward,
+        )
+        if judge_allowed:
+            qa_history_before = self.env.memory.build_qa_text()
+            judge_result = await self.judge.score_step(
+                memory_before=self.current_memory_before,
+                qa_history=qa_history_before,
+                frames=self.current_frames,
+                raw_action=raw_action,
+                raw_output=action_str,
+                quality=quality,
+            )
+        else:
+            judge_result = JudgeResult(
+                score=0.0,
+                status="blocked_note_frequency",
+                issues=list(note_frequency_reasons),
+            )
         self.env.commit(applied)
-
         reward_result = compute_step_reward(
             quality=quality,
             cfg=self.settings.rl_reward,
-            ctx={"sample": self.sample, "frames": self.current_frames, "action": raw_action},
+            ctx={
+                "sample": self.sample,
+                "frames": self.current_frames,
+                "action": raw_action,
+                "previous_no_note_streak": self.no_note_streak,
+                "note_frequency_result": note_frequency_result,
+                "judge_result": judge_result,
+            },
             total_steps=len(self.groups),
         )
+        self.no_note_streak = int(reward_result.info.get("no_note_streak", self.no_note_streak) or 0)
         self.step_rewards.append(reward_result)
 
         self.step_idx += 1
@@ -181,10 +221,13 @@ class StreamWeaveRLEnv:
             "last_turn": done,
             "format_score": reward_result.format_score,
             "step_score": reward_result.step_score,
+            "note_frequency_score": reward_result.note_frequency_score,
+            "judge_score": reward_result.judge_score,
             "turn_reward": turn_reward,
             "quality_valid": quality.valid,
             "parser_ok": quality.parser_ok,
             "issue_codes": [issue.code for issue in quality.issues],
+            "reward_info": reward_result.info,
             **trajectory_info,
         }
         self.records.append(

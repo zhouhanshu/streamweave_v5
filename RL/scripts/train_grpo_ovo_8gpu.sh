@@ -5,15 +5,15 @@ RL_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 V5_DIR="$(cd -- "${RL_DIR}/.." && pwd)"
 PYTHON_BIN="/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/python"
 
-RUN_NAME="grpo_ovo_qwen3vl8b_full_vllm_8gpu_lt120s_fused_chunked"
-RUN_DIR="${RL_DIR}/outputs/debug/${RUN_NAME}"
+RUN_NAME="${STREAMWEAVE_RUN_NAME:-grpo_ovo_8gpu}"
+RUN_DIR="${STREAMWEAVE_RUN_DIR:-${RL_DIR}/outputs/debug/${RUN_NAME}}"
 LOG_FILE="${RUN_DIR}/train.log"
 RAY_TMPDIR="/tmp/swray_$$"
 
 mkdir -p "${RUN_DIR}" "${RAY_TMPDIR}"
 
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 export HYDRA_FULL_ERROR=1
 export PYTHONFAULTHANDLER=1
 export RAY_DEDUP_LOGS=0
@@ -21,17 +21,29 @@ export RAY_ENABLE_UV_RUN_RUNTIME_ENV=0
 export RAY_TMPDIR="${RAY_TMPDIR}"
 export TOKENIZERS_PARALLELISM=false
 export STREAMWEAVE_RL_DIR="${RL_DIR}"
-export STREAMWEAVE_MODEL_PATH="/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_v2_3077"
+export STREAMWEAVE_MODEL_PATH="${STREAMWEAVE_MODEL_PATH:-/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm}"
 export STREAMWEAVE_DATASET_ROOT="/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset"
 export STREAMWEAVE_IMAGE_RESOLUTION=512
 export SWANLAB_LOG_DIR="${RUN_DIR}/swanlab"
 export PYTHONPATH="${RL_DIR}:${RL_DIR}/verl:${V5_DIR}${PYTHONPATH:+:${PYTHONPATH}}"
+export STREAMWEAVE_TRACE_FIRST_ROLLOUT="${STREAMWEAVE_TRACE_FIRST_ROLLOUT:-1}"
+export STREAMWEAVE_TRACE_TRAJ_INDEX="${STREAMWEAVE_TRACE_TRAJ_INDEX:-0}"
+export STREAMWEAVE_TRACE_MAX_CHARS="${STREAMWEAVE_TRACE_MAX_CHARS:-2000}"
+export STREAMWEAVE_TRACE_GRPO_GROUPS="${STREAMWEAVE_TRACE_GRPO_GROUPS:-1}"
+if [[ "${STREAMWEAVE_JUDGE_BACKEND:-openai_compatible}" == "gemini" ]]; then
+    export GOOGLE_APPLICATION_CREDENTIALS="${GOOGLE_APPLICATION_CREDENTIALS:-/mmu_ssd3/group_lisize/hetu/xujia10/joint_tags/scripts/gemini_client/config.json}"
+fi
 
 ulimit -n 65535
 
 if ! "${PYTHON_BIN}" -c "import swanlab" >/dev/null 2>&1; then
     echo "trainer.logger includes swanlab, but swanlab is not installed in ${PYTHON_BIN}." >&2
     echo "Install it first: ${PYTHON_BIN} -m pip install swanlab" >&2
+    exit 2
+fi
+if [[ "${STREAMWEAVE_REWARD_JUDGE_ENABLE:-false}" == "true" && "${STREAMWEAVE_JUDGE_BACKEND:-openai_compatible}" == "gemini" && ! -f "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+    echo "Gemini judge requires GOOGLE_APPLICATION_CREDENTIALS to point to an existing file." >&2
+    echo "Current GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-<unset>}" >&2
     exit 2
 fi
 
@@ -60,6 +72,7 @@ dump_debug_artifacts() {
 trap dump_debug_artifacts EXIT
 
 echo "Debug artifacts will be saved to ${RUN_DIR}"
+echo "StreamWeave trace first_rollout=${STREAMWEAVE_TRACE_FIRST_ROLLOUT} traj=${STREAMWEAVE_TRACE_TRAJ_INDEX} max_chars=${STREAMWEAVE_TRACE_MAX_CHARS} grpo_groups=${STREAMWEAVE_TRACE_GRPO_GROUPS}"
 
 cd "${RL_DIR}"
 
@@ -87,12 +100,34 @@ cd "${RL_DIR}"
     data.streamweave.runtime.max_frames=0 \
     data.streamweave.runtime.max_steps=0 \
     data.streamweave.runtime.resolution=512 \
-    data.streamweave.reward.w_format=0.5 \
-    data.streamweave.reward.w_success=0.5 \
+    data.streamweave.reward.w_format=0.3 \
+    data.streamweave.reward.w_step=0.3 \
+    data.streamweave.reward.w_success=0.4 \
+    data.streamweave.reward.score_scale="${STREAMWEAVE_REWARD_SCORE_SCALE:-2.0}" \
+    data.streamweave.reward.max_notes_per_step="${STREAMWEAVE_REWARD_MAX_NOTES_PER_STEP:-1}" \
+    data.streamweave.reward.stale_note_after_steps="${STREAMWEAVE_REWARD_STALE_NOTE_AFTER_STEPS:-3}" \
+    data.streamweave.reward.note_frequency_penalty_score="${STREAMWEAVE_REWARD_NOTE_PENALTY_SCORE:-0.0}" \
+    data.streamweave.reward.judge.enable="${STREAMWEAVE_REWARD_JUDGE_ENABLE:-false}" \
+    data.streamweave.reward.judge_weight="${STREAMWEAVE_REWARD_JUDGE_WEIGHT:-0.0}" \
+    data.streamweave.reward.judge.backend="${STREAMWEAVE_JUDGE_BACKEND:-openai_compatible}" \
+    data.streamweave.reward.judge.model="${STREAMWEAVE_JUDGE_MODEL:-}" \
+    data.streamweave.reward.judge.base_url="${STREAMWEAVE_JUDGE_BASE_URL:-}" \
+    data.streamweave.reward.judge.api_key_env="${STREAMWEAVE_JUDGE_API_KEY_ENV:-STREAMWEAVE_JUDGE_API_KEY}" \
+    data.streamweave.reward.judge.max_tokens="${STREAMWEAVE_JUDGE_MAX_TOKENS:-768}" \
+    data.streamweave.reward.judge.temperature="${STREAMWEAVE_JUDGE_TEMPERATURE:-0.0}" \
+    data.streamweave.reward.judge.top_p="${STREAMWEAVE_JUDGE_TOP_P:-0.1}" \
+    data.streamweave.reward.judge.timeout_seconds="${STREAMWEAVE_JUDGE_TIMEOUT_SECONDS:-180.0}" \
+    data.streamweave.reward.judge.image_quality="${STREAMWEAVE_JUDGE_IMAGE_QUALITY:-80}" \
+    data.streamweave.reward.judge.max_image_side="${STREAMWEAVE_JUDGE_IMAGE_RESOLUTION:-512}" \
+    data.streamweave.reward.judge.max_retries="${STREAMWEAVE_JUDGE_MAX_RETRIES:-2}" \
+    data.streamweave.reward.judge.retry_backoff_seconds="${STREAMWEAVE_JUDGE_RETRY_BACKOFF_SECONDS:-5.0}" \
+    data.streamweave.reward.judge.retry_backoff_multiplier="${STREAMWEAVE_JUDGE_RETRY_BACKOFF_MULTIPLIER:-2.0}" \
+    data.streamweave.reward.judge.failure_score="${STREAMWEAVE_JUDGE_FAILURE_SCORE:-0.0}" \
+    data.streamweave.reward.judge.score_on_invalid="${STREAMWEAVE_JUDGE_SCORE_ON_INVALID:-false}" \
     data.streamweave.dataset.dataset_root="/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset" \
     data.streamweave.dataset.dataset_name=ovo \
     data.streamweave.memory.window_seconds=120.0 \
-    actor_rollout_ref.model.path="/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_v2_3077" \
+    actor_rollout_ref.model.path="${STREAMWEAVE_MODEL_PATH}" \
     actor_rollout_ref.model.trust_remote_code=True \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.use_fused_kernels=True \

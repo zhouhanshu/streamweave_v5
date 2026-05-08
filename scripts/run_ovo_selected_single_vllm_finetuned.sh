@@ -6,7 +6,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-MODEL="${1:-/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_v2_3077_vllm}"
+MODEL="${1:-/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm}"
 GPU="${GPU:-0}"
 PORT="${PORT:-8000}"
 PYTHON="/mmu_mllm_hdd/zhouhanshu/conda/envs/simple/bin/python"

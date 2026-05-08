@@ -11,6 +11,8 @@ import torch
 import verl.utils.torch_functional as verl_F
 from verl.trainer.ppo.core_algos import register_adv_est
 
+from .trace import env_flag, trace_print
+
 
 def _to_numpy_int64(values: Any, *, factorize: bool = False) -> np.ndarray:
     if isinstance(values, torch.Tensor):
@@ -140,6 +142,8 @@ def compute_streamweave_stepwise_traj_grpo(
 
         group = uniq_key[:, 0]
         traj = uniq_key[:, 1]
+        raw_groups = np.asarray(data.non_tensor_batch["group_idx"], dtype=object).reshape(-1)
+        group_labels = {int(group[row]): str(raw_groups[int(first_idx[row])]) for row in range(len(first_idx))}
         scores_full = _to_float_array(data.non_tensor_batch["trajectory_score"])
         scores = scores_full[first_idx]
 
@@ -162,6 +166,13 @@ def compute_streamweave_stepwise_traj_grpo(
             for (traj_id, _), adv in zip(items, normed.tolist(), strict=True):
                 adv_by_traj[(group_id, traj_id)] = float(adv)
 
+        if _trace_grpo_enabled():
+            _trace_grpo_groups(
+                group_to_traj_scores=group_to_traj_scores,
+                adv_by_traj=adv_by_traj,
+                group_labels=group_labels,
+            )
+
         advantages_u = torch.zeros_like(mask_u)
         for row in range(len(first_idx)):
             adv = adv_by_traj.get((int(group[row]), int(traj[row])), 0.0)
@@ -172,6 +183,36 @@ def compute_streamweave_stepwise_traj_grpo(
         score_u = torch.as_tensor(scores, dtype=torch.float32, device=device).unsqueeze(-1) * mask_u
         returns = score_u.index_select(0, inverse_t)
     return advantages, returns
+
+
+def _trace_grpo_enabled() -> bool:
+    return env_flag(
+        "STREAMWEAVE_TRACE_GRPO_GROUPS",
+        default=env_flag("STREAMWEAVE_TRACE_FIRST_ROLLOUT", default=False),
+    )
+
+
+def _trace_grpo_groups(
+    *,
+    group_to_traj_scores: dict[int, list[tuple[int, float]]],
+    adv_by_traj: dict[tuple[int, int], float],
+    group_labels: dict[int, str],
+) -> None:
+    for group_id in sorted(group_to_traj_scores, key=lambda item: group_labels.get(int(item), str(item))):
+        items = sorted(group_to_traj_scores[group_id], key=lambda item: item[0])
+        values = np.asarray([score for _, score in items], dtype=np.float32)
+        mean = float(values.mean()) if values.size else 0.0
+        std = float(values.std(ddof=1)) if values.size > 1 else 0.0
+        scores = {int(traj_id): round(float(score), 4) for traj_id, score in items}
+        advantages = {
+            int(traj_id): round(float(adv_by_traj.get((int(group_id), int(traj_id)), 0.0)), 4)
+            for traj_id, _ in items
+        }
+        trace_print(
+            "[SW-TRACE grpo-group] "
+            f"group={group_labels.get(int(group_id), str(group_id))} "
+            f"traj_scores={scores} mean={mean:.4f} std={std:.4f} advantages={advantages}"
+        )
 
 
 def _config_get_float(config: Any, key: str, default: float) -> float:

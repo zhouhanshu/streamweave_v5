@@ -45,12 +45,36 @@ data:
       enable_timing_reward: false
       enable_open_tail_reward: false
     reward:
-      w_format: 0.5
-      w_success: 0.5
-      w_step: 0.0
+      w_format: 0.3
+      w_success: 0.4
+      w_step: 0.3
+      score_scale: 2.0
       format_mode: valid
       success_mode: dataset
       success_scorer: auto
+      enable_note_frequency_reward: true
+      note_frequency_weight: 1.0
+      judge_weight: 0.0
+      max_notes_per_step: 1
+      stale_note_after_steps: 3
+      note_frequency_penalty_score: 0.0
+      judge:
+        enable: false
+        backend: openai_compatible
+        model: ""
+        base_url: ""
+        api_key_env: STREAMWEAVE_JUDGE_API_KEY
+        max_tokens: 768
+        temperature: 0.0
+        top_p: 0.1
+        timeout_seconds: 120.0
+        image_quality: 80
+        max_image_side: 512
+        max_retries: 2
+        retry_backoff_seconds: 2.0
+        retry_backoff_multiplier: 2.0
+        failure_score: 0.0
+        score_on_invalid: false
 
 algorithm:
   adv_estimator: streamweave_stepwise_gae

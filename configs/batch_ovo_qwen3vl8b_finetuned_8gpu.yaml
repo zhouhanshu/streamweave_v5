@@ -37,7 +37,7 @@ dataset:
 
 backend:
   backend: vllm
-  model: /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_v2_3077_vllm
+  model: /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm
   base_url: http://127.0.0.1:8000/v1
   api_key: EMPTY
   api_key_env: ""

@@ -6,7 +6,7 @@ This note records the recent StreamWeave RL changes made while debugging the slo
 
 All changes are limited to:
 
-- `RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_4gpu_3_4_6_7_lt120s_fused_chunked.sh`
+- `RL/scripts/train_grpo_ovo_8gpu.sh`
 - `RL/verl/verl/trainer/ppo/core_algos.py`
 - `RL/verl/verl/trainer/ppo/ray_trainer.py`
 - `RL/verl/verl/workers/actor/dp_actor.py`
@@ -18,14 +18,14 @@ No files outside `streamweave_v5/RL` were changed for this step.
 
 File:
 
-- `RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_4gpu_3_4_6_7_lt120s_fused_chunked.sh`
+- `RL/scripts/train_grpo_ovo_8gpu.sh`
 
-This is a separate experiment script. The original `train_grpo_ovo_vllm_qwen3vl8b_full_8gpu_lt120s.sh` was not modified.
+This launcher has since been consolidated into the shorter 8GPU GRPO entrypoint.
 
 Current important settings:
 
 ```bash
-RUN_NAME="grpo_ovo_qwen3vl8b_full_vllm_8gpu_lt120s_fused_chunked"
+RUN_NAME="${STREAMWEAVE_RUN_NAME:-grpo_ovo_8gpu}"
 actor_rollout_ref.model.use_remove_padding=True
 actor_rollout_ref.model.use_fused_kernels=True
 actor_rollout_ref.actor.strategy=fsdp
@@ -195,7 +195,7 @@ The next run should verify:
 
 Compared files:
 
-- StreamWeave current script: `RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_4gpu_3_4_6_7_lt120s_fused_chunked.sh`
+- StreamWeave current script: `RL/scripts/train_grpo_ovo_8gpu.sh`
 - VAGEN reference script: `/mmu_mllm_hdd/zhouhanshu/test/VAGEN/examples/train/sokoban/train_grpo_qwen3vl4b.sh`
 
 Important settings now aligned:

@@ -9,6 +9,12 @@
 目录：
 
 ```text
+/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo
+```
+
+历史来源：
+
+```text
 /mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/ovo
 ```
 
@@ -30,8 +36,8 @@ ovo_rl_lt120s.json       <120s 子集，293 条
 当前 GRPO 脚本使用：
 
 ```text
-train_files = ovo_rl_lt120s.json
-val_files   = ovo_rl_lt120s.json
+train_files = /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json
+val_files   = /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json
 ```
 
 ## V4 SFT 数据
@@ -80,4 +86,5 @@ exp2/data/streamweave_data/annotations_filtered_30s300s_key10to40.jsonl
 
 - 当前先不要扩大 VideoXum SFT 数据，优先稳定 V5 GRPO。
 - 如果要回到 SFT 数据构造，先排查第一次 SFT 退化原因。
-- 新数据接入必须复用 production prompt、XML parser、quality validator 和 accepted-only 导出规则。
+- 新数据接入必须复用 production prompt、当前 `<state>` XML parser、quality validator 和 accepted-only 导出规则。
+- 当前 SFT 源码没有 annotated key-frame hard constraint；如果重新引入关键帧监督，需要单独实现和记录。

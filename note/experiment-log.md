@@ -4,27 +4,51 @@
 
 - 实验：`StreamWeave`
 - 当前主线：`exp3/streamweave_v5/RL`
-- 当前阶段：GRPO stepwise 训练链路已跑通，正在定位稳定性和训练侧性能问题。
-- 当前入口脚本：`RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_8gpu_lt120s.sh`
-- 当前训练数据：`/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/ovo/ovo_rl_lt120s.json`
-- 当前初始化模型：`/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_v2_3077`
+- 当前阶段：GRPO stepwise 训练链路已跑通；SFT 评测仍在运行中；RL 正在定位完整跑完、checkpoint 恢复和训练侧性能问题。
+- 当前唯一保留的 GRPO 入口：`RL/scripts/train_grpo_ovo_8gpu.sh`
+- PPO 入口：`RL/scripts/train_ppo.sh`
+- 当前训练数据运行路径：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json`
+- 当前初始化模型：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm`
 - 当前最优先事项：
-  - 把 `save_freq=100` 改成 `5` 或 `10`，避免中断后完全没有 checkpoint。
-  - 确认 RL 起点到底使用 SFT checkpoint 还是 base instruct。
+  - 等 answered-full SFT 的 OVO 1/8 评测落盘后再写正式分数。
+  - 用最新 fused/chunked GRPO 入口从 answered-full SFT 模型启动 reward v2 RL。
+  - 确认新 run 日志包含 `note_frequency_score`、`judge_score`、`step_score`、`trajectory_score`。
   - 优化 `old_log_prob` 和 `update_actor`，当前瓶颈不在 rollout 生成。
 
 ## 文件索引
 
 - [00-overview.md](./00-overview.md)：目标、方法和当前主线。
-- [04-sft-training.md](./04-sft-training.md)：SFT 数据与第一次 SFT 负面结果。
-- [05-rl-training.md](./05-rl-training.md)：当前 GRPO/RL 训练状态。
+- [04-sft-training.md](./04-sft-training.md)：SFT 数据、answered-full 训练、评测状态和第一次 SFT 负面结果。
+- [05-rl-training.md](./05-rl-training.md)：当前 GRPO/RL run、checkpoint、reward 和性能记录。
 - [实验跑分.md](./实验跑分.md)：正式跑分主表。
 - [07-key-points.md](./07-key-points.md)：关键结论和避坑。
 - [08-commands-and-tools.md](./08-commands-and-tools.md)：当前有效命令。
+- [10-source-code-current-state.md](./10-source-code-current-state.md)：当前源码实际协议、SFT/RL 实现和脚本口径。
 - [02-data-construction.md](./02-data-construction.md)、[数据合成.md](./数据合成.md)：数据构造历史，当前只作追溯。
 - [09-streamweave-proposal-draft.md](./09-streamweave-proposal-draft.md)：长期方案草稿，非当前状态依据。
 
+### 2026-05-08 源码口径同步
+
+- 当前 `<eta>` 协议已经彻底不是主线；源码协议是 `<state>`、`<answer>`、timestamp-only `<note>`、`<bridge>`。
+- `data_engine/sft` 当前没有 `_key_frame_context()` 或 `_apply_key_frame_quality_constraints()`；SFT 硬约束是 note 数量、QA answer 空/非空时机和样本级答案正确性。
+- RL reward 当前是 `format + step + success`，默认 `w_format=0.3`、`w_step=0.3`、`w_success=0.4`、`score_scale=2.0`。
+- step score 默认来自 note frequency：每窗口最多 1 个 note，连续 3 个窗口无 note 惩罚；judge 默认关闭。
+- judge 显式开启后评估 `keyframe_selection`、`bridge_quality`、`semantic_alignment`、`state_factuality`，且被 note frequency gate 住。
+- 旧 GRPO launcher 已清理；当前只保留最新 fused/chunked GRPO 入口和 PPO 入口。
+- 最新 GRPO 入口使用 `save_freq=30`、`resume_mode=auto`、`use_remove_padding=true`、`use_fused_kernels=true`、`enable_chunked_prefill=true`。
+- 详细源码事实见 `10-source-code-current-state.md`。
+
 ## 关键里程碑
+
+### 2026-05-08 answered-full SFT 训练完成，OVO 1/8 回评进行中
+
+- 训练数据：`data_engine/sft/outputs/gemini_answered_full/llamafactory_sharegpt_bridge_le20.jsonl`
+- 数据规模：`3956` 条 sample，`2491` 条 accepted；过滤后 `32583` 行 ShareGPT step。
+- 训练输出：`/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_answered_full`
+- 训练结果：`759/759` steps，`train_loss=0.181242`，`eval_loss=0.246001`，耗时约 `8:10:10`。
+- vLLM 兼容模型：`models/qwen3vl8b_streamweave_sft_answered_full_vllm`
+- OVO 1/8 评测输出：`outputs/ovo_qwen3vl8b_finetuned_1of8`
+- 当前评测状态：8 个 vLLM server 和 `eval_batch.py` 仍在运行，part 文件已写出至少 `84/205` 行且仍在增长；没有顶层 `results.jsonl` 或 `results_summary.*`，因此暂无正式分数。
 
 ### 2026-05-06 V5 GRPO stepwise 链路跑通
 
@@ -32,14 +56,13 @@
 - 链路为 `vLLM rollout + Ray + verl_0425 + StreamWeave stepwise env`。
 - 当前 OVO RL 原始数据：`ovo_rl.json`，约 `600` 条，`backward/forward/realtime` 各约 `200` 条。
 - 当前训练使用 `<120s` 子集：`ovo_rl_lt120s.json`，共 `293` 条。
-- 最近 run：
+- 2026-05-08 更新：`RL/outputs` 已清空，旧 launcher 已删除；以下旧 run 只作为历史记录，不再有磁盘输出可追溯。
+- 旧 8GPU run：
   - 目录：`RL/outputs/debug/grpo_ovo_qwen3vl8b_full_vllm_8gpu_lt120s_20260505.163625`
-  - 进度：`Training Progress: 39/73`，约 `53%`
-  - 日志耗时：`elapsed=10:26:12`
-  - 日志最后更新时间：北京时间 `2026-05-06 11:06:52`
-  - 后续检查时 `TaskRunner / AgentLoopWorker / WorkerDict / vLLMHttpServer` 均已不在
-  - 目录内没有 `exit_code.txt`，没有 checkpoint
-- 判断：本次更像外部中断、进程被杀或 shell 任务异常退出，不是正常完整跑完。
+  - 进度：日志到 `Training Progress: 41/73`，约 `56%`
+  - `exit_code.txt=0`，但无 completion 记录
+  - 没有 `global_step_*` checkpoint
+  - 判断：不能视为完整完成，也不能恢复训练
 - 数据链路观察：
   - `response/aborted_ratio = 0.0`
   - `prompt_length/clip_ratio = 0.0`
@@ -57,6 +80,12 @@
 - 配置问题：
   - `save_freq=100` 但总 step 只有 `73`，中途不会保存 checkpoint。
   - 当前脚本从 SFT checkpoint 开始 RL，不是 base instruct。
+- fused/chunked run：
+  - 目录：`RL/outputs/debug/grpo_ovo_qwen3vl8b_full_vllm_8gpu_lt120s_fused_chunked`
+  - 已有 checkpoint：`global_step_30`、`global_step_60`
+  - resume 后日志到 `83/146`
+  - 性能明显改善：step 61 总耗时约 `242s`，step 80 约 `365s`，step 83 约 `273s`
+  - 问题：resume 后 `format_score` 偏低，`step_score` 仍为 `0.0`；该 run 还不能证明当前 reward 配置有效。
 
 ### 2026-05-02 V4 SFT 链路打通
 
@@ -91,6 +120,8 @@
 ## 当前结论
 
 - RL 链路已经跑通，当前不应优先怀疑数据、prompt、env 或 rollout。
-- 最近 run 没有 checkpoint 的直接原因是 `save_freq` 配置不合理。
+- 历史 run 已清理，后续不再基于旧 checkpoint 继续训练。
+- 最新 RL 起点是 answered-full SFT vLLM 兼容模型，reward v2 口径需要重新跑完整实验。
 - 当前性能优化应优先看训练侧：remove padding、offload、长序列 token 量、micro batch 和 FSDP 设置。
 - SFT 结果曾明显退化，因此如果继续从 SFT checkpoint 开始 RL，需要明确这是实验选择，不应默认认为它优于 base instruct。
+- 后续记录 RL run 时必须写明具体 launcher、模型起点、数据路径、`save_freq`、resume mode、remove-padding/fused/chunked 设置。

@@ -142,7 +142,7 @@ def _compute_streamweave_stepwise_metrics(batch: DataProto) -> dict[str, Any]:
         if indices is not None:
             metrics["streamweave/num_trajectories"] = int(len(indices))
 
-    for key in ("format_score", "step_score", "turn_reward"):
+    for key in ("format_score", "step_score", "note_frequency_score", "judge_score", "turn_reward"):
         if key in non_tensor_batch:
             _add_metric_stats(metrics, f"streamweave/{key}", non_tensor_batch[key])
 

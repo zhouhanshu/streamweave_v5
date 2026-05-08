@@ -71,8 +71,8 @@ Important files:
 The runtime state machine is `StreamWeaveEnv`:
 
 1. `build_prompt(frames, retry_feedback="", extra_context="")`
-   - assigns step-local frame ids;
-   - renders memory, QA history, current frames;
+   - normalizes current frames into step-local `FrameRef` objects;
+   - renders memory, QA history, and timestamp-only current frames;
    - returns multimodal `ContentItem`s plus text/image views.
 2. `evaluate_attempt(raw_output, frames, reward_config, repair=True)`
    - parses and scores the raw XML;
@@ -188,7 +188,7 @@ Quality checks (`streamweave/quality.py`) add:
 Repair (`streamweave/postprocess.py`) is intentionally deterministic:
 
 - extracts usable tags with lenient parser;
-- repairs note time to the referenced frame;
+- matches note times to current frames and normalizes to the exact frame interval;
 - clamps bridges into current step;
 - fixes open-tail bridge start;
 - drops empty/invalid bridges and out-of-window notes;
@@ -258,16 +258,18 @@ run_parallel_pipeline.py
         -> sample-level answer check
 ```
 
-SFT-only constraints in `data_engine/sft/rollout_sft.py`:
+SFT-only constraints in `data_engine/sft/constraints.py` and `data_engine/sft/rollout_sft.py`:
 
-- `_key_frame_context()` injects annotated key-frame constraints into teacher prompt.
-- `_apply_key_frame_quality_constraints()` requires exactly the annotated note time ranges, no extras.
-- `_apply_qa_answer_constraints()` enforces answer scheduling:
+- `apply_note_count_constraint()` limits each step to `max_notes_per_step` notes, default 1.
+- `note_reminder_context()` can add a soft reminder when no recent note exists.
+- `apply_qa_answer_constraints()` enforces answer scheduling:
   - no question: empty answer;
   - already answered: empty answer;
   - realtime/backward: answer when the question is active;
   - forward: keep answer empty before the clue window, answer when due.
-- `_check_sample_answer()` accepts a sample only when every emitted answer matches GT.
+- `check_sample_answer()` accepts a sample only when every emitted answer matches GT.
+
+Current source does not implement annotated key-frame hard constraints. There is no `_key_frame_context()` or `_apply_key_frame_quality_constraints()` in the V5 SFT path.
 
 Acceptance rule:
 
@@ -343,18 +345,19 @@ Basic smoke:
 RL/scripts/run_smoke.sh
 ```
 
-Generic launchers:
+Retained launchers:
 
 ```bash
-RL/scripts/train_grpo.sh data.train_files=/path/to/train.parquet data.val_files=/path/to/val.parquet
+RL/scripts/train_grpo_ovo_8gpu.sh
 RL/scripts/train_ppo.sh data.train_files=/path/to/train.parquet data.val_files=/path/to/val.parquet
 ```
 
-Current concrete launcher examples include:
+Deleted historical GRPO launchers:
 
 ```text
-RL/scripts/train_grpo_ovo_vllm_qwen3vl8b.sh
-RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_8gpu_lt120s_fused_chunked.sh
+legacy baseline GRPO launcher
+legacy OVO GRPO launcher
+legacy long-name 8GPU GRPO launcher
 ```
 
 High-level RL flow:
@@ -495,9 +498,10 @@ trajectory_score / success_score / format_score / step_score / turn_reward
 Default config:
 
 ```text
-w_format=0.2
-w_success=0.8
-w_step=0.0
+w_format=0.3
+w_success=0.4
+w_step=0.3
+score_scale=2.0
 format_mode=valid
 success_mode=dataset
 success_scorer=auto
@@ -565,7 +569,7 @@ dataset/<dataset_name>/video/<video_id>/manifest.json
 - eval/RL repair behavior: `streamweave/postprocess.py`.
 - inference loop behavior: `streamweave/rollout.py`.
 - OVO loading/scoring: `evaluation/ovo_adapter.py`.
-- SFT key-frame/QA constraints: `data_engine/sft/rollout_sft.py`.
+- SFT note-count/QA constraints: `data_engine/sft/constraints.py` and `data_engine/sft/rollout_sft.py`.
 - SFT export prompt or image placeholders: `data_engine/sft/export_llamafactory.py`.
 - RL dataset row normalization: `RL/streamweave_rl/dataset.py`.
 - RL environment reward/step behavior: `RL/streamweave_rl/env.py` and `RL/streamweave_rl/rewards.py`.

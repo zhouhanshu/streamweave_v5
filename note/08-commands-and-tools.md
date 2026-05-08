@@ -16,31 +16,43 @@ conda activate simple
 
 ## V5 GRPO 训练
 
-当前训练脚本：
+当前唯一保留的 GRPO 启动脚本：
 
 ```bash
-bash RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_8gpu_lt120s.sh
+bash RL/scripts/train_grpo_ovo_8gpu.sh
+```
+
+PPO 入口保留用于对照或后续 critic/PPO 路径实验：
+
+```bash
+bash RL/scripts/train_ppo.sh data.train_files=/path/to/train.parquet data.val_files=/path/to/val.parquet
 ```
 
 脚本当前关键路径：
 
 ```text
-model: /mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_v2_3077
+model: /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm
 base instruct: /mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct
-data: /mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/ovo/ovo_rl_lt120s.json
+data: /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json
 outputs: /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/RL/outputs
 ```
 
-下次重跑前必须先改：
+最新 GRPO 脚本当前是：
 
 ```text
-save_freq=100 -> 5 或 10
+save_freq=30
+resume_mode=auto
+use_remove_padding=true
+use_fused_kernels=true
+enable_chunked_prefill=true
+reward: w_format=0.3, w_step=0.3, w_success=0.4, score_scale=2.0
+judge: disabled by default, judge_weight=0.0
 ```
 
-最近异常 run：
+历史 RL 输出已清理：
 
 ```text
-RL/outputs/debug/grpo_ovo_qwen3vl8b_full_vllm_8gpu_lt120s_20260505.163625
+RL/outputs
 ```
 
 ## GPU 占用工具
@@ -77,6 +89,12 @@ nvidia-smi
 当前 RL 数据目录：
 
 ```text
+/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo
+```
+
+历史来源目录：
+
+```text
 /mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/ovo
 ```
 
@@ -92,11 +110,35 @@ ovo_rl_lt120s.json       <120s 子集，293 条，当前训练使用
 
 - `backward/realtime/forward` 三类单 query 样本。
 - `forward` 样本已经展开并去掉 `test_info`，避免 RL dataset 再次重复展开。
-- 训练脚本的 `train_files` 和 `val_files` 当前都指向 `ovo_rl_lt120s.json`。
+- 训练脚本的 `train_files` 和 `val_files` 当前都指向 V5 仓库下的 `ovo_rl_lt120s.json`。
 
 ## SFT 历史数据
 
-SFT 合成链路已经打通，但第一次 SFT 回评退化，当前只作为历史和可选 RL 初始化来源。
+当前 answered-full SFT 已完成训练，模型和评测路径如下：
+
+```text
+LLaMAFactory checkpoint:
+/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_answered_full
+
+vLLM-compatible model:
+/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm
+
+training ShareGPT:
+/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/data_engine/sft/outputs/gemini_answered_full/llamafactory_sharegpt_bridge_le20.jsonl
+
+current OVO 1/8 eval output:
+/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/outputs/ovo_qwen3vl8b_finetuned_1of8
+```
+
+8 卡 OVO 1/8 回评命令：
+
+```bash
+cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
+./scripts/run_ovo_8gpu_vllm_finetuned.sh \
+  /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm
+```
+
+旧 SFT 合成链路已经打通，但第一次 SFT 回评退化，只作为历史和可选 RL 初始化来源。
 
 ```text
 SFT checkpoint:

@@ -30,11 +30,13 @@
 
 - 当前代码主线：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5`
 - 当前训练主线：`streamweave_v5/RL` 的 GRPO stepwise。
-- 当前脚本：`RL/scripts/train_grpo_ovo_vllm_qwen3vl8b_full_8gpu_lt120s.sh`
-- 当前数据：`/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/ovo/ovo_rl_lt120s.json`
-- 当前模型起点：`/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_v2_3077`
+- 当前唯一保留的 GRPO 启动脚本：`RL/scripts/train_grpo_ovo_8gpu.sh`
+- PPO 启动脚本：`RL/scripts/train_ppo.sh`
+- 当前数据运行路径：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json`
+- 历史数据来源：`/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/ovo/ovo_rl_lt120s.json`
+- 当前模型起点：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm`
 
-最新状态：GRPO 链路已经跑通，但最近一次训练在 `39/73` 后非正常中断，没有 checkpoint。下一步不是重新怀疑数据链路，而是先修保存频率，再优化训练侧性能。
+最新状态：GRPO 链路已经跑通。历史 RL 输出已经从 `RL/outputs` 清理；旧 GRPO launcher 也已删除，只保留最新 fused/chunked GRPO 入口和 PPO 入口。下一步从 answered-full SFT 后的模型启动 reward v2 口径 RL：`save_freq=30`、`resume_mode=auto`、remove padding、fused kernels、chunked prefill，reward 为 `0.3 format + 0.3 step + 0.4 success`，默认 `score_scale=2.0`，judge 默认关闭。
 
 ## 关键结果
 
@@ -56,18 +58,20 @@
 
 ## 当前优先级
 
-1. 把 GRPO 脚本的 `save_freq` 从 `100` 改成 `5` 或 `10`。
-2. 确认继续从 SFT checkpoint 开始 RL，还是切回 base instruct。
-3. 优化训练侧瓶颈：`old_log_prob` 和 `update_actor`。
-4. 在可恢复 checkpoint 的前提下重跑 `<120s` OVO RL 子集。
-5. 产出首个完整 RL checkpoint 后，再做 OVO 小规模回评。
+1. 等 answered-full SFT 的 OVO 1/8 回评完成并写入正式分数。
+2. 用最新 fused/chunked GRPO 入口从 answered-full SFT 模型启动 RL。
+3. 确认新 run 的日志出现 `note_frequency_score`、`judge_score`、`step_score` 和 `trajectory_score`。
+4. 确保 `save_freq=30` 和 `resume_mode=auto` 能在中断后恢复。
+5. 优化训练侧瓶颈：`old_log_prob` 和 `update_actor`。
+6. 产出首个完整 RL checkpoint 后，再做 OVO 小规模回评。
 
 ## 主要路径
 
 - V5 当前仓库：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5`
 - V5 RL 输出：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/RL/outputs`
-- OVO RL 数据：`/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/ovo`
+- OVO RL 数据运行路径：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo`
+- OVO RL 历史来源：`/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/ovo`
 - V4 历史仓库：`/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4`
 - V3 历史仓库：`/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v3`
 - 8B base instruct：`/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct`
-- 当前 SFT checkpoint：`/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_v2_3077`
+- 当前 RL 起点模型：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm`

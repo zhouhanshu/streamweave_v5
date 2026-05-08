@@ -56,11 +56,12 @@ SamplePlan
 
 SFT-only constraints:
 
-- Annotated key frames are converted to required note time ranges.
-- If a required annotated note is present in the current window, the output must include exactly one matching `<note t="..."></note>`.
-- If no annotated key frame is present in the current window, no note should be emitted for that key-frame constraint.
+- Each step can be limited to at most `max_notes_per_step` notes.
+- A soft note reminder can be added when memory has gone too long without a recent note.
 - QA scheduling only checks whether `<answer>` should be empty or non-empty. There is no eta target.
 - `target_timestamp` or `answer_time` truncates the sample frames so the teacher does not see after the target boundary.
+
+Current V5 source does not implement annotated key-frame hard constraints. If future experiments need required key-frame notes, that constraint must be added explicitly.
 
 ## Output Rows
 

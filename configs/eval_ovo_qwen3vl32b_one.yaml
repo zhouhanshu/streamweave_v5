@@ -39,8 +39,8 @@ backend:
   backend: openai
   model: Qwen/Qwen3-VL-32B-Instruct
   base_url: https://api.siliconflow.cn/v1
-  api_key: sk-lnjzkensfrhgsmbbxiieokeeeisvydruzblqmxhmwhcjmbhq
-  api_key_env: ""
+  api_key: ""
+  api_key_env: SILICONFLOW_API_KEY
   max_tokens: 1024
   temperature: 0.0
   timeout_seconds: 120.0

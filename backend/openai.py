@@ -76,7 +76,7 @@ class OpenAICompatibleBackend(BaseBackend):
             endpoint_id=self.endpoint,
             attempt_count=attempt_count,
             retry_errors=retry_errors,
-            usage=usage,
+            usage=usage_dict,
         )
 
     def _to_api_content(self, content: list[ContentItem]) -> list[dict[str, Any]]:
@@ -99,10 +99,12 @@ class OpenAICompatibleBackend(BaseBackend):
                 )
         return api_content
 
+
 def _extract_openai_text(message: Any) -> str:
     content = getattr(message, "content", None)
     if isinstance(content, str):
-        return content
+        if content.strip():
+            return content
     if isinstance(content, list):
         texts = []
         for item in content:
@@ -110,7 +112,9 @@ def _extract_openai_text(message: Any) -> str:
                 texts.append(str(item.get("text", "")))
             elif getattr(item, "type", None) == "text":
                 texts.append(str(getattr(item, "text", "")))
-        return "\n".join(texts)
+        text = "\n".join(texts).strip()
+        if text:
+            return text
     for attr in ("reasoning", "reasoning_content"):
         value = getattr(message, attr, None)
         if isinstance(value, str) and value.strip():

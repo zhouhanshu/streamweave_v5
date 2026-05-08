@@ -39,7 +39,8 @@
 - 代码目录、commit 或修改说明。
 - 模型路径、checkpoint、服务地址或后端类型。
 - benchmark、数据范围、样本数和错误数。
-- `policy`、`prompt_type`、`fps`、`chunk_duration`、`chunks_per_step`、`memory_window`。
+- `policy`、`prompt_profile`、`sample_fps`、`frames_per_step`、`memory_window`、`postprocess.mode`。
 - 总分、分 category、分 task。
 - 是否为 `task macro`，是否另有 `sample weighted`。
 - run 输出目录和 summary 文件路径。
+- 当前源码使用 `<state>` 协议和 timestamp-only note；若评测旧 checkpoint 或旧 trace，必须单独记录是否出现 `<eta>` 或 `frame="N"` 格式退化。
