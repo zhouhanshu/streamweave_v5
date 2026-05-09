@@ -15,46 +15,13 @@ from typing import Any
 import torch
 from torch.utils.data import Dataset
 
-BACKWARD_TASKS = {"EPM", "ASI", "HLD"}
-REAL_TIME_TASKS = {"OCR", "ACR", "ATR", "STU", "FPD", "OJR"}
-FORWARD_TASKS = {"REC", "SSR", "CRR"}
-
-BR_PROMPT_TEMPLATE = """\
-Question: {question}
-Options:
-{options}
-
-Respond only with the letter corresponding to your chosen option (e.g., A, B, C).
-Do not include any additional text or explanation in your response.
-"""
-
-REC_PROMPT_TEMPLATE = """\
-You're watching a video in which people may perform a certain type of action repetitively.
-The person performing this kind of action is referred to as "they" in the following statement.
-Your task is to count how many times different people in the video have performed this kind of action in total.
-One complete motion counts as one.
-Now, answer the following question: {question}
-Provide your answer as a single number (e.g., 0, 1, 2, 3...) indicating the total count.
-Do not include any additional text or explanation in your response.
-"""
-
-SSR_PROMPT_TEMPLATE = """\
-You're watching a tutorial video which contains a sequence of steps.
-The following is one step from the whole procedure:
-{step}
-Your task is to determine if the man or woman in the video is currently performing this step.
-Answer only with "Yes" or "No".
-Do not include any additional text or explanation in your response.
-"""
-
-CRR_PROMPT_TEMPLATE = """\
-You're responsible for answering questions based on the video content.
-The following question is relevant to the latest frames, i.e. the end of the video.
-{question}
-Decide whether the existing visual content, especially the latest frames near the end of the video, provides enough information for answering the question.
-Answer only with "Yes" or "No".
-Do not include any additional text or explanation in your response.
-"""
+from streamweave.ovo import (
+    FORWARD_TASKS,
+    MCQ_TASKS,
+    build_forward_query,
+    build_mcq_query,
+    option_letter_from_gt,
+)
 
 
 class StreamWeaveAgentDataset(Dataset):
@@ -180,7 +147,7 @@ def _expand_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 item["question"] = _ovo_forward_question(task, row, info)
                 expanded.append(item)
             continue
-        if task in BACKWARD_TASKS | REAL_TIME_TASKS:
+        if task in MCQ_TASKS:
             item = dict(row)
             item["benchmark"] = item.get("benchmark") or "ovo"
             item["dataset"] = item.get("dataset") or "ovo"
@@ -219,9 +186,8 @@ def _question_text(row: dict[str, Any]) -> str:
     if not question:
         return ""
     task = str(row.get("task") or "").strip()
-    if task in BACKWARD_TASKS | REAL_TIME_TASKS and isinstance(row.get("options"), list):
-        options = "; ".join(f"{chr(65 + idx)}. {option}" for idx, option in enumerate(row["options"])) + ";"
-        return BR_PROMPT_TEMPLATE.format(question=question, options=options)
+    if task in MCQ_TASKS and isinstance(row.get("options"), list):
+        return build_mcq_query(question, row["options"])
     options = row.get("options")
     if isinstance(options, list) and options:
         option_lines = []
@@ -259,9 +225,9 @@ def _ground_truth(row: dict[str, Any], task: str) -> Any:
     for key in ("ground_truth", "target"):
         if key in row and row[key] is not None:
             return row[key]
-    if task in BACKWARD_TASKS | REAL_TIME_TASKS and row.get("gt") is not None:
+    if task in MCQ_TASKS and row.get("gt") is not None:
         try:
-            return chr(65 + int(row["gt"]))
+            return option_letter_from_gt(row["gt"])
         except (TypeError, ValueError):
             return row["gt"]
     if row.get("gt") is not None:
@@ -289,13 +255,7 @@ def _sample_id(row: dict[str, Any], *, video_id: str, task: str, idx: int) -> st
 
 
 def _ovo_forward_question(task: str, row: dict[str, Any], info: Mapping[str, Any]) -> str:
-    if task == "REC":
-        return REC_PROMPT_TEMPLATE.format(question=f"How many times did they {row.get('activity', '')}?")
-    if task == "SSR":
-        return SSR_PROMPT_TEMPLATE.format(step=info.get("step", ""))
-    if task == "CRR":
-        return CRR_PROMPT_TEMPLATE.format(question=row.get("question", ""))
-    return str(row.get("question") or "")
+    return build_forward_query(task, row, dict(info))
 
 
 def _streamweave_config_from_row(row: dict[str, Any]) -> dict[str, Any]:

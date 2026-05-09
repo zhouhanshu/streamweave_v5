@@ -41,18 +41,20 @@
 默认权重：
 
 ```text
-w_format = 0.3
-w_step = 0.3
-w_success = 0.4
+w_format = 0.1
+w_step = 0.2
+w_success = 0.7
 score_scale = 2.0
-trajectory_score = 0.3 * mean(format_score)
-                 + 0.3 * mean(step_score)
-                 + 0.4 * success_score
+trajectory_score = 0.1 * mean(format_score)
+                 + 0.2 * mean(step_score)
+                 + 0.7 * success_score
 ```
 
 step score：
 
-- 默认 `step_score = note_frequency_score`。
+- 默认配置中 `note_frequency_weight=0.3`、`judge_weight=0.7`。
+- 如果 judge 关闭，则 `step_score` 只来自 note frequency。
+- 当前 8GPU GRPO launcher 默认开启 judge，因此 `step_score = 0.3 * note_frequency_score + 0.7 * judge_score`。
 - 每个窗口最多 1 个 note。
 - 连续 3 个窗口没有 note 会被惩罚。
 - 正常 `note_frequency_score=2.0`；一个窗口超过 1 个 note 或连续 3 个窗口无 note 时为 `0.0`。
@@ -60,8 +62,7 @@ step score：
 LLM-as-Judge：
 
 - 评估 `keyframe_selection`、`bridge_quality`、`semantic_alignment`、`state_factuality`。
-- 默认 `judge.enable=false` 且 `judge_weight=0.0`，不影响训练。
-- 显式开启后才进入 `step_score`。
+- 配置文件默认 `judge.enable=false`，但 judge 权重默认保留为 `0.7`；8GPU launcher 默认显式开启 judge。
 - judge 被 note frequency gate 住：note frequency 没拿满分时，不调用 judge，`judge_score=0`。
 
 日志字段：
@@ -147,6 +148,137 @@ reward/format 观测：
 - fused/chunked 配置明显降低显存和训练侧耗时，性能方向是正的。
 - 但 resume 后 `format_score` 明显偏低，`step_score` 仍为 `0.0`；这批历史日志不能证明当前 note-frequency step reward 有效。
 - 在产出论文或主结果前，应重新跑一条明确使用当前 reward 配置的 run，或至少从 checkpoint 恢复后确认 reward 配置、格式率和 step_score。
+
+### Run C：2026-05-09 judge-enabled GRPO 负结果
+
+状态和结论：
+
+- 当前结论：本轮已经停止，未观察到稳定学习趋势，不作为有效 RL checkpoint 或主结果使用。
+- launcher：`RL/scripts/train_grpo_ovo_8gpu.sh`
+- run name：`grpo_ovo_8gpu_judge_debug`
+- run 目录：`RL/outputs/debug/grpo_ovo_8gpu_judge_debug`
+- 数据：`dataset/ovo/ovo_rl_lt120s.json`，`293` 条 `<120s` OVO 单 query 样本。
+- 初始化模型：`models/qwen3vl8b_streamweave_sft_answered_full_vllm`
+- GPU：`CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7`
+- 训练步数口径：`total_epochs=2`，总步数约 `146`；这个规模不足以稳定判断曲线趋势，但本轮早期指标没有显示出明确改善。
+
+本轮最终训练参数：
+
+```text
+data.train_batch_size=32
+data.gen_batch_size=4
+data.val_batch_size=4
+actor_rollout_ref.rollout.n=8
+actor_rollout_ref.rollout.agent.num_workers=32
+actor_rollout_ref.actor.ppo_mini_batch_size=32
+actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4
+actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4
+actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4
+actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768
+actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=32768
+actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=32768
+actor_rollout_ref.rollout.max_model_len=16384
+actor_rollout_ref.rollout.max_num_batched_tokens=32768
+actor_rollout_ref.rollout.max_num_seqs=2048
+actor_rollout_ref.rollout.gpu_memory_utilization=0.7
+actor_rollout_ref.rollout.enable_chunked_prefill=True
+actor_rollout_ref.rollout.free_cache_engine=True
+actor_rollout_ref.model.use_remove_padding=True
+actor_rollout_ref.model.use_fused_kernels=True
+actor_rollout_ref.model.enable_gradient_checkpointing=True
+actor_rollout_ref.model.override_config.attn_implementation=sdpa
+actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16
+actor_rollout_ref.actor.fsdp_config.param_offload=False
+actor_rollout_ref.actor.fsdp_config.optimizer_offload=False
+actor_rollout_ref.ref.fsdp_config.param_offload=False
+actor_rollout_ref.actor.optim.lr=1e-6
+actor_rollout_ref.actor.use_kl_loss=False
+actor_rollout_ref.actor.kl_loss_coef=0.0
+actor_rollout_ref.actor.entropy_coeff=0
+algorithm.use_kl_in_reward=False
+critic.enable=False
+trainer.save_freq=20
+trainer.resume_mode=auto
+trainer.logger=["console","swanlab"]
+```
+
+环境和 Gemini judge 参数：
+
+```text
+STREAMWEAVE_REWARD_JUDGE_ENABLE=true
+STREAMWEAVE_REWARD_JUDGE_WEIGHT=1.0
+STREAMWEAVE_JUDGE_BACKEND=gemini
+STREAMWEAVE_JUDGE_MODEL=gemini-2.5-flash
+GOOGLE_APPLICATION_CREDENTIALS=/mmu_ssd3/group_lisize/hetu/xujia10/joint_tags/scripts/gemini_client/config.json
+STREAMWEAVE_JUDGE_MAX_TOKENS=2048
+STREAMWEAVE_JUDGE_TEMPERATURE=0.0
+STREAMWEAVE_JUDGE_TOP_P=0.1
+STREAMWEAVE_JUDGE_TIMEOUT_SECONDS=180.0
+STREAMWEAVE_JUDGE_IMAGE_RESOLUTION=512
+STREAMWEAVE_JUDGE_MAX_RETRIES=2
+STREAMWEAVE_JUDGE_RETRY_BACKOFF_SECONDS=5.0
+```
+
+本轮 reward 策略：
+
+- 输出协议：`<state>`、`<answer>`、timestamp-only `<note>`、`<bridge>`。
+- 分值统一放大：`score_scale=2.0`，因此 format、note frequency、judge、success 的满分都是 `2.0`。
+- trajectory 聚合权重：`w_format=0.3`、`w_step=0.3`、`w_success=0.4`。
+- `format_score`：基于 raw XML 输出计算，修复后的 action 只用于推进环境，不用于格式奖励。
+- `note_frequency_score`：每个窗口最多允许 `1` 个 note；一个窗口输出大于 `1` 个 note，或连续 `3` 个窗口没有 note，得 `0.0`；否则得 `2.0`。
+- `judge_score`：开启 Gemini LLM-as-judge，维度为 `keyframe_selection`、`bridge_quality`、`semantic_alignment`、`state_factuality`，每维 `0.0-1.0` 后聚合并乘以 `2.0`。
+- judge gate：如果当前 step 没拿到完整 note frequency 奖励，则不调用或不计 judge，`judge_score=0.0`。
+- judge prompt 特殊规则：如果当前帧窗口正好是 `0.0-5.0`，只有输出且仅输出 `note t="0.0-1.0"` 时，`keyframe_selection` 才能给 `1.0`；其他 note 时刻、缺 note 或多个 note 都给 `0.0`。
+- judge 输出结构：四个维度都要求返回 `score` 和简短 `reason`，用于 debug。
+- `step_score`：judge 开启且权重大于 `0` 时，由 note frequency 和 judge 加权平均得到；当前 `judge_weight=1.0`，等价于二者各占一半。
+- `success_score`：trajectory 结束时按 OVO answer scorer 计算，满分 `2.0`。
+- `trajectory_score = 0.3 * mean(format_score) + 0.3 * mean(step_score) + 0.4 * success_score`。
+- `turn_reward`：非终止 step 分摊 `format + step`，最后一个 step 额外加入 `success` 项；日志里的 `critic/score` 和 `critic/rewards` 主要对应 token-level turn reward，不等同于 trajectory score。
+
+本轮算法策略：
+
+- 算法：GRPO，`algorithm.adv_estimator=streamweave_stepwise_traj_grpo`。
+- Stepwise rollout：每个视频窗口作为一条独立 prompt-response row 训练，通过 `group_idx`、`traj_idx`、`turn_idx` 保留完整 trajectory。
+- 采样规模：`data.gen_batch_size=4` 且 `rollout.n=8`，所以每个 optimizer step 约 `4 * 8 = 32` 条 trajectory。
+- Advantage：同一 query 的 `8` 条 rollout 组成一组，按 `trajectory_score` 做组内归一化，然后把同一 trajectory 的 advantage 广播到它所有 step 的 response token。
+- critic：`critic.enable=False`，没有 value model。
+- KL：`algorithm.use_kl_in_reward=False`、`actor.use_kl_loss=False`、`kl_loss_coef=0.0`，本轮没有显式 KL 约束。
+- 熵：`entropy_coeff=0`，没有额外熵奖励。
+- 日志：已增加 `streamweave/trajectory_score/*`、`streamweave/success_score/*`、`streamweave/step_score/*`、`streamweave/note_frequency_score/*`、`streamweave/judge_score/*`；后续重启后应同时看 `traj/score/*`、`traj/success/*` alias，方便 SwanLab 图表筛选。
+
+调参和现象：
+
+- 先后尝试过提高并发和显存利用：`gen_batch_size=4`、`agent.num_workers=32`、`micro_batch_per_gpu=4`、`max_num_batched_tokens=32768`、`vLLM gpu_memory_utilization=0.65/0.7`、actor/ref offload 关闭。
+- 训练速度没有稳定改善，较激进配置下 `update_actor` 明显变慢，说明瓶颈不只是 vLLM 显存利用率。
+- 代表性日志中，`format_score` 常接近 `2.0`，但 `success_score`、`step_score`、`judge_score` 波动大，没有稳定上升。
+- 例：较激进配置 step 2，`trajectory_score/mean=1.5597`、`success_score/mean=1.25`、`step_score/mean=1.3743`、`judge_score/mean=1.3215`，`gen=124.31s`、`old_log_prob=54.75s`、`update_actor=261.20s`、`step=444.26s`。
+- 例：中间配置 step 4，`trajectory_score/mean=1.5192`、`success_score/mean=0.9375`、`step_score/mean=1.7605`、`judge_score/mean=1.6903`，`gen=68.05s`、`old_log_prob=26.01s`、`update_actor=98.65s`、`step=196.55s`。
+- 曾遇到 vLLM EngineCore 残留进程占用 GPU 0/5 约 `48GB`，导致 vLLM 启动时误判可用显存不足；后续失败后需要先检查 `nvidia-smi` 和 Ray/vLLM 残留。
+
+复盘判断：
+
+- 这轮不是链路打不通，而是 reward/算法组合没有在短训练内产生清晰学习信号。
+- 由于总步数只有约 `146`，单看前十来步噪声很大；但用户已经停止本轮，记录为负结果。
+- 后续不应简单继续堆显存或并发。优先重新审视 reward 密度、judge 噪声、KL/entropy 约束、trajectory-level credit assignment，以及是否先做更短、更稳定的离线/小集校准。
+
+### 2026-05-09 DAPO-style group filtering 更新
+
+- 新增 group 级指标：`traj/score_mean`、`traj/score_std`、`traj/valid_group_ratio`，同时保留 `traj/group_score_mean/*`、`traj/group_score_std/*` 这类展开统计。
+- 新增 StreamWeave 版 DAPO group filtering：在 reward 提取之后、`old_log_prob` 之前，按 `algorithm.filter_groups.metric` 聚合同一 group 的 trajectory 分数。
+- 当前默认 metric：`trajectory_score`，脚本环境变量为 `STREAMWEAVE_DAPO_FILTER_METRIC=trajectory_score`。
+- 有效 group 定义：同一 group 内至少两条 rollout 的 trajectory score 存在方差，`std > min_std`。
+- invalid group：同组 rollout 全部同分，例如全高分、全低分或全失败；这类 group 的 GRPO advantage 基本为零，会被过滤掉，不进入 logprob/update。
+- DAPO clip-higher：当前 8GPU launcher 显式设置 `clip_ratio_low=0.2`、`clip_ratio_high=0.28`，并保持 `loss_agg_mode=token-mean`。
+- 安全保护：如果一个 batch 里所有 group 都 invalid，则不做过滤，避免空 batch 直接中断训练。
+- 当前实现是当前 stepwise 链路内的 DAPO-style group filtering；还没有实现官方 DAPO 的跨 batch 动态补采样。
+
+### 2026-05-09 reward 权重调整
+
+- trajectory 聚合权重从 `format=0.3, step=0.3, success=0.4` 调整为 `format=0.1, step=0.2, success=0.7`。
+- 当前公式：`trajectory_score = 0.1 * mean(format_score) + 0.2 * mean(step_score) + 0.7 * success_score`。
+- step 内部权重从 note/judge 各半调整为 `note_frequency_weight=0.3`、`judge_weight=0.7`。
+- 目的：降低格式奖励占比，强化最终答案成功信号；step 部分更依赖 judge 内容质量，只保留 note frequency 作为频率约束。
+- 当前 8GPU launcher 对应环境变量默认值：`STREAMWEAVE_REWARD_NOTE_WEIGHT=0.3`、`STREAMWEAVE_REWARD_JUDGE_WEIGHT=0.7`。
 
 ## 配置问题与记录口径
 

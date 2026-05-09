@@ -57,8 +57,11 @@ class OpenAICompatibleBackend(BaseBackend):
             resp = self.client.chat.completions.create(**request)
             if not resp.choices:
                 raise RuntimeError("Empty completion response.")
-            text = _extract_openai_text(resp.choices[0].message)
+            message = resp.choices[0].message
+            text = _extract_openai_text(message)
             if not text:
+                if _extract_reasoning_text(message):
+                    raise RuntimeError("Completion response has reasoning content but no final text content.")
                 raise RuntimeError("Completion response has no text content.")
             usage = getattr(resp, "usage", None)
             usage_dict = {}
@@ -115,8 +118,12 @@ def _extract_openai_text(message: Any) -> str:
         text = "\n".join(texts).strip()
         if text:
             return text
+    return ""
+
+
+def _extract_reasoning_text(message: Any) -> str:
     for attr in ("reasoning", "reasoning_content"):
         value = getattr(message, attr, None)
         if isinstance(value, str) and value.strip():
-            return value
+            return value.strip()
     return ""

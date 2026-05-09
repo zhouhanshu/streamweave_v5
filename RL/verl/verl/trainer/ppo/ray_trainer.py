@@ -71,6 +71,20 @@ try:
 except Exception:
     pass
 
+try:
+    from streamweave_rl.dapo import compute_group_filter_result, select_reward_extra_infos
+except Exception:
+    compute_group_filter_result = None
+    select_reward_extra_infos = None
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
 
 def _select_array(values, indices: Optional[np.ndarray]):
     if indices is None:
@@ -214,6 +228,24 @@ def compute_response_mask(data: DataProto):
     response_length = responses.size(1)
     attention_mask = data.batch["attention_mask"]
     return attention_mask[:, -response_length:]
+
+
+def _refresh_rollout_meta(batch: DataProto) -> None:
+    if batch.batch is not None and "attention_mask" in batch.batch.keys():
+        batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
+
+    images_seqlens_all = []
+    for multi_modal_input in batch.non_tensor_batch.get("multi_modal_inputs", []):
+        if multi_modal_input is None or "image_grid_thw" not in multi_modal_input.keys():
+            continue
+        images_seqlens = multi_modal_input.get("images_seqlens")
+        if images_seqlens is None:
+            continue
+        if hasattr(images_seqlens, "tolist"):
+            images_seqlens_all.extend(images_seqlens.tolist())
+        else:
+            images_seqlens_all.extend(list(images_seqlens))
+    batch.meta_info["images_seqlens"] = images_seqlens_all
 
 
 def compute_advantage(
@@ -654,6 +686,61 @@ class RayPPOTrainer:
         eps = 1e-2 if returns.dtype in (torch.float16, torch.bfloat16) else 1e-6
         value_mask = ((returns - ignore_value).abs() > eps).to(dtype=batch.batch["response_mask"].dtype)
         batch.batch["value_mask"] = value_mask * batch.batch["response_mask"]
+
+    def _maybe_apply_streamweave_dapo_filter(
+        self,
+        batch: DataProto,
+        reward_extra_infos_dict: dict[str, Any],
+    ) -> tuple[DataProto, dict[str, Any], dict[str, Any]]:
+        metrics: dict[str, Any] = {}
+        if not self._stepwise_rollout_enabled():
+            return batch, reward_extra_infos_dict, metrics
+
+        filter_cfg = self.config.algorithm.get("filter_groups", None)
+        enabled = _as_bool(filter_cfg.get("enable", False)) if filter_cfg is not None else False
+        metric = filter_cfg.get("metric", "trajectory_score") if filter_cfg is not None else "trajectory_score"
+        min_std = float(filter_cfg.get("min_std", 1e-6)) if filter_cfg is not None else 1e-6
+
+        if compute_group_filter_result is None:
+            metrics["traj/dapo_filter_available"] = 0.0
+            metrics["traj/dapo_filter_enabled"] = float(enabled)
+            return batch, reward_extra_infos_dict, metrics
+
+        result = compute_group_filter_result(batch.non_tensor_batch, metric=metric, min_std=min_std)
+        if result is None:
+            metrics["traj/dapo_filter_available"] = 1.0
+            metrics["traj/dapo_filter_enabled"] = float(enabled)
+            metrics["traj/dapo_missing_metric"] = 1.0
+            return batch, reward_extra_infos_dict, metrics
+
+        metrics.update(result.metrics)
+        metrics["traj/dapo_filter_available"] = 1.0
+        metrics["traj/dapo_filter_enabled"] = float(enabled)
+        metrics["traj/dapo_filter_applied"] = 0.0
+
+        if not enabled:
+            return batch, reward_extra_infos_dict, metrics
+        if result.total_groups == 0:
+            metrics["traj/dapo_no_groups"] = 1.0
+            return batch, reward_extra_infos_dict, metrics
+        if result.valid_groups == 0:
+            metrics["traj/dapo_all_groups_invalid"] = 1.0
+            return batch, reward_extra_infos_dict, metrics
+        if result.valid_groups == result.total_groups:
+            return batch, reward_extra_infos_dict, metrics
+
+        keep_mask = result.keep_mask
+        filtered_batch = batch.select_idxs(keep_mask)
+        _refresh_rollout_meta(filtered_batch)
+        filtered_reward_extra_infos = (
+            select_reward_extra_infos(reward_extra_infos_dict, keep_mask)
+            if select_reward_extra_infos is not None
+            else reward_extra_infos_dict
+        )
+        metrics["traj/dapo_filter_applied"] = 1.0
+        metrics["traj/dapo_filtered_groups"] = float(result.total_groups - result.valid_groups)
+        metrics["traj/dapo_filtered_rows"] = float(result.total_rows - result.kept_rows)
+        return filtered_batch, filtered_reward_extra_infos, metrics
 
     def _compute_reward_colocate(self, batch: DataProto) -> tuple[torch.Tensor, dict[str, Any]] | torch.Tensor:
         """
@@ -1683,15 +1770,7 @@ class RayPPOTrainer:
                     if self.config.trainer.balance_batch:
                         self._balance_batch(batch, metrics=metrics)
 
-                    # compute global_valid tokens
-                    batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
-                    # get images_seqlens
-                    images_seqlens_all = []
-                    for multi_modal_input in batch.non_tensor_batch.get("multi_modal_inputs", []):
-                        if multi_modal_input is None or "image_grid_thw" not in multi_modal_input.keys():
-                            continue
-                        images_seqlens_all.extend(multi_modal_input["images_seqlens"].tolist())
-                    batch.meta_info["images_seqlens"] = images_seqlens_all
+                    _refresh_rollout_meta(batch)
                     with marked_timer("reward", timing_raw, color="yellow"):
                         # compute reward model score
                         if self.use_rm and "rm_scores" not in batch.batch.keys():
@@ -1700,6 +1779,14 @@ class RayPPOTrainer:
 
                         # extract reward_tensor and reward_extra_infos_dict for training
                         reward_tensor, reward_extra_infos_dict = extract_reward(batch)
+                        batch.batch["token_level_scores"] = reward_tensor
+                        if reward_extra_infos_dict:
+                            batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
+                        batch, reward_extra_infos_dict, dapo_metrics = self._maybe_apply_streamweave_dapo_filter(
+                            batch,
+                            reward_extra_infos_dict,
+                        )
+                        metrics.update(dapo_metrics)
 
                     # Operating Mode Selection:
                     # - Bypass mode: Sets old_log_probs = rollout_log_probs (2 policies: π_rollout, π_θ)
@@ -1765,10 +1852,6 @@ class RayPPOTrainer:
                     with marked_timer("adv", timing_raw, color="brown"):
                         # we combine with rule-based rm
                         reward_extra_infos_dict: dict[str, list]
-                        batch.batch["token_level_scores"] = reward_tensor
-
-                        if reward_extra_infos_dict:
-                            batch.non_tensor_batch.update({k: np.array(v) for k, v in reward_extra_infos_dict.items()})
 
                         # compute rewards. apply_kl_penalty if available
                         if self.config.algorithm.use_kl_in_reward:

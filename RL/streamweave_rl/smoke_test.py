@@ -54,6 +54,7 @@ def main() -> None:
     try:
         from streamweave_rl.agent_loop_stepwise import _finalize_aborted_outputs
         from streamweave_rl.advantage import compute_streamweave_stepwise_gae, compute_streamweave_stepwise_traj_grpo
+        from streamweave_rl.dapo import compute_group_filter_result, select_reward_extra_infos
         from streamweave.schemas import ModelAction, ModelEvent, QualityReport
         from streamweave_rl.judge import JudgeConfig, JudgeResult, _parse_judge_response
         from streamweave_rl.rewards import (
@@ -68,9 +69,11 @@ def main() -> None:
         return
 
     cfg = StreamWeaveRewardConfig()
-    assert cfg.w_format == 0.3
-    assert cfg.w_step == 0.3
-    assert cfg.w_success == 0.4
+    assert cfg.w_format == 0.1
+    assert cfg.w_step == 0.2
+    assert cfg.w_success == 0.7
+    assert cfg.note_frequency_weight == 0.3
+    assert cfg.judge_weight == 0.7
     assert cfg.score_scale == 2.0
     assert compute_success_score("cutting onion", "onion") == 2.0
     one_note = ModelAction(
@@ -110,7 +113,7 @@ def main() -> None:
     assert reward.note_frequency_score == 2.0
     assert reward.step_score == 2.0
 
-    judge_cfg = StreamWeaveRewardConfig(judge=JudgeConfig(enable=True), judge_weight=1.0)
+    judge_cfg = StreamWeaveRewardConfig(judge=JudgeConfig(enable=True))
     judge_reward = compute_step_reward(
         quality=QualityReport(valid=True, parser_ok=True, metrics={"num_notes": 1}),
         cfg=judge_cfg,
@@ -119,7 +122,7 @@ def main() -> None:
     )
     assert judge_reward.note_frequency_score == 2.0
     assert judge_reward.judge_score == 1.0
-    assert judge_reward.step_score == 1.5
+    assert abs(judge_reward.step_score - 1.3) < 1e-6
     blocked_judge_reward = compute_step_reward(
         quality=QualityReport(valid=True, parser_ok=True, metrics={"num_notes": 2}),
         cfg=judge_cfg,
@@ -130,7 +133,7 @@ def main() -> None:
     assert blocked_judge_reward.judge_score == 0.0
     assert blocked_judge_reward.step_score == 0.0
     assert blocked_judge_reward.info["judge_blocked_by_note_frequency"] is True
-    no_gate_cfg = StreamWeaveRewardConfig(note_frequency_weight=0.0, judge=JudgeConfig(enable=True), judge_weight=1.0)
+    no_gate_cfg = StreamWeaveRewardConfig(note_frequency_weight=0.0, judge=JudgeConfig(enable=True), judge_weight=0.7)
     assert judge_blocked_by_note_frequency(note_frequency_score=0.0, cfg=no_gate_cfg) is False
     nested_judge = _parse_judge_response(
         """
@@ -158,6 +161,23 @@ def main() -> None:
     assert grpo_returns.shape == data.batch["response_mask"].shape
     assert torch.isfinite(grpo_adv).all()
     assert torch.isfinite(grpo_returns).all()
+
+    dapo_result = compute_group_filter_result(
+        {
+            "group_idx": np.array(["a", "a", "b", "b"], dtype=object),
+            "traj_idx": np.array([0, 1, 0, 1], dtype=np.int64),
+            "trajectory_score": np.array([1.0, 2.0, 0.5, 0.5], dtype=np.float32),
+        },
+        metric="trajectory_score",
+    )
+    assert dapo_result is not None
+    assert dapo_result.total_groups == 2
+    assert dapo_result.valid_groups == 1
+    assert dapo_result.keep_mask.tolist() == [True, True, False, False]
+    assert dapo_result.metrics["traj/valid_group_ratio"] == 0.5
+    selected_infos = select_reward_extra_infos({"score": np.arange(4), "name": "kept"}, dapo_result.keep_mask)
+    assert selected_infos["score"].tolist() == [0, 1]
+    assert selected_infos["name"] == "kept"
 
     gae_adv, gae_returns = compute_streamweave_stepwise_gae(data, gamma=1.0, lam=1.0)
     assert gae_adv.shape == data.batch["response_mask"].shape

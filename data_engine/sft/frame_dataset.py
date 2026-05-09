@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 from .io_utils import JsonDict, read_json_or_jsonl
@@ -98,14 +99,31 @@ def _load_frame_refs(row: JsonDict, *, raw_data_root: str | Path, sample_fps: fl
     frame_count = int(row.get("frame_count") or row.get("sampled_frames") or 0)
     paths: list[tuple[int, Path]] = []
     if frame_count > 0:
+        missing_paths: list[Path] = []
         for offset in range(frame_count):
             frame_id = base + offset
             path = frames_dir / pattern.format(frame_id=frame_id)
+            if not path.is_file():
+                missing_paths.append(path)
+                continue
             paths.append((frame_id, path))
+        if missing_paths:
+            warnings.warn(
+                f"Annotation {_row_id(row)} skipped {len(missing_paths)} missing frame file(s); "
+                f"first missing: {missing_paths[0]}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
     else:
         for path in sorted(frames_dir.glob("*.jpg")) + sorted(frames_dir.glob("*.png")):
             frame_id = _parse_frame_id(path, fallback=len(paths) + base)
             paths.append((frame_id, path))
+        if not paths:
+            warnings.warn(
+                f"Annotation {_row_id(row)} found no jpg/png frames in {frames_dir}.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     refs: list[FrameRef] = []
     for frame_index, (frame_id, path) in enumerate(paths):

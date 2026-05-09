@@ -45,16 +45,16 @@ data:
       enable_timing_reward: false
       enable_open_tail_reward: false
     reward:
-      w_format: 0.3
-      w_success: 0.4
-      w_step: 0.3
+      w_format: 0.1
+      w_success: 0.7
+      w_step: 0.2
       score_scale: 2.0
       format_mode: valid
       success_mode: dataset
       success_scorer: auto
       enable_note_frequency_reward: true
-      note_frequency_weight: 1.0
-      judge_weight: 1.0
+      note_frequency_weight: 0.3
+      judge_weight: 0.7
       max_notes_per_step: 1
       stale_note_after_steps: 3
       note_frequency_penalty_score: 0.0

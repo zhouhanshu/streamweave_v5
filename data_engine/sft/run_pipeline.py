@@ -128,9 +128,6 @@ def run_finalize(args: argparse.Namespace, paths: PipelinePaths) -> dict[str, in
             {
                 "source": source_config.source,
                 "input": str(source_input_path(source_config)),
-                "ovo_video_dir": str(source_config.ovo_video_dir) if source_config.source == "ovo" else "",
-                "frame_dataset_root": str(source_config.frame_dataset_root) if source_config.source == "ovo" else "",
-                "frame_dataset_name": source_config.frame_dataset_name if source_config.source == "ovo" else "",
             }
         )
     except Exception as exc:
@@ -192,11 +189,6 @@ def make_source_config(args: argparse.Namespace) -> SampleSourceConfig:
         source=args.source,
         input=args.input,
         raw_data_root=args.raw_data_root,
-        ovo_anno_path=args.ovo_anno_path,
-        ovo_video_dir=args.ovo_video_dir,
-        ovo_task=args.ovo_task,
-        frame_dataset_root=args.frame_dataset_root,
-        frame_dataset_name=args.frame_dataset_name,
         fps=args.fps,
         max_frames=args.max_frames,
         offset=args.offset,
@@ -379,7 +371,7 @@ def resolve_stages(stage: str) -> list[str]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=Path("data_engine/synthesize/outputs/annotations_qa.jsonl"))
-    parser.add_argument("--source", choices=("frames", "ovo"), default="frames")
+    parser.add_argument("--source", choices=("frames",), default="frames")
     parser.add_argument("--raw-data-root", type=Path, default=Path("raw_data"))
     parser.add_argument("--output-dir", type=Path, default=Path("data_engine/sft/outputs"))
     parser.add_argument("--stage", choices=("all", "intermediate", "finalize", "sharegpt"), default="all")
@@ -387,19 +379,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--sample-ids", nargs="*", default=[])
-    parser.add_argument(
-        "--ovo-anno-path",
-        type=Path,
-        default=Path("/mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/OVO-Bench/data/ovo_bench_new.json"),
-    )
-    parser.add_argument(
-        "--ovo-video-dir",
-        type=Path,
-        default=Path("/mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/chunked_videos"),
-    )
-    parser.add_argument("--ovo-task", default="")
-    parser.add_argument("--frame-dataset-root", type=Path, default=Path("dataset"))
-    parser.add_argument("--frame-dataset-name", default="ovo")
     parser.add_argument("--fps", type=float, default=None)
 
     parser.add_argument(

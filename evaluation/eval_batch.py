@@ -30,6 +30,7 @@ from evaluation.runner import error_result, load_samples, result_from_trace, wri
 
 
 _PROGRESS_QUEUE: Any = None
+_TASK_QUEUE: Any = None
 
 
 def main() -> None:
@@ -52,14 +53,31 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     shard_dir = output_path.parent / f".{output_path.stem}_parts"
     worker_log_dir = Path(args.worker_log_dir or cfg.batch.worker_log_dir or output_path.parent / "worker_logs")
-    _prepare_run_dir(shard_dir, "part_*.jsonl")
-    _prepare_run_dir(worker_log_dir, "worker_*.log")
+    if args.resume:
+        shard_dir.mkdir(parents=True, exist_ok=True)
+        worker_log_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        _prepare_run_dir(shard_dir, "part_*.jsonl")
+        _prepare_run_dir(worker_log_dir, "worker_*.log")
 
     endpoints = _configured_endpoints(cfg, args)
     workers = args.workers or cfg.batch.workers or (len(endpoints) if endpoints else 1)
     workers = max(1, workers)
+    manifest_path = shard_dir / "run_manifest.json"
+    manifest = _build_manifest(cfg, args, samples, output_path)
+    if args.resume:
+        _validate_manifest(manifest_path, manifest)
+
+    completed_results: dict[int, dict[str, Any]] = {}
+    if args.resume:
+        completed_results = _load_completed_results(output_path, shard_dir, samples)
+        print(
+            f"resume: completed={len(completed_results)} pending={len(samples) - len(completed_results)} total={len(samples)}",
+            flush=True,
+        )
+    _write_manifest(manifest_path, manifest)
+    pending_indices = [idx for idx in range(len(samples)) if idx not in completed_results]
     jobs = []
-    indices = list(range(len(samples)))
     for worker_id in range(workers):
         endpoint = endpoints[worker_id % len(endpoints)] if endpoints else ""
         part_path = shard_dir / f"part_{worker_id:03d}.jsonl"
@@ -67,12 +85,12 @@ def main() -> None:
         jobs.append(
             (
                 worker_id,
-                indices[worker_id::workers],
                 config_data,
                 vars(args),
                 endpoint,
                 str(part_path),
                 str(log_path),
+                bool(args.resume),
             )
         )
 
@@ -80,43 +98,59 @@ def main() -> None:
         output_path.write_text("", encoding="utf-8")
         write_summary(cfg.benchmark, [], output_path)
         return
+    if not pending_indices:
+        results = _merge_parts(shard_dir, output_path, samples=samples, include_existing_output=args.resume)
+        write_summary(cfg.benchmark, results, output_path)
+        print(f"Saved merged results to {output_path}", flush=True)
+        print(f"Saved worker logs to {worker_log_dir}", flush=True)
+        return
 
     ctx = mp.get_context("spawn")
     progress_queue = ctx.Queue()
-    with ctx.Pool(processes=workers, initializer=_init_worker_progress, initargs=(progress_queue,)) as pool:
+    task_queue = ctx.Queue()
+    for sample_idx in pending_indices:
+        task_queue.put(sample_idx)
+    for _ in range(workers):
+        task_queue.put(None)
+    with ctx.Pool(processes=workers, initializer=_init_worker_queues, initargs=(progress_queue, task_queue)) as pool:
         async_results = [pool.apply_async(_worker_entry, (job,)) for job in jobs]
-        _consume_progress(progress_queue, async_results, total=len(samples), worker_log_dir=worker_log_dir)
+        _consume_progress(progress_queue, async_results, total=len(pending_indices), worker_log_dir=worker_log_dir)
         for result in async_results:
             result.get()
 
-    results = _merge_parts(shard_dir, output_path)
+    results = _merge_parts(shard_dir, output_path, samples=samples, include_existing_output=args.resume)
     write_summary(cfg.benchmark, results, output_path)
     print(f"Saved merged results to {output_path}", flush=True)
     print(f"Saved worker logs to {worker_log_dir}", flush=True)
 
 
-def _init_worker_progress(progress_queue: Any) -> None:
-    global _PROGRESS_QUEUE
+def _init_worker_queues(progress_queue: Any, task_queue: Any) -> None:
+    global _PROGRESS_QUEUE, _TASK_QUEUE
     _PROGRESS_QUEUE = progress_queue
+    _TASK_QUEUE = task_queue
 
 
-def _worker_entry(job: tuple[int, list[int], dict[str, Any], dict[str, Any], str, str, str]) -> str:
-    worker_id, indices, config_data, args_data, endpoint, part_path, log_path = job
-    if _PROGRESS_QUEUE is None:
-        raise RuntimeError("Worker progress queue was not initialized.")
-    with open(log_path, "w", encoding="utf-8", buffering=1) as log_file:
+def _worker_entry(job: tuple[int, dict[str, Any], dict[str, Any], str, str, str, bool]) -> str:
+    worker_id, config_data, args_data, endpoint, part_path, log_path, resume = job
+    if _PROGRESS_QUEUE is None or _TASK_QUEUE is None:
+        raise RuntimeError("Worker queues were not initialized.")
+    log_mode = "a" if resume else "w"
+    with open(log_path, log_mode, encoding="utf-8", buffering=1) as log_file:
+        if resume:
+            print(f"[resume] worker {worker_id} appending results to {part_path}", file=log_file, flush=True)
         with contextlib.redirect_stdout(log_file), contextlib.redirect_stderr(log_file):
-            return _worker_run(worker_id, indices, config_data, args_data, endpoint, part_path, _PROGRESS_QUEUE)
+            return _worker_run(worker_id, config_data, args_data, endpoint, part_path, _PROGRESS_QUEUE, _TASK_QUEUE, resume)
 
 
 def _worker_run(
     worker_id: int,
-    indices: list[int],
     config_data: dict[str, Any],
     args_data: dict[str, Any],
     endpoint: str,
     part_path: str,
     progress_queue: Any,
+    task_queue: Any,
+    resume: bool,
 ) -> str:
     cfg = eval_config_from_dict(config_data)
     _apply_overrides(cfg, argparse.Namespace(**args_data))
@@ -143,8 +177,14 @@ def _worker_run(
         memory_config=cfg.memory,
     )
 
-    with open(part_path, "w", encoding="utf-8") as f:
-        for local_count, sample_idx in enumerate(indices, start=1):
+    local_count = 0
+    part_mode = "a" if resume else "w"
+    with open(part_path, part_mode, encoding="utf-8") as f:
+        while True:
+            sample_idx = task_queue.get()
+            if sample_idx is None:
+                break
+            local_count += 1
             sample = samples[sample_idx]
             try:
                 trace = runner.run_sample(sample)
@@ -167,16 +207,16 @@ def _worker_run(
                     "type": "sample_done",
                     "worker_id": worker_id,
                     "local_count": local_count,
-                    "total": len(indices),
+                    "index": sample_idx,
                     "sample_id": sample.sample_id,
                     "error": bool(result.get("error")),
                 }
             )
             print(
-                f"[worker {worker_id}] {local_count}/{len(indices)} sample={sample.sample_id} error={bool(result.get('error'))}",
+                f"[worker {worker_id}] {local_count} index={sample_idx} sample={sample.sample_id} error={bool(result.get('error'))}",
                 flush=True,
             )
-    return f"[worker {worker_id}] done {len(indices)} samples endpoint={endpoint}"
+    return f"[worker {worker_id}] done {local_count} samples endpoint={endpoint}"
 
 
 def _apply_overrides(cfg: EvalConfig, args: argparse.Namespace) -> None:
@@ -204,14 +244,113 @@ def _prepare_run_dir(path: Path, pattern: str) -> None:
         old_path.unlink()
 
 
-def _merge_parts(shard_dir: Path, output_path: Path) -> list[dict[str, Any]]:
-    results: list[dict[str, Any]] = []
-    for part_path in sorted(shard_dir.glob("part_*.jsonl")):
-        with part_path.open(encoding="utf-8") as part:
-            for line in part:
-                if line.strip():
-                    results.append(json.loads(line))
-    results.sort(key=lambda item: int(item.get("index", 0)))
+def _build_manifest(cfg: EvalConfig, args: argparse.Namespace, samples: list[Any], output_path: Path) -> dict[str, Any]:
+    return {
+        "benchmark": cfg.benchmark,
+        "total_samples": len(samples),
+        "sample_ids": [str(sample.sample_id) for sample in samples],
+        "limit": int(getattr(args, "limit", 0) or cfg.batch.limit or 0),
+        "model": cfg.backend.model,
+        "output": str(output_path),
+        "benchmark_args": _jsonable(cfg.benchmark_args),
+    }
+
+
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _validate_manifest(path: Path, expected: dict[str, Any]) -> None:
+    if not path.exists():
+        print(f"resume: no manifest found at {path}; validating existing rows by sample_id", flush=True)
+        return
+    with path.open(encoding="utf-8") as handle:
+        actual = json.load(handle)
+    for key in ("benchmark", "total_samples", "sample_ids"):
+        if actual.get(key) != expected.get(key):
+            raise ValueError(
+                f"Cannot resume because {path} does not match current run for {key}. "
+                "Use a fresh output directory or rerun without --resume."
+            )
+
+
+def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _load_completed_results(output_path: Path, shard_dir: Path, samples: list[Any]) -> dict[int, dict[str, Any]]:
+    completed: dict[int, dict[str, Any]] = {}
+    for source_path in _result_sources(output_path, shard_dir, include_existing_output=True):
+        for index, result in _iter_result_rows(source_path, samples):
+            completed[index] = result
+    return completed
+
+
+def _result_sources(output_path: Path, shard_dir: Path, *, include_existing_output: bool) -> list[Path]:
+    sources: list[Path] = []
+    if include_existing_output and output_path.exists():
+        sources.append(output_path)
+    sources.extend(sorted(shard_dir.glob("part_*.jsonl")))
+    return sources
+
+
+def _iter_result_rows(path: Path, samples: list[Any]):
+    with path.open(encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                result = json.loads(line)
+            except json.JSONDecodeError as exc:
+                print(f"warning: ignored malformed JSON row {path}:{line_no}: {exc}", file=sys.stderr, flush=True)
+                continue
+            try:
+                index = int(result["index"])
+            except (KeyError, TypeError, ValueError):
+                print(f"warning: ignored result row without valid index {path}:{line_no}", file=sys.stderr, flush=True)
+                continue
+            if index < 0 or index >= len(samples):
+                print(f"warning: ignored out-of-range result index {index} in {path}:{line_no}", file=sys.stderr, flush=True)
+                continue
+            sample_id = str(result.get("sample_id", ""))
+            expected_sample_id = str(samples[index].sample_id)
+            if not sample_id:
+                print(f"warning: ignored result row without sample_id {path}:{line_no}", file=sys.stderr, flush=True)
+                continue
+            if sample_id != expected_sample_id:
+                raise ValueError(
+                    f"Cannot resume because result row {path}:{line_no} has index={index} "
+                    f"sample_id={sample_id!r}, but current sample_id is {expected_sample_id!r}."
+                )
+            yield index, result
+
+
+def _merge_parts(
+    shard_dir: Path,
+    output_path: Path,
+    *,
+    samples: list[Any],
+    include_existing_output: bool,
+) -> list[dict[str, Any]]:
+    results_by_index: dict[int, dict[str, Any]] = {}
+    for source_path in _result_sources(output_path, shard_dir, include_existing_output=include_existing_output):
+        for index, result in _iter_result_rows(source_path, samples):
+            results_by_index[index] = result
+    results = [results_by_index[index] for index in sorted(results_by_index)]
+    if len(results) != len(samples):
+        print(
+            f"warning: merged {len(results)}/{len(samples)} results; summary will cover completed rows only",
+            file=sys.stderr,
+            flush=True,
+        )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as out:
         for result in results:
             out.write(json.dumps(result, ensure_ascii=False) + "\n")
@@ -276,6 +415,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--output", default="")
     parser.add_argument("--worker-log-dir", default="")
+    parser.add_argument("--resume", action="store_true", help="skip completed rows from existing results/part files")
     return parser.parse_args()
 
 

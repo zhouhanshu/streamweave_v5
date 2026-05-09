@@ -34,15 +34,21 @@ export STREAMWEAVE_TRACE_GRPO_GROUPS="${STREAMWEAVE_TRACE_GRPO_GROUPS:-1}"
 export STREAMWEAVE_TRACE_SAMPLE_EVERY="${STREAMWEAVE_TRACE_SAMPLE_EVERY:-32}"
 export STREAMWEAVE_TRACE_SAMPLE_OFFSET="${STREAMWEAVE_TRACE_SAMPLE_OFFSET:-0}"
 export STREAMWEAVE_REWARD_JUDGE_ENABLE="${STREAMWEAVE_REWARD_JUDGE_ENABLE:-true}"
-export STREAMWEAVE_REWARD_JUDGE_WEIGHT="${STREAMWEAVE_REWARD_JUDGE_WEIGHT:-1.0}"
+export STREAMWEAVE_REWARD_NOTE_WEIGHT="${STREAMWEAVE_REWARD_NOTE_WEIGHT:-0.3}"
+export STREAMWEAVE_REWARD_JUDGE_WEIGHT="${STREAMWEAVE_REWARD_JUDGE_WEIGHT:-0.7}"
 export STREAMWEAVE_JUDGE_BACKEND="${STREAMWEAVE_JUDGE_BACKEND:-gemini}"
 export STREAMWEAVE_JUDGE_MODEL="${STREAMWEAVE_JUDGE_MODEL:-gemini-2.5-flash}"
 export STREAMWEAVE_MICRO_BATCH_PER_GPU="${STREAMWEAVE_MICRO_BATCH_PER_GPU:-4}"
 export STREAMWEAVE_MAX_TOKEN_LEN_PER_GPU="${STREAMWEAVE_MAX_TOKEN_LEN_PER_GPU:-32768}"
-export STREAMWEAVE_GEN_BATCH_SIZE="${STREAMWEAVE_GEN_BATCH_SIZE:-4}"
+export STREAMWEAVE_GEN_BATCH_SIZE="${STREAMWEAVE_GEN_BATCH_SIZE:-16}"
 export STREAMWEAVE_AGENT_NUM_WORKERS="${STREAMWEAVE_AGENT_NUM_WORKERS:-32}"
 export STREAMWEAVE_VLLM_GPU_MEMORY_UTILIZATION="${STREAMWEAVE_VLLM_GPU_MEMORY_UTILIZATION:-0.7}"
 export STREAMWEAVE_VLLM_MAX_NUM_BATCHED_TOKENS="${STREAMWEAVE_VLLM_MAX_NUM_BATCHED_TOKENS:-32768}"
+export STREAMWEAVE_DAPO_FILTER_GROUPS="${STREAMWEAVE_DAPO_FILTER_GROUPS:-true}"
+export STREAMWEAVE_DAPO_FILTER_METRIC="${STREAMWEAVE_DAPO_FILTER_METRIC:-trajectory_score}"
+export STREAMWEAVE_DAPO_FILTER_MIN_STD="${STREAMWEAVE_DAPO_FILTER_MIN_STD:-0.1}"
+export STREAMWEAVE_DAPO_CLIP_RATIO_LOW="${STREAMWEAVE_DAPO_CLIP_RATIO_LOW:-0.2}"
+export STREAMWEAVE_DAPO_CLIP_RATIO_HIGH="${STREAMWEAVE_DAPO_CLIP_RATIO_HIGH:-0.28}"
 if [[ "${STREAMWEAVE_JUDGE_BACKEND}" == "gemini" ]]; then
     export GOOGLE_APPLICATION_CREDENTIALS="${GOOGLE_APPLICATION_CREDENTIALS:-/mmu_ssd3/group_lisize/hetu/xujia10/joint_tags/scripts/gemini_client/config.json}"
 fi
@@ -88,9 +94,10 @@ echo "Debug artifacts will be saved to ${RUN_DIR}"
 echo "StreamWeave model source=${STREAMWEAVE_SOURCE_MODEL_PATH}"
 echo "StreamWeave model path=${STREAMWEAVE_MODEL_PATH}"
 echo "StreamWeave trace first_rollout=${STREAMWEAVE_TRACE_FIRST_ROLLOUT} traj=${STREAMWEAVE_TRACE_TRAJ_INDEX} max_chars=${STREAMWEAVE_TRACE_MAX_CHARS} grpo_groups=${STREAMWEAVE_TRACE_GRPO_GROUPS} sample_every=${STREAMWEAVE_TRACE_SAMPLE_EVERY} sample_offset=${STREAMWEAVE_TRACE_SAMPLE_OFFSET} sample_filter=${STREAMWEAVE_TRACE_SAMPLE_ID:-<none>}"
-echo "StreamWeave judge enable=${STREAMWEAVE_REWARD_JUDGE_ENABLE} weight=${STREAMWEAVE_REWARD_JUDGE_WEIGHT} backend=${STREAMWEAVE_JUDGE_BACKEND} model=${STREAMWEAVE_JUDGE_MODEL}"
+echo "StreamWeave judge enable=${STREAMWEAVE_REWARD_JUDGE_ENABLE} note_weight=${STREAMWEAVE_REWARD_NOTE_WEIGHT} judge_weight=${STREAMWEAVE_REWARD_JUDGE_WEIGHT} backend=${STREAMWEAVE_JUDGE_BACKEND} model=${STREAMWEAVE_JUDGE_MODEL}"
 echo "StreamWeave micro_batch_per_gpu=${STREAMWEAVE_MICRO_BATCH_PER_GPU} max_token_len_per_gpu=${STREAMWEAVE_MAX_TOKEN_LEN_PER_GPU}"
 echo "StreamWeave gen_batch_size=${STREAMWEAVE_GEN_BATCH_SIZE} agent_num_workers=${STREAMWEAVE_AGENT_NUM_WORKERS} vllm_gpu_memory_utilization=${STREAMWEAVE_VLLM_GPU_MEMORY_UTILIZATION} vllm_max_num_batched_tokens=${STREAMWEAVE_VLLM_MAX_NUM_BATCHED_TOKENS}"
+echo "StreamWeave DAPO filter_groups=${STREAMWEAVE_DAPO_FILTER_GROUPS} metric=${STREAMWEAVE_DAPO_FILTER_METRIC} min_std=${STREAMWEAVE_DAPO_FILTER_MIN_STD} clip_low=${STREAMWEAVE_DAPO_CLIP_RATIO_LOW} clip_high=${STREAMWEAVE_DAPO_CLIP_RATIO_HIGH}"
 
 cd "${RL_DIR}"
 
@@ -118,12 +125,13 @@ cd "${RL_DIR}"
     data.streamweave.runtime.max_frames=0 \
     data.streamweave.runtime.max_steps=0 \
     data.streamweave.runtime.resolution=512 \
-    data.streamweave.reward.w_format=0.3 \
-    data.streamweave.reward.w_step=0.3 \
-    data.streamweave.reward.w_success=0.4 \
+    data.streamweave.reward.w_format=0.1 \
+    data.streamweave.reward.w_step=0.2 \
+    data.streamweave.reward.w_success=0.7 \
     data.streamweave.reward.score_scale="${STREAMWEAVE_REWARD_SCORE_SCALE:-2.0}" \
     data.streamweave.reward.max_notes_per_step="${STREAMWEAVE_REWARD_MAX_NOTES_PER_STEP:-1}" \
     data.streamweave.reward.stale_note_after_steps="${STREAMWEAVE_REWARD_STALE_NOTE_AFTER_STEPS:-3}" \
+    data.streamweave.reward.note_frequency_weight="${STREAMWEAVE_REWARD_NOTE_WEIGHT}" \
     data.streamweave.reward.note_frequency_penalty_score="${STREAMWEAVE_REWARD_NOTE_PENALTY_SCORE:-0.0}" \
     data.streamweave.reward.judge.enable="${STREAMWEAVE_REWARD_JUDGE_ENABLE}" \
     data.streamweave.reward.judge_weight="${STREAMWEAVE_REWARD_JUDGE_WEIGHT}" \
@@ -151,7 +159,7 @@ cd "${RL_DIR}"
     actor_rollout_ref.model.use_fused_kernels=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     +actor_rollout_ref.model.override_config.attn_implementation=sdpa \
-    actor_rollout_ref.actor.optim.lr=1e-6 \
+    actor_rollout_ref.actor.optim.lr=5e-6 \
     actor_rollout_ref.actor.strategy=fsdp \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \
     actor_rollout_ref.actor.ppo_mini_batch_size=32 \
@@ -161,6 +169,9 @@ cd "${RL_DIR}"
     actor_rollout_ref.actor.kl_loss_coef=0.0 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.entropy_coeff=0 \
+    actor_rollout_ref.actor.clip_ratio_low="${STREAMWEAVE_DAPO_CLIP_RATIO_LOW}" \
+    actor_rollout_ref.actor.clip_ratio_high="${STREAMWEAVE_DAPO_CLIP_RATIO_HIGH}" \
+    actor_rollout_ref.actor.loss_agg_mode=token-mean \
     actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
     actor_rollout_ref.actor.fsdp_config.param_offload=False \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
@@ -187,6 +198,9 @@ cd "${RL_DIR}"
     actor_rollout_ref.rollout.agent.num_workers="${STREAMWEAVE_AGENT_NUM_WORKERS}" \
     algorithm.adv_estimator=streamweave_stepwise_traj_grpo \
     algorithm.use_kl_in_reward=False \
+    algorithm.filter_groups.enable="${STREAMWEAVE_DAPO_FILTER_GROUPS}" \
+    algorithm.filter_groups.metric="${STREAMWEAVE_DAPO_FILTER_METRIC}" \
+    algorithm.filter_groups.min_std="${STREAMWEAVE_DAPO_FILTER_MIN_STD}" \
     critic.enable=False \
     reward.num_workers=8 \
     trainer.stepwise_rollout=True \

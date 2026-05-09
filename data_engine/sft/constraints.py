@@ -70,8 +70,10 @@ def apply_qa_answer_constraints(
         return
 
     actual_answer = raw_action.answer.strip()
-    answer_required = bool(expected["answer_required"])
-    if answer_required:
+    answer_required = expected["answer_required"]
+    if answer_required is None:
+        answer_ok = True
+    elif answer_required:
         answer_ok = bool(actual_answer)
     else:
         answer_ok = actual_answer == ""
@@ -211,7 +213,7 @@ def _expected_letter_without_options(gt: object) -> str:
     if not isinstance(gt, str):
         return ""
     text = gt.strip().upper()
-    return text if len(text) == 1 and "A" <= text <= "D" else ""
+    return text if len(text) == 1 and "A" <= text <= "Z" else ""
 
 
 def _expected_non_option_answer(task: str, gt: object) -> str:
@@ -321,13 +323,16 @@ def _expected_qa_output(
 ) -> JsonDict | None:
     task = sample.task.lower().strip()
     has_question = any(str(item.get("role") or "") == "q" for item in qa_before if isinstance(item, dict))
-    has_answer = any(str(item.get("role") or "") == "a" for item in qa_before if isinstance(item, dict))
     if not has_question:
         return _qa_expectation(False, "no question is present in QA History, so answer must stay empty")
-    if has_answer:
-        return _qa_expectation(False, "the active question has already been answered in QA History, so answer must stay empty")
     if task in {"realtime", "backward"}:
         window_start, window_end = target_window_for_time(_first_query_time(sample, qa_before), sample, frames, frames_per_step)
+        if _has_answer(qa_before):
+            return _qa_expectation(
+                None,
+                f"{task} question has already been answered; later answer updates are optional",
+                target_window=(window_start, window_end),
+            )
         return _qa_expectation(
             True,
             f"{task} question is active and unanswered, so answer now",
@@ -338,6 +343,12 @@ def _expected_qa_output(
         if clue_time is None:
             return None
         window_start, window_end = target_window_for_time(clue_time, sample, frames, frames_per_step)
+        if _has_answer(qa_before):
+            return _qa_expectation(
+                None,
+                "forward question has already been answered; later answer updates are optional",
+                target_window=(window_start, window_end),
+            )
         due = frames[-1].end_time >= window_end - QA_TIME_TOLERANCE if frames else False
         if due:
             return _qa_expectation(
@@ -354,7 +365,7 @@ def _expected_qa_output(
 
 
 def _qa_expectation(
-    answer_required: bool,
+    answer_required: bool | None,
     reason: str,
     target_window: tuple[float, float] | None = None,
 ) -> JsonDict:
@@ -363,6 +374,10 @@ def _qa_expectation(
         "reason": reason,
         "target_window": [target_window[0], target_window[1]] if target_window is not None else None,
     }
+
+
+def _has_answer(qa_before: list[JsonDict]) -> bool:
+    return any(str(item.get("role") or "") == "a" for item in qa_before if isinstance(item, dict))
 
 
 def _actual_answer_state(actual_answer: str) -> str:
@@ -388,7 +403,9 @@ def _forward_clue_time(sample: SamplePlan) -> float | None:
 
 
 def _format_answer_template(expected: JsonDict) -> str:
-    answer_required = bool(expected.get("answer_required"))
+    answer_required = expected.get("answer_required")
     if answer_required:
         return "<answer>...your answer based on QA History, Memory, and Current frames...</answer>"
+    if answer_required is None:
+        return "<answer></answer> or <answer>...updated answer...</answer>"
     return "<answer></answer>"

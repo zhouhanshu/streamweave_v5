@@ -4,16 +4,16 @@
 
 - 实验：`StreamWeave`
 - 当前主线：`exp3/streamweave_v5/RL`
-- 当前阶段：GRPO stepwise 训练链路已跑通；SFT 评测仍在运行中；RL 正在定位完整跑完、checkpoint 恢复和训练侧性能问题。
+- 当前阶段：GRPO stepwise 训练链路已跑通；2026-05-09 judge-enabled GRPO 本轮已停止，未观察到稳定学习趋势，已记录为负结果。
 - 当前唯一保留的 GRPO 入口：`RL/scripts/train_grpo_ovo_8gpu.sh`
 - PPO 入口：`RL/scripts/train_ppo.sh`
 - 当前训练数据运行路径：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json`
 - 当前初始化模型：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm`
 - 当前最优先事项：
-  - 等 answered-full SFT 的 OVO 1/8 评测落盘后再写正式分数。
-  - 用最新 fused/chunked GRPO 入口从 answered-full SFT 模型启动 reward v2 RL。
-  - 确认新 run 日志包含 `note_frequency_score`、`judge_score`、`step_score`、`trajectory_score`。
-  - 优化 `old_log_prob` 和 `update_actor`，当前瓶颈不在 rollout 生成。
+  - base full 和 answered-full SFT full 跑分已落盘；后续继续做 RL 时必须同时和 base instruct、answered-full SFT 做 full 对照。
+  - 复盘 judge-enabled GRPO 负结果，优先检查 reward 密度、judge 噪声、KL/entropy 约束和 trajectory-level credit assignment。
+  - 后续新 run 必须继续记录 `note_frequency_score`、`judge_score`、`step_score`、`trajectory_score`，并在 SwanLab 中优先看 `traj/score/*` 而不是只看 `critic/score`。
+  - 性能优化不要只堆 vLLM 显存利用率；当前瓶颈经常在 `update_actor`、`old_log_prob` 和调度同步。
 
 ## 文件索引
 
@@ -31,7 +31,7 @@
 
 - 当前 `<eta>` 协议已经彻底不是主线；源码协议是 `<state>`、`<answer>`、timestamp-only `<note>`、`<bridge>`。
 - `data_engine/sft` 当前没有 `_key_frame_context()` 或 `_apply_key_frame_quality_constraints()`；SFT 硬约束是 note 数量、QA answer 空/非空时机和样本级答案正确性。
-- RL reward 当前是 `format + step + success`，默认 `w_format=0.3`、`w_step=0.3`、`w_success=0.4`、`score_scale=2.0`。
+- RL reward 当前是 `format + step + success`，默认 `w_format=0.1`、`w_step=0.2`、`w_success=0.7`、`score_scale=2.0`；step 内部默认 `note_frequency_weight=0.3`、`judge_weight=0.7`。
 - step score 默认来自 note frequency：每窗口最多 1 个 note，连续 3 个窗口无 note 惩罚；judge 默认关闭。
 - judge 显式开启后评估 `keyframe_selection`、`bridge_quality`、`semantic_alignment`、`state_factuality`，且被 note frequency gate 住。
 - 旧 GRPO launcher 已清理；当前只保留最新 fused/chunked GRPO 入口和 PPO 入口。
@@ -39,6 +39,16 @@
 - 详细源码事实见 `10-source-code-current-state.md`。
 
 ## 关键里程碑
+
+### 2026-05-09 Qwen3-VL-8B base OVO full 完成
+
+- 模型：`/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct`
+- 协议：StreamWeave V5 `state + note_t`
+- 数据：OVO-Bench full，展开后 `3035` samples
+- 输出：`outputs/ovo_qwen3vl8b_base_full_state_note_t`
+- 运行：先 8 卡静态分片评测到 `2903/3035`，后用共享任务队列和 `RESUME=1` 在 GPU `2 3 4 5 6 7` 上补跑剩余 `132` 条。
+- 主结果：Backward `60.59` / Realtime `75.10` / Forward `36.87` / Total `57.52`
+- 结果文件：`results.jsonl`、`results_summary.json`、`results_summary.txt`
 
 ### 2026-05-08 answered-full SFT 训练完成，OVO 1/8 回评进行中
 

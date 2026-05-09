@@ -559,7 +559,7 @@ def format_duration(value: float | None) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
-    parser.add_argument("--source", choices=("frames", "ovo"), default="frames")
+    parser.add_argument("--source", choices=("frames",), default="frames")
     parser.add_argument("--raw-data-root", type=Path, default=DEFAULT_RAW_DATA_ROOT)
     parser.add_argument("--output-dir", type=Path, default=Path("data_engine/sft/outputs/gemini_final_full"))
     parser.add_argument("--num-workers", type=int, default=4)
@@ -573,11 +573,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sharegpt", dest="sharegpt", action="store_true", default=True)
     parser.add_argument("--no-sharegpt", dest="sharegpt", action="store_false")
 
-    parser.add_argument("--ovo-anno-path", type=Path, default=Path("/mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/OVO-Bench/data/ovo_bench_new.json"))
-    parser.add_argument("--ovo-video-dir", type=Path, default=Path("/mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/chunked_videos"))
-    parser.add_argument("--ovo-task", default="")
-    parser.add_argument("--frame-dataset-root", type=Path, default=Path("dataset"))
-    parser.add_argument("--frame-dataset-name", default="ovo")
     parser.add_argument("--fps", type=float, default=None)
     parser.add_argument("--max-frames", type=int, default=0)
 

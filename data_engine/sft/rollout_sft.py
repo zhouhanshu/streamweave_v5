@@ -287,7 +287,17 @@ def _memory_tail_signals(context: "StepContext") -> tuple[str | None, float | No
     """Return (last memory event kind, its end time, open-tail bridge start if applicable)."""
     if not context.memory_before:
         return None, None, None
-    last = context.memory_before[-1]
+    events: list[tuple[float, int, JsonDict]] = []
+    for item in context.memory_before:
+        interval = item.get("t") or []
+        if len(interval) < 2:
+            continue
+        kind = str(item.get("type") or "")
+        kind_priority = 1 if kind == "note" else 0
+        events.append((float(interval[1]), kind_priority, item))
+    if not events:
+        return None, None, None
+    _, _, last = max(events, key=lambda item: (item[0], item[1]))
     kind = str(last.get("type") or "") or None
     interval = last.get("t") or []
     end_time = float(interval[1]) if len(interval) >= 2 else None

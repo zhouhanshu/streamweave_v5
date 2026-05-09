@@ -19,16 +19,16 @@ from .schemas import StepRewardResult, TrajectoryRewardResult
 
 @dataclass(slots=True)
 class StreamWeaveRewardConfig:
-    w_format: float = 0.3
-    w_success: float = 0.4
-    w_step: float = 0.3
+    w_format: float = 0.1
+    w_success: float = 0.7
+    w_step: float = 0.2
     score_scale: float = 2.0
     format_mode: str = "valid"
     success_mode: str = "dataset"
     success_scorer: str = "auto"
     enable_note_frequency_reward: bool = True
-    note_frequency_weight: float = 1.0
-    judge_weight: float = 0.0
+    note_frequency_weight: float = 0.3
+    judge_weight: float = 0.7
     max_notes_per_step: int = 1
     stale_note_after_steps: int = 3
     note_frequency_penalty_score: float = 0.0

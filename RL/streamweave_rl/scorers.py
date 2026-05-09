@@ -7,14 +7,16 @@ import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from streamweave.ovo import (
+    MCQ_TASKS,
+    OPTION_LABELS,
+    OVO_TASKS,
+    YES_NO_TASKS,
+    extract_mcq,
+    extract_yes_no,
+)
 
 ScoreFn = Callable[[str, Any, Mapping[str, Any]], float]
-
-BACKWARD_TASKS = {"EPM", "ASI", "HLD"}
-REAL_TIME_TASKS = {"OCR", "ACR", "ATR", "STU", "FPD", "OJR"}
-FORWARD_TASKS = {"REC", "SSR", "CRR"}
-OVO_TASKS = BACKWARD_TASKS | REAL_TIME_TASKS | FORWARD_TASKS
-YES_NO_RE = re.compile(r"\b(YES|Y|NO|N)\b", flags=re.IGNORECASE)
 
 
 def score_answer(
@@ -90,14 +92,14 @@ def _score_streamweave_mcq(answer: str, ground_truth: Any, metadata: Mapping[str
 def _score_ovo(answer: str, ground_truth: Any, metadata: Mapping[str, Any]) -> float:
     task = str(metadata.get("task") or "").strip()
     gt = metadata.get("ground_truth", ground_truth)
-    if task in BACKWARD_TASKS or task in REAL_TIME_TASKS:
-        pred = _extract_mcq(answer)
+    if task in MCQ_TASKS:
+        pred = extract_mcq(answer)
         return 1.0 if pred is not None and pred.upper() == str(gt).strip().upper() else 0.0
     if task == "REC":
         nums = re.findall(r"\d+", str(answer or ""))
         return 1.0 if nums and "".join(nums) == str(gt).strip() else 0.0
-    if task in {"SSR", "CRR"}:
-        pred = _extract_yes_no(answer)
+    if task in YES_NO_TASKS:
+        pred = extract_yes_no(answer)
         if pred is None:
             return 0.0
         try:
@@ -108,24 +110,9 @@ def _score_ovo(answer: str, ground_truth: Any, metadata: Mapping[str, Any]) -> f
     return _score_default(answer, gt, mode="exact_or_contains")
 
 
-def _extract_yes_no(answer: str | None) -> int | None:
-    if answer is None or not str(answer).strip():
-        return None
-    polarities = []
-    for match in YES_NO_RE.finditer(str(answer).upper()):
-        token = match.group(1)
-        polarities.append(1 if token in {"Y", "YES"} else 0)
-    if not polarities:
-        return None
-    unique = set(polarities)
-    if len(unique) > 1:
-        return None
-    return polarities[0]
-
-
 def _normalize_options(value: Any) -> list[str]:
     if isinstance(value, Mapping):
-        items = [value.get(choice) for choice in ("A", "B", "C", "D")]
+        items = [value.get(choice) for choice in OPTION_LABELS if value.get(choice) is not None]
     elif isinstance(value, list):
         items = value
     else:
@@ -176,23 +163,11 @@ def _expected_option_index(gt: Any, options: list[str], answer_text: str) -> int
 
 
 def _answer_matches(answer: str, *, expected_letter: str, expected_answer: str) -> bool:
-    pred = _extract_mcq(answer)
+    max_options = max(5, ord(expected_letter.upper()) - ord("A") + 1)
+    pred = extract_mcq(answer, max_options=max_options)
     if pred is not None and pred.upper() == expected_letter:
         return True
     return bool(_normalize_answer_text(answer) == _normalize_answer_text(expected_answer))
-
-
-def _extract_mcq(answer: str | None) -> str | None:
-    if answer is None or not str(answer).strip():
-        return None
-    text = str(answer).strip()
-    letter = re.search(r"\b([A-D])\b", text.upper())
-    if letter:
-        return letter.group(1)
-    number = re.search(r"\b([1-4])\b", text)
-    if number:
-        return chr(64 + int(number.group(1)))
-    return None
 
 
 def _normalize_answer_text(text: str) -> str:
