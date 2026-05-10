@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 状态：GRPO stepwise 链路已经跑通；旧 8GPU run 没有 checkpoint，fused/chunked run 已产出可恢复 checkpoint 但尚未完整完成。
+- 状态：第一次 GRPO 训练已完整跑完；使用 OVO-Bench `<120s` 子集，已导出 HuggingFace 格式模型。
 - 代码目录：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/RL`
 - 当前唯一保留的 GRPO 启动脚本：`RL/scripts/train_grpo_ovo_8gpu.sh`
 - PPO 启动脚本：`RL/scripts/train_ppo.sh`
@@ -10,7 +10,83 @@
 - 当前数据运行路径：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json`
 - 数据规模：`293` 条 `<120s` 单 query OVO RL 样本。
 - 当前模型起点：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm`
-- 当前注意事项：历史 RL 输出已从 `RL/outputs` 删除，旧 launcher 已清理；后续结论只基于新 reward v2 run。
+- 最新 GRPO checkpoint：`RL/outputs/debug/grpo_ovo_8gpu_judge_debug/checkpoints/global_step_36`
+- 最新导出模型：`models/qwen3vl_8b_grpo_0509`
+- 当前注意事项：该模型是第一次完整 GRPO 训练产物，应作为后续评测候选；是否优于 SFT/base 需要 OVO-Bench 回评确认。
+
+## 2026-05-09 第一次完整 GRPO 训练完成
+
+基本信息：
+
+- 结论：第一次 GRPO 训练完整跑完，并已导出为 HuggingFace 格式模型。
+- 数据：`dataset/ovo/ovo_rl_lt120s.json`，来自 OVO-Bench 的 `<120s` 子集，共 `293` 条单 query 样本。
+- 初始化模型：`models/qwen3vl8b_streamweave_sft_answered_full_vllm`
+- launcher：`RL/scripts/train_grpo_ovo_8gpu.sh`
+- run name：`grpo_ovo_8gpu_judge_debug`
+- run 目录：`RL/outputs/debug/grpo_ovo_8gpu_judge_debug`
+- SwanLab run：`https://swanlab.cn/@zhs/streamweave_rl/runs/7pd50m37axrx11d7lc84p`
+
+训练策略：
+
+```text
+algorithm = streamweave_stepwise_traj_grpo
+data.gen_batch_size = 16
+actor_rollout_ref.rollout.n = 8
+nominal trajectories per update = 16 * 8 = 128
+algorithm.filter_groups.enable = true
+algorithm.filter_groups.metric = trajectory_score
+algorithm.filter_groups.min_std = 0.1
+actor.optim.lr = 5e-6
+actor.ppo_mini_batch_size = 32
+actor.ppo_micro_batch_size_per_gpu = 4
+critic.enable = false
+trainer.total_epochs = 2
+total steps = 36
+```
+
+奖励策略：
+
+```text
+w_format = 0.1
+w_step = 0.2
+w_success = 0.7
+score_scale = 2.0
+note_frequency_weight = 0.3
+judge_weight = 0.7
+judge backend = gemini
+judge model = gemini-2.5-flash
+judge max_tokens = 2048
+```
+
+最终保存：
+
+- FSDP checkpoint：`RL/outputs/debug/grpo_ovo_8gpu_judge_debug/checkpoints/global_step_36`
+- actor FSDP 分片：`global_step_36/actor/model_world_size_8_rank_*.pt`
+- HuggingFace 导出模型：`models/qwen3vl_8b_grpo_0509`
+- 导出模型大小：约 `17G`
+- 导出模型包含：`config.json`、`generation_config.json`、`model-00001-of-00004.safetensors` 到 `model-00004-of-00004.safetensors`、`model.safetensors.index.json`、tokenizer、processor 和 video preprocessor 配置。
+
+最终 step 36 关键指标：
+
+```text
+traj/score_mean = 1.4291
+traj/score_std = 0.3431
+traj/valid_group_ratio = 0.5625
+streamweave/trajectory_score/mean = 1.3386
+streamweave/success_score/mean = 1.1111
+streamweave/format_score/mean = 2.0000
+streamweave/step_score/mean = 1.7859
+streamweave/note_frequency_score/mean = 1.8813
+streamweave/judge_score/mean = 1.7451
+actor/lr = 5e-6
+actor/grad_norm = 3.4863
+```
+
+导出验证：
+
+- `AutoConfig.from_pretrained(...).model_type = qwen3_vl`
+- tokenizer：`Qwen2TokenizerFast`
+- processor：`Qwen3VLProcessor`
 
 ## 2026-05-08 RL 启动脚本清理
 

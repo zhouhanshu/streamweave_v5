@@ -77,9 +77,10 @@ data:
         score_on_invalid: false
 
 algorithm:
-  adv_estimator: streamweave_stepwise_gae
+  adv_estimator: streamweave_stepwise_ppo_gae
   gamma: 1.0
   lam: 1.0
+  high_level_gamma: 0.95
   ignore_value: -100.0
   use_kl_in_reward: false
 

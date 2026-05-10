@@ -4,12 +4,13 @@
 
 - 实验：`StreamWeave`
 - 当前主线：`exp3/streamweave_v5/RL`
-- 当前阶段：GRPO stepwise 训练链路已跑通；2026-05-09 judge-enabled GRPO 本轮已停止，未观察到稳定学习趋势，已记录为负结果。
+- 当前阶段：第一次 GRPO 训练已完整跑完；使用 OVO-Bench `<120s` 子集，已导出 HuggingFace 格式模型 `models/qwen3vl_8b_grpo_0509`。
 - 当前唯一保留的 GRPO 入口：`RL/scripts/train_grpo_ovo_8gpu.sh`
 - PPO 入口：`RL/scripts/train_ppo.sh`
 - 当前训练数据运行路径：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json`
 - 当前初始化模型：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm`
 - 当前最优先事项：
+  - 对 `models/qwen3vl_8b_grpo_0509` 做 OVO-Bench 回评，和 base instruct、answered-full SFT 做 full 对照。
   - base full 和 answered-full SFT full 跑分已落盘；后续继续做 RL 时必须同时和 base instruct、answered-full SFT 做 full 对照。
   - 复盘 judge-enabled GRPO 负结果，优先检查 reward 密度、judge 噪声、KL/entropy 约束和 trajectory-level credit assignment。
   - 后续新 run 必须继续记录 `note_frequency_score`、`judge_score`、`step_score`、`trajectory_score`，并在 SwanLab 中优先看 `traj/score/*` 而不是只看 `critic/score`。
@@ -39,6 +40,21 @@
 - 详细源码事实见 `10-source-code-current-state.md`。
 
 ## 关键里程碑
+
+### 2026-05-09 第一次完整 GRPO 训练完成并导出模型
+
+- 结论：第一次 GRPO 训练完整跑完，使用 OVO-Bench 的 `<120s` 子集。
+- 数据：`dataset/ovo/ovo_rl_lt120s.json`，`293` 条单 query OVO 样本。
+- 初始化模型：`models/qwen3vl8b_streamweave_sft_answered_full_vllm`
+- launcher：`RL/scripts/train_grpo_ovo_8gpu.sh`
+- run 目录：`RL/outputs/debug/grpo_ovo_8gpu_judge_debug`
+- 最终 checkpoint：`RL/outputs/debug/grpo_ovo_8gpu_judge_debug/checkpoints/global_step_36`
+- 导出模型：`models/qwen3vl_8b_grpo_0509`
+- 导出格式：HuggingFace `from_pretrained` 目录，包含 4 个 safetensors 分片、`model.safetensors.index.json`、config、tokenizer、processor 和 video preprocessor 配置。
+- 核心训练设置：`gen_batch_size=16`、`rollout.n=8`、DAPO filter `min_std=0.1`、`lr=5e-6`、`total_steps=36`。
+- 奖励设置：`w_format=0.1`、`w_step=0.2`、`w_success=0.7`；step 内部 `note_frequency_weight=0.3`、`judge_weight=0.7`，judge 使用 `gemini-2.5-flash`。
+- 最终 step 36：`traj/score_mean=1.4291`、`valid_group_ratio=0.5625`、`trajectory_score/mean=1.3386`、`success_score/mean=1.1111`、`step_score/mean=1.7859`。
+- 导出验证：`AutoConfig` 识别为 `qwen3_vl`，tokenizer 为 `Qwen2TokenizerFast`，processor 为 `Qwen3VLProcessor`。
 
 ### 2026-05-09 Qwen3-VL-8B base OVO full 完成
 

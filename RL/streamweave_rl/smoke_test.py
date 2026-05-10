@@ -30,7 +30,7 @@ class FakeBatch:
             "response_mask": response_mask,
             "token_level_rewards": torch.tensor(
                 [
-                    [0.0, 0.1, 0.0],
+                    [0.0, 0.0, 0.0],
                     [0.4, 0.0, 0.0],
                     [0.0, 0.2, 0.0],
                     [0.8, 0.0, 0.0],
@@ -53,7 +53,11 @@ def main() -> None:
         return
     try:
         from streamweave_rl.agent_loop_stepwise import _finalize_aborted_outputs
-        from streamweave_rl.advantage import compute_streamweave_stepwise_gae, compute_streamweave_stepwise_traj_grpo
+        from streamweave_rl.advantage import (
+            compute_streamweave_stepwise_bilevel_gae,
+            compute_streamweave_stepwise_ppo_gae,
+            compute_streamweave_stepwise_traj_grpo,
+        )
         from streamweave_rl.dapo import compute_group_filter_result, select_reward_extra_infos
         from streamweave.schemas import ModelAction, ModelEvent, QualityReport
         from streamweave_rl.judge import JudgeConfig, JudgeResult, _parse_judge_response
@@ -179,14 +183,40 @@ def main() -> None:
     assert selected_infos["score"].tolist() == [0, 1]
     assert selected_infos["name"] == "kept"
 
-    gae_adv, gae_returns = compute_streamweave_stepwise_gae(data, gamma=1.0, lam=1.0)
-    assert gae_adv.shape == data.batch["response_mask"].shape
-    assert gae_returns.shape == data.batch["response_mask"].shape
-    assert torch.isfinite(gae_adv).all()
+    ppo_adv, ppo_returns = compute_streamweave_stepwise_ppo_gae(data, gamma=1.0, lam=1.0)
+    assert ppo_adv.shape == data.batch["response_mask"].shape
+    assert ppo_returns.shape == data.batch["response_mask"].shape
+    assert torch.isfinite(ppo_adv).all()
+    expected_ppo_returns = torch.tensor(
+        [
+            [0.4, 0.4, 0.0],
+            [0.4, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.8, 0.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+    assert torch.allclose(ppo_returns, expected_ppo_returns, atol=1e-6)
 
-    _, custom_returns = compute_streamweave_stepwise_gae(data, gamma=1.0, lam=1.0, config={"ignore_value": -1.0})
-    ignored = custom_returns[data.batch["response_mask"] == 0]
-    assert torch.equal(ignored, torch.full_like(ignored, -1.0))
+    bilevel_adv, bilevel_returns = compute_streamweave_stepwise_bilevel_gae(
+        data,
+        gamma=1.0,
+        lam=1.0,
+        config={"high_level_gamma": 0.5},
+    )
+    assert bilevel_adv.shape == data.batch["response_mask"].shape
+    assert bilevel_returns.shape == data.batch["response_mask"].shape
+    assert torch.isfinite(bilevel_adv).all()
+    expected_bilevel_returns = torch.tensor(
+        [
+            [0.2, 0.2, 0.0],
+            [0.4, 0.0, 0.0],
+            [0.6, 0.6, 0.0],
+            [0.8, 0.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+    assert torch.allclose(bilevel_returns, expected_bilevel_returns, atol=1e-6)
 
     class DummyOutput:
         def __init__(self) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import Any
+import warnings
 
 import numpy as np
 import torch
@@ -48,75 +49,157 @@ def _unique_turn_rows(data):
     return uniq_key, first_idx.astype(np.int64, copy=False), inverse.astype(np.int64, copy=False)
 
 
-@register_adv_est("streamweave_stepwise_gae")
-def compute_streamweave_stepwise_gae(
+def _prepare_unique_turn_tensors(data):
+    token_level_rewards = data.batch["token_level_rewards"]
+    values = data.batch.get("values", torch.zeros_like(token_level_rewards))
+    response_mask = data.batch["response_mask"]
+    device = token_level_rewards.device
+
+    uniq_key, first_idx, inverse = _unique_turn_rows(data)
+    first_idx_t = torch.as_tensor(first_idx, dtype=torch.long, device=device)
+
+    rewards_u = token_level_rewards.index_select(0, first_idx_t)
+    values_u = values.index_select(0, first_idx_t)
+    mask_u = response_mask.index_select(0, first_idx_t).to(dtype=token_level_rewards.dtype)
+    mask_b = mask_u.to(dtype=torch.bool)
+    inverse_t = torch.as_tensor(inverse, dtype=torch.long, device=device)
+    return uniq_key, rewards_u, values_u, mask_u, mask_b, inverse_t
+
+
+def _last_valid_positions(mask_b: torch.Tensor) -> torch.Tensor:
+    rows, length = mask_b.shape
+    valid_counts = mask_b.sum(dim=1)
+    arange = torch.arange(length, device=mask_b.device).view(1, length).expand(rows, length)
+    last_pos = (mask_b.to(torch.long) * arange).max(dim=1).values
+    return torch.where(valid_counts > 0, last_pos, torch.full_like(last_pos, -1))
+
+
+def _trajectory_rows(uniq_key: np.ndarray) -> list[list[int]]:
+    grouped: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for row, (group_id, traj_id, _turn_id) in enumerate(uniq_key):
+        grouped[(int(group_id), int(traj_id))].append(row)
+    return [
+        sorted(rows, key=lambda row: int(uniq_key[row, 2]))
+        for _key, rows in sorted(grouped.items(), key=lambda item: item[0])
+    ]
+
+
+def _masked_whiten_if_possible(advantages: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    if float(mask.sum().item()) > 1.0:
+        return verl_F.masked_whiten(advantages, mask)
+    return advantages
+
+
+@register_adv_est("streamweave_stepwise_ppo_gae")
+def compute_streamweave_stepwise_ppo_gae(
     data,
     gamma,
     lam,
     config=None,
-    ignore_value: float = -100.0,
     **kwargs,
 ):
-    token_level_rewards = data.batch["token_level_rewards"]
-    values = data.batch.get("values", torch.zeros_like(token_level_rewards))
-    response_mask = data.batch["response_mask"]
-    ignore_value = _config_get_float(config, "ignore_value", ignore_value)
+    del config, kwargs
 
     with torch.no_grad():
-        device = token_level_rewards.device
-        uniq_key, first_idx, inverse = _unique_turn_rows(data)
-        first_idx_t = torch.as_tensor(first_idx, dtype=torch.long, device=device)
-
-        rewards_u = token_level_rewards.index_select(0, first_idx_t)
-        values_u = values.index_select(0, first_idx_t)
-        mask_u = response_mask.index_select(0, first_idx_t).to(dtype=token_level_rewards.dtype)
-        mask_b = mask_u.to(dtype=torch.bool)
-
-        group_ids = torch.as_tensor(uniq_key[:, 0], dtype=torch.long, device="cpu")
-        traj_ids = torch.as_tensor(uniq_key[:, 1], dtype=torch.long, device="cpu")
-        turn_ids = torch.as_tensor(uniq_key[:, 2], dtype=torch.long, device="cpu")
-
-        bs_u, length = rewards_u.shape
-        turn_rewards = (rewards_u * mask_u).sum(dim=1)
-        valid_counts = mask_b.sum(dim=1)
-        arange = torch.arange(length, device=device).view(1, length).expand(bs_u, length)
-        last_pos = (mask_b.to(torch.long) * arange).max(dim=1).values
-        last_pos = torch.where(valid_counts > 0, last_pos, torch.full_like(last_pos, -1))
-        gather_pos = last_pos.clamp(min=0).view(bs_u, 1)
-        turn_values = values_u.gather(1, gather_pos).squeeze(1)
-        turn_values = torch.where(last_pos >= 0, turn_values, torch.zeros_like(turn_values))
+        uniq_key, rewards_u, values_u, mask_u, mask_b, inverse_t = _prepare_unique_turn_tensors(data)
 
         advantages_u = torch.zeros_like(rewards_u)
-        returns_u = torch.full_like(rewards_u, float(ignore_value))
+        returns_u = torch.zeros_like(rewards_u)
 
         gamma_val = float(gamma.item() if isinstance(gamma, torch.Tensor) else gamma)
         lam_val = float(lam.item() if isinstance(lam, torch.Tensor) else lam)
 
-        pair_keys = torch.stack([group_ids, traj_ids], dim=1)
-        for group_id, traj_id in torch.unique(pair_keys, dim=0).tolist():
-            row_ids = torch.nonzero((group_ids == group_id) & (traj_ids == traj_id), as_tuple=False).view(-1)
-            if row_ids.numel() == 0:
+        for ordered_rows in _trajectory_rows(uniq_key):
+            valid_tokens: list[tuple[int, int]] = []
+            for row in ordered_rows:
+                positions = torch.nonzero(mask_b[row], as_tuple=False).view(-1).tolist()
+                valid_tokens.extend((row, int(pos)) for pos in positions)
+            if not valid_tokens:
                 continue
-            ordered = row_ids[torch.argsort(turn_ids[row_ids])].tolist()
-            next_value = 0.0
-            last_gae = 0.0
-            for row in reversed(ordered):
-                reward = float(turn_rewards[row].item())
-                value = float(turn_values[row].item())
+
+            next_value = torch.zeros((), dtype=values_u.dtype, device=values_u.device)
+            last_gae = torch.zeros((), dtype=rewards_u.dtype, device=rewards_u.device)
+            for row, pos in reversed(valid_tokens):
+                reward = rewards_u[row, pos]
+                value = values_u[row, pos]
                 delta = reward + gamma_val * next_value - value
                 last_gae = delta + gamma_val * lam_val * last_gae
-                ret = last_gae + value
-                pos = int(last_pos[row].item())
-                if pos >= 0:
-                    advantages_u[row, mask_b[row]] = last_gae
-                    returns_u[row, pos] = ret
+                advantages_u[row, pos] = last_gae
+                returns_u[row, pos] = last_gae + value
                 next_value = value
 
-        if float(mask_u.sum().item()) > 1.0:
-            advantages_u = verl_F.masked_whiten(advantages_u, mask_u)
+        advantages_u = _masked_whiten_if_possible(advantages_u, mask_u)
 
-        inverse_t = torch.as_tensor(inverse, dtype=torch.long, device=device)
         return advantages_u.index_select(0, inverse_t), returns_u.index_select(0, inverse_t)
+
+
+@register_adv_est("streamweave_stepwise_bilevel_gae")
+def compute_streamweave_stepwise_bilevel_gae(
+    data,
+    gamma,
+    lam,
+    config=None,
+    **kwargs,
+):
+    del kwargs
+
+    with torch.no_grad():
+        uniq_key, rewards_u, values_u, mask_u, mask_b, inverse_t = _prepare_unique_turn_tensors(data)
+        last_pos = _last_valid_positions(mask_b)
+        gather_pos = last_pos.clamp(min=0).view(rewards_u.size(0), 1)
+        turn_values = values_u.gather(1, gather_pos).squeeze(1)
+        turn_values = torch.where(last_pos >= 0, turn_values, torch.zeros_like(turn_values))
+        turn_rewards = (rewards_u * mask_u).sum(dim=1)
+
+        gamma_val = float(gamma.item() if isinstance(gamma, torch.Tensor) else gamma)
+        lam_val = float(lam.item() if isinstance(lam, torch.Tensor) else lam)
+        high_gamma_val = _config_get_float(config, "high_level_gamma", gamma_val)
+
+        high_returns = torch.zeros_like(turn_rewards)
+        for ordered_rows in _trajectory_rows(uniq_key):
+            next_value = torch.zeros((), dtype=values_u.dtype, device=values_u.device)
+            last_gae = torch.zeros((), dtype=rewards_u.dtype, device=rewards_u.device)
+            for row in reversed(ordered_rows):
+                if int(last_pos[row].item()) < 0:
+                    continue
+                reward = turn_rewards[row]
+                value = turn_values[row]
+                delta = reward + high_gamma_val * next_value - value
+                last_gae = delta + high_gamma_val * lam_val * last_gae
+                high_returns[row] = last_gae + value
+                next_value = value
+
+        advantages_u = torch.zeros_like(rewards_u)
+        returns_u = torch.zeros_like(rewards_u)
+        for row in range(rewards_u.size(0)):
+            positions = torch.nonzero(mask_b[row], as_tuple=False).view(-1).tolist()
+            if not positions:
+                continue
+            terminal_pos = int(last_pos[row].item())
+            next_value = torch.zeros((), dtype=values_u.dtype, device=values_u.device)
+            last_gae = torch.zeros((), dtype=rewards_u.dtype, device=rewards_u.device)
+            for pos in reversed(positions):
+                terminal_reward = high_returns[row] if int(pos) == terminal_pos else torch.zeros_like(high_returns[row])
+                value = values_u[row, pos]
+                delta = terminal_reward + gamma_val * next_value - value
+                last_gae = delta + gamma_val * lam_val * last_gae
+                advantages_u[row, pos] = last_gae
+                returns_u[row, pos] = last_gae + value
+                next_value = value
+
+        advantages_u = _masked_whiten_if_possible(advantages_u, mask_u)
+        return advantages_u.index_select(0, inverse_t), returns_u.index_select(0, inverse_t)
+
+
+@register_adv_est("streamweave_stepwise_gae")
+def compute_streamweave_stepwise_gae(*args, **kwargs):
+    warnings.warn(
+        "streamweave_stepwise_gae is deprecated; use streamweave_stepwise_ppo_gae "
+        "for ordinary trajectory-level PPO or streamweave_stepwise_bilevel_gae for bi-level PPO.",
+        UserWarning,
+        stacklevel=2,
+    )
+    return compute_streamweave_stepwise_ppo_gae(*args, **kwargs)
 
 
 @register_adv_est("streamweave_stepwise_traj_grpo")

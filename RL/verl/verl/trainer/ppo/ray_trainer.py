@@ -681,6 +681,14 @@ class RayPPOTrainer:
             return
         if "returns" not in batch.batch or "response_mask" not in batch.batch:
             return
+        adv_estimator = str(self.config.algorithm.get("adv_estimator", ""))
+        if adv_estimator in {
+            "streamweave_stepwise_ppo_gae",
+            "streamweave_stepwise_bilevel_gae",
+            "streamweave_stepwise_gae",
+        }:
+            batch.batch["value_mask"] = batch.batch["response_mask"]
+            return
         ignore_value = float(self.config.algorithm.get("ignore_value", -100.0))
         returns = batch.batch["returns"]
         eps = 1e-2 if returns.dtype in (torch.float16, torch.bfloat16) else 1e-6
