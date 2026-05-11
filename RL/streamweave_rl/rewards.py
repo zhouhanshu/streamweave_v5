@@ -20,15 +20,15 @@ from .schemas import StepRewardResult, TrajectoryRewardResult
 @dataclass(slots=True)
 class StreamWeaveRewardConfig:
     w_format: float = 0.1
-    w_success: float = 0.7
-    w_step: float = 0.2
-    score_scale: float = 2.0
+    w_success: float = 0.8
+    w_step: float = 0.1
+    score_scale: float = 1.0
     format_mode: str = "valid"
     success_mode: str = "dataset"
     success_scorer: str = "auto"
     enable_note_frequency_reward: bool = True
-    note_frequency_weight: float = 0.3
-    judge_weight: float = 0.7
+    note_frequency_weight: float = 1.0
+    judge_weight: float = 1.0
     max_notes_per_step: int = 1
     stale_note_after_steps: int = 3
     note_frequency_penalty_score: float = 0.0
@@ -47,7 +47,7 @@ def reward_config_from_mapping(data: dict[str, Any] | None) -> StreamWeaveReward
     return StreamWeaveRewardConfig(**values)
 
 
-def compute_format_score(quality: QualityReport, *, mode: str = "valid", score_scale: float = 2.0) -> float:
+def compute_format_score(quality: QualityReport, *, mode: str = "valid", score_scale: float = 1.0) -> float:
     if mode == "parser_ok":
         return float(score_scale) if quality.parser_ok else 0.0
     if mode == "format_reward":
@@ -91,18 +91,14 @@ def compute_step_score(
     cfg: StreamWeaveRewardConfig,
 ) -> tuple[float, dict[str, float]]:
     components: dict[str, float] = {}
-    weights: dict[str, float] = {}
     if cfg.enable_note_frequency_reward and cfg.note_frequency_weight > 0:
         components["note_frequency_score"] = _clamp_score(note_frequency_score, cfg=cfg)
-        weights["note_frequency_score"] = float(cfg.note_frequency_weight)
     if cfg.judge.enable and cfg.judge_weight > 0:
         components["judge_score"] = _clamp_score(judge_score, cfg=cfg)
-        weights["judge_score"] = float(cfg.judge_weight)
-    total_weight = sum(weights.values())
-    if total_weight <= 0:
-        return 0.0, components
-    score = sum(components[key] * weights[key] for key in components) / total_weight
-    return _clamp_score(score, cfg=cfg), components
+        return components["judge_score"], components
+    if "note_frequency_score" in components:
+        return components["note_frequency_score"], components
+    return 0.0, components
 
 
 def compute_step_reward(
@@ -174,7 +170,7 @@ def compute_success_score(
     mode: str = "exact_or_contains",
     scorer: str = "auto",
     metadata: dict[str, Any] | None = None,
-    score_scale: float = 2.0,
+    score_scale: float = 1.0,
 ) -> float:
     if mode == "dataset":
         raw_score = score_answer(answer, ground_truth, scorer=scorer, metadata=metadata, fallback_mode="exact_or_contains")
@@ -227,7 +223,7 @@ def compute_trajectory_reward(
 def _max_score(cfg: StreamWeaveRewardConfig | None = None, *, score_scale: float | None = None) -> float:
     if cfg is not None:
         score_scale = cfg.score_scale
-    return max(float(score_scale if score_scale is not None else 2.0), 0.0)
+    return max(float(score_scale if score_scale is not None else 1.0), 0.0)
 
 
 def _clamp_score(

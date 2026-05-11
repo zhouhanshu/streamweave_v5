@@ -152,15 +152,15 @@ def _memory_content_from_row(row: JsonDict) -> list[ContentItem]:
         start, end = _interval(item)
         if kind == "bridge":
             text = str(item.get("text") or "").strip()
-            content.append(ContentItem("text", text=f'<bridge t="{start:.1f}-{end:.1f}">{text}</bridge>'))
+            content.append(ContentItem("text", text=f'<delta t="{start:.1f}-{end:.1f}">{text}</delta>'))
         elif kind == "note":
             image_path = item.get("image_path")
             if item.get("image_available", True) and image_path:
-                content.append(ContentItem("text", text=f'<note t="{start:.1f}-{end:.1f}">'))
+                content.append(ContentItem("text", text=f'<anchor t="{start:.1f}-{end:.1f}">'))
                 content.append(ContentItem("image", image_path=Path(str(image_path))))
-                content.append(ContentItem("text", text="</note>"))
+                content.append(ContentItem("text", text="</anchor>"))
             else:
-                content.append(ContentItem("text", text=f'<note t="{start:.1f}-{end:.1f}"></note>'))
+                content.append(ContentItem("text", text=f'<anchor t="{start:.1f}-{end:.1f}"></anchor>'))
     return content
 
 

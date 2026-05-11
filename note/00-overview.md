@@ -1,6 +1,6 @@
-# 实验总览
+# StreamWeave 总览
 
-## 目标
+## 项目目标
 
 `StreamWeave` 面向在线流式视频理解：用户可以在视频任意时间提问，模型需要判断应该依赖过去、当前还是未来证据，并在有限上下文下保留关键视觉状态。
 
@@ -10,10 +10,10 @@
 - 不把所有历史帧都塞进上下文，而是显式选择关键视觉锚点。
 - 在 OVO-Bench 和 StreamingBench 上验证时机判断、记忆保留和回答正确性。
 
-## 方法口径
+## 当前协议
 
-- `note`：长期保留的视觉锚点，只保存当前 step 的关键帧和时间信息。
-- `bridge`：用文本压缩两个视觉锚点之间的过渡。
+- `anchor`：长期保留的视觉锚点，只保存当前 step 的关键帧和时间信息。
+- `delta`：用文本压缩两个视觉锚点之间的过渡。
 - `state`：当前 step 的视频状态总结和回答判断，只用于本轮推理，不写回 Memory。
 - `answer`：当前能答则输出答案，证据不足则保持空/沉默。
 - 每一步输入：`memory + qa_history + current frames`。
@@ -22,23 +22,37 @@
 ```xml
 <state>...</state>
 <answer>...</answer>
-<bridge t="...">...</bridge>
-<note t="..."></note>
+<delta t="...">...</delta>
+<anchor t="..."></anchor>
 ```
+
+硬约束：
+
+- 空 Memory 第一轮必须输出首帧 `<anchor>`。
+- `<anchor>` 必须是成对标签 `<anchor ...></anchor>`，不能使用自闭合 `<anchor .../>`。
+- 最终评测取最后一个非空 `<answer>`。
+- 内部 schema/指标仍可保留 `note/bridge` 命名；模型可见协议只使用 `anchor/delta`。
 
 ## 当前主线
 
-- 当前代码主线：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5`
-- 当前训练主线：`streamweave_v5/RL` 的 GRPO stepwise。
-- 当前唯一保留的 GRPO 启动脚本：`RL/scripts/train_grpo_ovo_8gpu.sh`
-- PPO 启动脚本：`RL/scripts/train_ppo.sh`
-- 当前数据运行路径：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json`
-- 历史数据来源：`/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/ovo/ovo_rl_lt120s.json`
-- 当前模型起点：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm`
+- 当前仓库：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5`
+- SFT 框架：`SFT/LlamaFactory`
+- RL 框架：`RL/`，包含 vendored `verl` 和 `streamweave_rl` 自定义链路。
+- 当前 GRPO 入口：`RL/scripts/train_grpo_ovo_8gpu.sh`
+- PPO 对照入口：`RL/scripts/train_ppo.sh`
+- 当前评测与清洗入口在 `evaluation/`。
+- 最新源码事实以 `10-source-code-current-state.md` 为准；实时实验状态以 `experiment-log.md` 为准。
 
-最新状态：GRPO 链路已经跑通。历史 RL 输出已经从 `RL/outputs` 清理；旧 GRPO launcher 也已删除，只保留最新 fused/chunked GRPO 入口和 PPO 入口。下一步从 answered-full SFT 后的模型启动 reward v2 口径 RL：`save_freq=30`、`resume_mode=auto`、remove padding、fused kernels、chunked prefill，reward 为 `0.3 format + 0.3 step + 0.4 success`，默认 `score_scale=2.0`，judge 默认关闭。
+当前阶段重点已经从早期 idea validation / 旧 VideoXum 数据构造，转到：
 
-## 关键结果
+- 用 answered-full / anchor-delta SFT 模型做 OVO 和新数据回评。
+- 对新扩充数据做 3 次推理，估计样本难度和稳定性。
+- 按难度和时长分配 SFT/RL 数据，具体见 `数据清洗0510.md`。
+- 继续维护 RL 的 GRPO/PPO 链路和回评。
+
+## 历史验证结论
+
+早期 idea validation 已完成，不再单独维护旧文档。保留结论如下：
 
 | 口径 | Backward | Realtime | Forward | Total |
 | --- | ---: | ---: | ---: | ---: |
@@ -54,24 +68,76 @@
 - V3 + Gemini 证明方法上限可接近或略超 AURA overall，但 Forward 仍弱。
 - V4 8B base 是学生模型的重要基线，full 总分 `51.43`。
 - 第一次 V4 SFT 在 1/8 上退化，不能当作已验证的正向 SFT。
-- V5 RL 已经能跑，当前主要问题转为 checkpoint、稳定性和训练速度。
+- 早期结果说明，只靠 prompt/记忆结构有收益信号，但也存在历史记忆污染、过早作答、forward 处理弱和长上下文问题。
 
-## 当前优先级
+已吸收到后续版本的经验：
 
-1. 等 answered-full SFT 的 OVO 1/8 回评完成并写入正式分数。
-2. 用最新 fused/chunked GRPO 入口从 answered-full SFT 模型启动 RL。
-3. 确认新 run 的日志出现 `note_frequency_score`、`judge_score`、`step_score` 和 `trajectory_score`。
-4. 确保 `save_freq=30` 和 `resume_mode=auto` 能在中断后恢复。
-5. 优化训练侧瓶颈：`old_log_prob` 和 `update_actor`。
-6. 产出首个完整 RL checkpoint 后，再做 OVO 小规模回评。
+- API runner 必须区分请求失败和答错。
+- 本地 vLLM / Qwen3 reasoning 输出字段需要兜底处理。
+- StreamWeave 必须显式区分视觉锚点和文本过渡，不能只做最近窗口文本总结。
+- forward 类任务必须正确展开子视频/sample，否则结果不可比。
 
-## 主要路径
+详细跑分继续维护在 `实验跑分.md` 和 `0508实验跑分.md`，本文件不再展开旧命令。
 
-- V5 当前仓库：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5`
-- V5 RL 输出：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/RL/outputs`
-- OVO RL 数据运行路径：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo`
-- OVO RL 历史来源：`/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/dataset/ovo`
-- V4 历史仓库：`/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4`
-- V3 历史仓库：`/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v3`
-- 8B base instruct：`/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct`
-- 当前 RL 起点模型：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm`
+## 数据口径
+
+旧 OVO RL 数据：
+
+```text
+/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo
+```
+
+历史文件：
+
+```text
+ovo_bench_new.json
+ovo_rl.json
+ovo_rl_lt120s.json
+```
+
+说明：
+
+- `ovo_rl.json` 是单 query 口径，`backward/forward/realtime` 各约 `200` 条。
+- `ovo_rl_lt120s.json` 是 `<120s` 子集，历史 RL 训练曾使用。
+- 这些数据保留为历史和对照；后续主线将切到新的扩充数据。
+
+旧 VideoXum/ActivityNet 数据：
+
+```text
+exp2/data/streamweave_data/annotations_filtered_30s300s_key10to40.jsonl
+```
+
+历史过滤条件：
+
+- `30 <= duration <= 300`
+- `0.10 <= key_frame_ratio <= 0.40`
+
+历史结果：
+
+- 原始 `14001`
+- 保留 `12029`
+
+说明：
+
+- 该文件只是视频/关键帧池，不是当前 SFT/RL 训练入口。
+- 旧 VideoXum-StreamQA 清洗计划不再继续展开。
+- 如果以后重启旧数据，必须重新检查帧目录、frame_count、key_frame_ids、key_frame_scores 和 QA 是否泄露未来信息。
+
+## 新数据清洗原则
+
+后续不再把旧数据集作为主训练数据。新数据处理原则见 `数据清洗0510.md`，核心是：
+
+- 用 SFT 后模型对每条样本推理 `3` 次，得到 `pass_rate`。
+- `easy = 3/3`，`medium = 2/3`，`hard = 1/3`，`unsolved = 0/3`。
+- easy 短样本优先进 SFT，easy 长样本进 RL。
+- medium/hard 按长度加权，一部分进 SFT，一部分进 RL。
+- unsolved 交给更强教师模型推理 `3` 次；教师全错丢弃，教师至少一次正确则保留正确轨迹进 SFT，同时样本进 RL。
+
+## 更新规则
+
+- 本文件只保留项目目标、协议、历史结论和数据口径摘要。
+- 当前实验状态写 `experiment-log.md`。
+- 当前源码事实写 `10-source-code-current-state.md`。
+- SFT 训练细节写 `04-sft-training.md`。
+- RL 训练细节写 `05-rl-training.md`。
+- 新数据清洗和分配策略写 `数据清洗0510.md`。

@@ -1,0 +1,147 @@
+hydra:
+  searchpath:
+    - file://${oc.env:STREAMWEAVE_RL_DIR}/verl/verl/trainer/config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+data:
+  train_files: ${oc.env:STREAMWEAVE_TRAIN_FILE,/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset2/test4rl.jsonl}
+  val_files: ${oc.env:STREAMWEAVE_VAL_FILE,/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset2/test4rl.jsonl}
+  return_raw_chat: true
+  return_multi_modal_inputs: false
+  filter_overlong_prompts: false
+  dataloader_num_workers: 0
+  trust_remote_code: true
+  custom_cls:
+    path: ${oc.env:STREAMWEAVE_RL_DIR}/streamweave_rl/dataset.py
+    name: StreamWeaveAgentDataset
+  streamweave:
+    dataset_name: ${oc.env:STREAMWEAVE_DATASET_NAME,NeXTVideo}
+    require_question: true
+    prompt_profile: eval
+    policy: streamweave
+    runtime:
+      sample_fps: 1.0
+      frames_per_step: 5
+      max_frames: 0
+      max_steps: 0
+      resolution: ${oc.env:STREAMWEAVE_IMAGE_RESOLUTION,336}
+    dataset:
+      dataset_root: ${oc.env:STREAMWEAVE_DATASET_ROOT,/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset2}
+      dataset_name: ${oc.env:STREAMWEAVE_DATASET_NAME,NeXTVideo}
+      video_root: ""
+      frame_id_base: 0
+      image_ext: jpg
+      overwrite_frames: false
+    memory:
+      window_seconds: 120.0
+    streamweave_reward:
+      enable_format_reward: true
+      enable_timing_reward: false
+      enable_open_tail_reward: false
+    reward:
+      w_format: 0.1
+      w_success: 0.8
+      w_step: 0.1
+      score_scale: 1.0
+      format_mode: valid
+      success_mode: dataset
+      success_scorer: auto
+      enable_note_frequency_reward: true
+      note_frequency_weight: 1.0
+      judge_weight: 1.0
+      max_notes_per_step: 1
+      stale_note_after_steps: 3
+      note_frequency_penalty_score: 0.0
+      judge:
+        enable: false
+        backend: gemini
+        model: gemini-2.5-flash
+        base_url: ""
+        api_key_env: STREAMWEAVE_JUDGE_API_KEY
+        max_tokens: 2048
+        temperature: 0.0
+        top_p: 0.1
+        timeout_seconds: 180.0
+        image_quality: 80
+        max_image_side: 512
+        max_retries: 2
+        retry_backoff_seconds: 5.0
+        retry_backoff_multiplier: 2.0
+        failure_score: 0.0
+        score_on_invalid: false
+
+algorithm:
+  adv_estimator: streamweave_stepwise_traj_grpo
+  gamma: 1.0
+  lam: 1.0
+  high_level_gamma: 0.95
+  ignore_value: -100.0
+  norm_adv_by_std_in_grpo: true
+  use_kl_in_reward: false
+  filter_groups:
+    enable: false
+    metric: trajectory_score
+    max_num_gen_batches: 0
+    min_std: 0.03
+
+critic:
+  enable: false
+  model:
+    path: ${oc.env:STREAMWEAVE_MODEL_PATH,/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm}
+    trust_remote_code: true
+
+actor_rollout_ref:
+  model:
+    path: ${oc.env:STREAMWEAVE_MODEL_PATH,/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm}
+    trust_remote_code: true
+    use_remove_padding: true
+    use_fused_kernels: true
+    enable_gradient_checkpointing: true
+    override_config:
+      attn_implementation: sdpa
+  actor:
+    strategy: fsdp
+    ulysses_sequence_parallel_size: 1
+    use_kl_loss: false
+    kl_loss_coef: 0.0
+    kl_loss_type: low_var_kl
+    entropy_coeff: 0
+    loss_agg_mode: token-mean
+    fsdp_config:
+      model_dtype: bfloat16
+      param_offload: false
+      optimizer_offload: false
+  ref:
+    strategy: fsdp
+    ulysses_sequence_parallel_size: 1
+    fsdp_config:
+      model_dtype: bfloat16
+      param_offload: false
+  rollout:
+    name: vllm
+    mode: async
+    tensor_model_parallel_size: 1
+    enable_chunked_prefill: true
+    enforce_eager: false
+    free_cache_engine: true
+    engine_kwargs:
+      vllm:
+        disable_mm_preprocessor_cache: true
+    multi_turn:
+      enable: true
+    agent:
+      default_agent_loop: streamweave_agent
+      agent_loop_config_path: ${oc.env:STREAMWEAVE_RL_DIR}/configs/streamweave_agent_stepwise.yaml
+
+trainer:
+  stepwise_rollout: true
+  stepwise_value_mask: true
+  balance_batch: false
+  val_before_train: false
+  logger: ["console"]
+  project_name: streamweave_rl
+  experiment_name: streamweave_stepwise
+  total_training_steps: null

@@ -133,9 +133,9 @@ def _action_to_text(applied: AppliedAction) -> str:
     ]
     for event in action.events:
         if event.kind == "note":
-            lines.append(f'<note t="{event.start_time:.1f}-{event.end_time:.1f}"></note>')
+            lines.append(f'<anchor t="{event.start_time:.1f}-{event.end_time:.1f}"></anchor>')
         elif event.kind == "bridge":
-            lines.append(f'<bridge t="{event.start_time:.1f}-{event.end_time:.1f}">{event.text}</bridge>')
+            lines.append(f'<delta t="{event.start_time:.1f}-{event.end_time:.1f}">{event.text}</delta>')
     return "\n".join(lines)
 
 

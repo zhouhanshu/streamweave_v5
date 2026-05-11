@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
 from evaluation.rollout_metrics import rollout_metrics_from_trace, summarize_rollout_metrics
+from streamweave.ovo import extract_mcq
 from streamweave.schemas import BenchmarkSample, QueryEvent, RolloutTrace
 
 
@@ -63,7 +63,10 @@ def score_trace(trace: RolloutTrace) -> dict[str, Any]:
         gt = q.get("ground_truth_output", "")
     else:
         gt = q.get("answer", "")
-        score = int(_extract_mcq(response) == gt)
+        max_options = len(q.get("options") or []) or 5
+        pred = _extract_mcq(response, max_options=max_options)
+        gold = _extract_mcq(gt, max_options=max_options)
+        score = int(bool(gold) and pred == gold)
     result = {
         "sample_id": trace.sample.sample_id,
         "video_id": trace.sample.video_id,
@@ -107,6 +110,5 @@ def _ts_to_seconds(ts: str) -> float:
     return parts[0]
 
 
-def _extract_mcq(response: str) -> str:
-    match = re.search(r"\b([A-D])\b", response.upper())
-    return match.group(1) if match else ""
+def _extract_mcq(response: str | None, *, max_options: int = 5) -> str:
+    return extract_mcq(response, max_options=max_options) or ""

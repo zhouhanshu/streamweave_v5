@@ -1,0 +1,86 @@
+{
+  "streamweave_sft": {
+    "file_name": "/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/data_engine/sft/outputs/gemini_parallel_8/llamafactory_sharegpt.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "streamweave_sft_v2_3077": {
+    "file_name": "/mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/data_engine/sft/outputs/gemini_v2_full_3077_w128/llamafactory_sharegpt.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "streamweave_sft_answered_full": {
+    "file_name": "/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/data_engine/sft/outputs/gemini_answered_full/llamafactory_sharegpt_anchor_delta_le20.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "streamweave_sft_answered_full_anchor_delta_init_anchor": {
+    "file_name": "/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/data_engine/sft/outputs/gemini_answered_full/llamafactory_sharegpt_anchor_delta_le20.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "streamweave_sft_0511": {
+    "file_name": "/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset2/sft_0511.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  },
+  "streamweave_sft_0511_150k_6to4": {
+    "file_name": "/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset2/sft_0511_150k_6to4.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
+  }
+}

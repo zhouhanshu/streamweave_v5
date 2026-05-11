@@ -71,7 +71,7 @@ class StreamWeaveEnv:
                 action=replace(applied.action, answer=""),
                 answer=None,
                 repair_count=applied.repair_count + 1,
-                repair_types=[*applied.repair_types, "drop_answer_without_active_question"],
+                repair_types=[*applied.repair_types, "drop_answer_without_question"],
             )
         return raw_action, quality, applied
 
@@ -82,6 +82,7 @@ class StreamWeaveEnv:
             step_start=local_frames[0].start_time if local_frames else 0.0,
             step_end=local_frames[-1].end_time if local_frames else 0.0,
             open_tail_bridge=self.memory.open_tail_bridge() if self.policy.use_open_tail else None,
+            require_initial_anchor=bool(local_frames) and not self.memory.notes and not self.memory.bridges,
         )
         return context
 

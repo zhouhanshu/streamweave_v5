@@ -20,9 +20,9 @@ class MemoryPolicy:
 
 def make_policy(name: str) -> MemoryPolicy:
     key = name.lower()
-    if key in {"streamweave", "full", "note_bridge"}:
+    if key in {"streamweave", "full", "anchor_delta", "note_bridge"}:
         return MemoryPolicy(name="streamweave", read_notes=True, read_bridges=True)
-    if key in {"keyframe_only", "note_only"}:
+    if key in {"keyframe_only", "anchor_only", "note_only"}:
         return MemoryPolicy(
             name="keyframe_only",
             read_notes=True,
@@ -31,9 +31,9 @@ def make_policy(name: str) -> MemoryPolicy:
             commit_bridges=True,
             use_open_tail=False,
         )
-    if key == "bridge_only":
+    if key in {"delta_only", "bridge_only"}:
         return MemoryPolicy(
-            name="bridge_only",
+            name="delta_only" if key == "delta_only" else "bridge_only",
             read_notes=False,
             read_bridges=True,
             commit_notes=True,

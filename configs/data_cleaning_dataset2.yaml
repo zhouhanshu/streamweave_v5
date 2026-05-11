@@ -1,0 +1,77 @@
+benchmark: dataset2
+policy: streamweave
+result_output: outputs/data_cleaning_0510/dataset2/annotations_with_pass_count.jsonl
+
+prompt:
+  profile: eval
+
+postprocess:
+  mode: eval_repair
+
+reward:
+  enable_format_reward: true
+  enable_timing_reward: true
+  enable_open_tail_reward: true
+
+synthesis:
+  max_attempts: 3
+
+memory:
+  window_seconds: 180.0
+
+runtime:
+  sample_fps: 1.0
+  frames_per_step: 5
+  max_frames: 0
+  max_steps: 0
+  resolution: 768
+
+dataset:
+  dataset_root: dataset2
+  dataset_name: NeXTVideo
+  video_root: ""
+  frame_id_base: 0
+  image_ext: jpg
+  jpeg_quality: 95
+  overwrite_frames: false
+
+backend:
+  backend: vllm
+  model: /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm
+  base_url: http://127.0.0.1:8000/v1
+  api_key: EMPTY
+  api_key_env: ""
+  max_tokens: 2048
+  temperature: 0.3
+  top_p: 0.95
+  timeout_seconds: 120.0
+  image_quality: 85
+  max_retries: 2
+  retry_backoff_seconds: 1.0
+  retry_backoff_multiplier: 2.0
+
+trace:
+  output_root: outputs/data_cleaning_0510/traces
+  experiment_name: dataset2_cleaning
+  write_jsonl: true
+
+benchmark_args:
+  dataset_path: dataset2/NeXTVideo
+  require_options: true
+  task: ""
+  limit: 0
+
+batch:
+  workers: 16
+  endpoints:
+    - http://127.0.0.1:8000/v1
+    - http://127.0.0.1:8001/v1
+    - http://127.0.0.1:8002/v1
+    - http://127.0.0.1:8003/v1
+    - http://127.0.0.1:8004/v1
+    - http://127.0.0.1:8005/v1
+    - http://127.0.0.1:8006/v1
+    - http://127.0.0.1:8007/v1
+  limit: 0
+  output: outputs/data_cleaning_0510/dataset2/annotations_with_pass_count.jsonl
+  worker_log_dir: outputs/data_cleaning_0510/dataset2/worker_logs

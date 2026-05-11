@@ -17,13 +17,13 @@ The model speaks a small XML protocol:
 ```xml
 <state>...</state>
 <answer>...</answer>
-<note t="..."></note>
-<bridge t="...">...</bridge>
+<anchor t="..."></anchor>
+<delta t="...">...</delta>
 ```
 
 - `state`: current-step summary used before answering. It is not committed to Memory.
-- `note`: visual anchor. It stores one current frame as evidence for future steps.
-- `bridge`: text summary between notes, or across a note/window gap.
+- `anchor`: visual anchor. It stores one current frame as evidence for future steps.
+- `delta`: text summary between anchors, or across an anchor/window gap.
 - `answer`: emitted only when the active QA should be answered or updated.
 
 The core runtime package is `streamweave/`. Evaluation, SFT, and RL all reuse the same prompt/parser/quality/memory logic, but differ in how model outputs are generated and accepted.
@@ -63,7 +63,7 @@ Important files:
 - `streamweave/parser.py`: strict XML parser and lenient repair parser.
 - `streamweave/quality.py`: format/timing/open-tail/gap validation and reward feature bits.
 - `streamweave/postprocess.py`: deterministic repair for eval/RL and retry feedback for synthesis.
-- `streamweave/memory.py`: note/bridge/QA memory, eviction, open-tail detection, memory rendering.
+- `streamweave/memory.py`: anchor/delta/QA memory, eviction, open-tail detection, memory rendering.
 - `streamweave/env.py`: state machine around memory, prompt building, validation/repair, and commit.
 - `streamweave/rollout.py`: single-sample inference loop.
 - `streamweave/frame_store.py`: extracted-frame loading/extraction and frame manifest validation.
@@ -79,14 +79,14 @@ The runtime state machine is `StreamWeaveEnv`:
    - either repairs for execution or applies raw valid action;
    - drops answers when no question exists.
 3. `commit(applied)`
-   - replaces open-tail bridge when needed;
-   - appends bridges, notes, and answers to memory.
+   - replaces open-tail delta when needed;
+   - appends deltas, anchors, and answers to memory.
 
 Memory policies live in `streamweave/policies.py`:
 
-- `streamweave/full/note_bridge`: read notes and bridges, use open-tail.
-- `note_only/keyframe_only`: do not read bridges, no open-tail.
-- `bridge_only`: read bridges but not note images.
+- `streamweave/full/anchor_delta`: read anchors and deltas, use open-tail (`note_bridge` remains as a legacy alias).
+- `anchor_only/keyframe_only`: do not read deltas, no open-tail (`note_only` remains as a legacy alias).
+- `delta_only`: read deltas but not anchor images (`bridge_only` remains as a legacy alias).
 - `recent_frames`: ignore memory and show recent frames instead.
 - `no_memory/none`: no memory read, but still commit outputs.
 
@@ -132,7 +132,7 @@ evaluation/eval_ovo.py or eval_streamingbench.py
 4. Splits frames with `runtime.frames_per_step`.
 5. For each step:
    - injects questions whose timestamp falls into current frames;
-   - evicts old note images by `memory.window_seconds`;
+   - evicts old anchor images by `memory.window_seconds`;
    - builds prompt;
    - calls backend once;
    - validates/repairs output;
@@ -163,7 +163,7 @@ Evaluation adapters:
   - loads StreamingBench JSON by split.
   - scores option-letter tasks; proactive output has no numeric score.
 - `evaluation/rollout_metrics.py`
-  - counts notes, bridges, repairs, backend attempts, retry errors, reward means.
+  - counts anchors/deltas through the legacy internal note/bridge fields, repairs, backend attempts, retry errors, reward means.
 
 ## Parser, Quality, And Repair Rules
 
@@ -171,28 +171,28 @@ Strict validation (`streamweave/parser.py`) requires:
 
 - exactly one `<state>` and one `<answer>`;
 - output starts with `<state>` then `<answer>`;
-- all later tags are `<note>` or `<bridge>`;
-- notes use paired tags with only a `t` attribute, not self-closing tags;
+- all later tags are `<anchor>` or `<delta>`;
+- anchors use paired tags with only a `t` attribute, not self-closing tags;
 - no text outside allowed XML tags;
 - at least one observation tag.
 
 Quality checks (`streamweave/quality.py`) add:
 
-- note time matches exactly one current frame;
-- bridge text is non-empty;
-- bridge time is inside current step unless it is the first open-tail bridge;
+- anchor time matches exactly one current frame;
+- delta text is non-empty;
+- delta time is inside current step unless it is the first open-tail delta;
 - events are chronological and non-overlapping;
-- bridge gaps exactly match required gaps between note/window boundaries;
-- open-tail memory requires the first current event to be a bridge inheriting the original start time.
+- delta gaps exactly match required gaps between anchor/window boundaries;
+- open-tail memory requires the first current event to be a delta inheriting the original start time.
 
 Repair (`streamweave/postprocess.py`) is intentionally deterministic:
 
 - extracts usable tags with lenient parser;
-- matches note times to current frames and normalizes to the exact frame interval;
-- clamps bridges into current step;
-- fixes open-tail bridge start;
-- drops empty/invalid bridges and out-of-window notes;
-- can recover some malformed note tags.
+- matches anchor times to current frames and normalizes to the exact frame interval;
+- clamps deltas into current step;
+- fixes open-tail delta start;
+- drops empty/invalid deltas and out-of-window anchors;
+- can recover some malformed anchor tags.
 
 SFT uses raw-valid output; eval/RL usually run with repair enabled.
 
@@ -260,8 +260,8 @@ run_parallel_pipeline.py
 
 SFT-only constraints in `data_engine/sft/constraints.py` and `data_engine/sft/rollout_sft.py`:
 
-- `apply_note_count_constraint()` limits each step to `max_notes_per_step` notes, default 1.
-- `note_reminder_context()` can add a soft reminder when no recent note exists.
+- `apply_note_count_constraint()` limits each step to `max_notes_per_step` anchors, default 1.
+- `note_reminder_context()` can add a soft reminder when no recent anchor exists.
 - `apply_qa_answer_constraints()` enforces answer scheduling:
   - no question: empty answer;
   - already answered: empty answer;
@@ -348,7 +348,7 @@ RL/scripts/run_smoke.sh
 Retained launchers:
 
 ```bash
-RL/scripts/train_grpo_ovo_8gpu.sh
+RL/scripts/train_grpo.sh
 RL/scripts/train_ppo.sh data.train_files=/path/to/train.parquet data.val_files=/path/to/val.parquet
 ```
 
@@ -363,9 +363,9 @@ legacy long-name 8GPU GRPO launcher
 High-level RL flow:
 
 ```text
-RL/scripts/train_grpo*.sh
+RL/scripts/train_grpo.sh
   -> export STREAMWEAVE_RL_DIR and PYTHONPATH
-  -> python -m verl.trainer.main_ppo --config-name=grpo_stepwise
+  -> python -m verl.trainer.main_ppo --config-name=streamweave_stepwise
   -> RL/verl/verl/trainer/main_ppo.py
      -> import streamweave_rl when StreamWeave config is detected
      -> RayPPOTrainer
@@ -378,16 +378,10 @@ RL/scripts/train_grpo*.sh
 
 RL config files:
 
-- `RL/configs/grpo_stepwise.yaml`
-  - custom dataset class;
-  - `algorithm.adv_estimator=streamweave_stepwise_traj_grpo`;
-  - `critic.enable=false`;
-  - rollout `n=8`;
-  - multi-turn agent loop enabled.
-- `RL/configs/ppo_stepwise.yaml`
-  - `algorithm.adv_estimator=streamweave_stepwise_gae`;
-  - critic enabled;
-  - rollout `n=1`.
+- `RL/configs/streamweave_stepwise.yaml`
+  - shared StreamWeave stepwise dataset, runtime, memory, reward schema, agent loop, and trainer defaults;
+  - current default reward weights, judge defaults, batch sizes, and vLLM/FSDP defaults live here;
+  - launch scripts set concrete dataset/model/run paths and enable experiment-specific switches such as GRPO/PPO, judge, and DAPO.
 - `RL/configs/streamweave_agent_stepwise.yaml`
   - registers `streamweave_agent` to `streamweave_rl.agent_loop_stepwise.StreamWeaveAgentLoop`.
 
@@ -515,9 +509,9 @@ success_scorer=auto
 
 ### RL Advantages
 
-`RL/streamweave_rl/advantage.py` registers two custom estimators into verl:
+`RL/streamweave_rl/advantage.py` registers custom estimators into verl:
 
-- `streamweave_stepwise_gae`
+- `streamweave_stepwise_ppo_gae`
   - groups by `(group_idx, traj_idx, turn_idx)`;
   - runs GAE over turn-level rewards within each trajectory;
   - writes returns only at final valid token of each response;
@@ -565,11 +559,11 @@ dataset/<dataset_name>/video/<video_id>/manifest.json
 
 - Prompt wording: `streamweave/prompts.py`.
 - XML grammar/strictness: `streamweave/parser.py`.
-- note/bridge timing/open-tail reward: `streamweave/quality.py`.
+- anchor/delta timing/open-tail reward: `streamweave/quality.py`.
 - eval/RL repair behavior: `streamweave/postprocess.py`.
 - inference loop behavior: `streamweave/rollout.py`.
 - OVO loading/scoring: `evaluation/ovo_adapter.py`.
-- SFT note-count/QA constraints: `data_engine/sft/constraints.py` and `data_engine/sft/rollout_sft.py`.
+- SFT anchor-count/QA constraints: `data_engine/sft/constraints.py` and `data_engine/sft/rollout_sft.py`.
 - SFT export prompt or image placeholders: `data_engine/sft/export_llamafactory.py`.
 - RL dataset row normalization: `RL/streamweave_rl/dataset.py`.
 - RL environment reward/step behavior: `RL/streamweave_rl/env.py` and `RL/streamweave_rl/rewards.py`.
@@ -583,7 +577,7 @@ Parser/runtime package import:
 ```bash
 python - <<'PY'
 from streamweave.parser import strict_validate_raw_output
-raw = '<state>x</state><answer></answer><bridge t="0.0-1.0">x</bridge>'
+raw = '<state>x</state><answer></answer><delta t="0.0-1.0">x</delta>'
 print(strict_validate_raw_output(raw).parser_ok)
 PY
 ```

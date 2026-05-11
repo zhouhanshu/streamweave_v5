@@ -10,8 +10,8 @@ from streamweave.schemas import BackendResult, ContentItem
 
 FRAME_RE = re.compile(r'<frame\s+t="([0-9.]+)-([0-9.]+)">')
 OBS_RE = re.compile(
-    r'<note\b[^>]*\bt="(?P<note_t>[^"]+)"[^>]*>'
-    r'|<bridge\b[^>]*\bt="(?P<bridge_t>[^"]+)"[^>]*>',
+    r'<anchor\b[^>]*\bt="(?P<anchor_t>[^"]+)"[^>]*>'
+    r'|<delta\b[^>]*\bt="(?P<delta_t>[^"]+)"[^>]*>',
     flags=re.DOTALL,
 )
 ACTIVE_Q_RE = re.compile(r'<qa\s+t="[^"]+"\s+role="q">')
@@ -55,15 +55,15 @@ class MockBackend(BaseBackend):
             output = (
                 "<state>The current frames include an active question, and the mock backend returns a placeholder answer for validation.</state>\n"
                 "<answer>A</answer>\n"
-                f'<bridge t="{bridge_start}-{bridge_end}">Mock bridge for the current frames.</bridge>'
+                f'<delta t="{bridge_start}-{bridge_end}">Mock delta for the current frames.</delta>'
             )
         else:
             if open_tail_start is not None:
-                observation = f'<bridge t="{open_tail_start}-{bridge_end}">Mock bridge extends the open memory tail.</bridge>'
+                observation = f'<delta t="{open_tail_start}-{bridge_end}">Mock delta extends the open memory tail.</delta>'
             else:
-                observation = f'<note t="{start}-{end}"></note>'
+                observation = f'<anchor t="{start}-{end}"></anchor>'
                 if float(bridge_end) > float(end):
-                    observation += f'\n<bridge t="{end}-{bridge_end}">Mock bridge after the current anchor frame.</bridge>'
+                    observation += f'\n<delta t="{end}-{bridge_end}">Mock delta after the current anchor frame.</delta>'
             output = (
                 "<state>The current frames are observed without an active question, so the mock backend keeps the answer empty.</state>\n"
                 "<answer></answer>\n"
@@ -95,14 +95,14 @@ def _open_tail_bridge_start(memory: str) -> str | None:
     last_kind = ""
     last_bridge_start: str | None = None
     for match in OBS_RE.finditer(memory):
-        if match.group("note_t") is not None:
+        if match.group("anchor_t") is not None:
             last_kind = "note"
             last_bridge_start = None
             continue
-        bridge_t = match.group("bridge_t")
-        if bridge_t is None:
+        delta_t = match.group("delta_t")
+        if delta_t is None:
             continue
-        start = bridge_t.split("-", 1)[0].strip()
+        start = delta_t.split("-", 1)[0].strip()
         if not start:
             continue
         last_kind = "bridge"

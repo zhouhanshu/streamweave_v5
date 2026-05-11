@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import json
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -31,6 +33,7 @@ from .constraints import (
 )
 from .io_utils import JsonDict, media_path
 from .schemas import FrameRef as PlanFrameRef
+from .schemas import QueryPlan
 from .schemas import SamplePlan
 from .timing import (
     group_frames,
@@ -52,9 +55,10 @@ class SFTSynthesisConfig:
     max_attempts: int = 3
     max_notes_per_step: int = 1
     bridge_note_reminder_seconds: float = 20.0
-    answer_step_rollouts: int = 5
+    answer_step_rollouts: int = 2
     answer_step_temperature: float = 0.3
     answer_step_top_p: float = 0.95
+    open_answer_semantic_judge: bool = True
 
 
 @dataclass(slots=True)
@@ -99,14 +103,24 @@ def iter_sft_sample_records(
     profile = _prompt_profile(config.prompt_type)
     reward_config = RewardConfig()
     for sample in samples:
-        yield _run_sft_sample(
-            sample=sample,
-            backend=backend,
-            config=config,
-            policy=policy,
-            profile=profile,
-            reward_config=reward_config,
-        )
+        if _is_multi_qa_sample(sample):
+            yield _run_multi_qa_sft_sample(
+                sample=sample,
+                backend=backend,
+                config=config,
+                policy=policy,
+                profile=profile,
+                reward_config=reward_config,
+            )
+        else:
+            yield _run_sft_sample(
+                sample=sample,
+                backend=backend,
+                config=config,
+                policy=policy,
+                profile=profile,
+                reward_config=reward_config,
+            )
 
 
 def iter_sft_steps(
@@ -166,7 +180,13 @@ def _run_sft_sample(
             break
 
     all_steps_valid = failure_step_index is None and len(steps) == len(groups) and all(not row.get("task_failed") for row in steps)
-    answer_check = check_sample_answer(sample, steps) if all_steps_valid else check_sample_answer(sample, steps)
+    answer_check = check_sample_answer(sample, steps)
+    answer_check = _maybe_judge_open_answer(
+        sample=sample,
+        answer_check=answer_check,
+        backend=backend,
+        enabled=config.open_answer_semantic_judge and all_steps_valid,
+    )
     answer_correct = bool(answer_check.get("answer_correct"))
     usable_for_sft = all_steps_valid and answer_correct
     if usable_for_sft:
@@ -200,6 +220,346 @@ def _run_sft_sample(
         },
         "steps": steps,
     }
+
+
+def _is_multi_qa_sample(sample: SamplePlan) -> bool:
+    qa_list = sample.metadata.get("qa_list")
+    return bool(sample.metadata.get("is_multi_qa")) and isinstance(qa_list, list) and bool(qa_list)
+
+
+def _run_multi_qa_sft_sample(
+    *,
+    sample: SamplePlan,
+    backend: BaseBackend,
+    config: SFTSynthesisConfig,
+    policy,
+    profile: str,
+    reward_config: RewardConfig,
+) -> JsonDict:
+    qa_list = [item for item in sample.metadata.get("qa_list") or [] if isinstance(item, dict)]
+    env = StreamWeaveEnv(
+        prompt_profile=profile,
+        policy=policy,
+        memory_window=config.memory_window,
+        extra_context=str(sample.metadata.get("teacher_context", "")),
+    )
+    frames = truncate_plan_frames_at_timestamp(sample.frames, sample_target_timestamp(sample))
+    groups = list(group_frames(frames, config.frames_per_step))
+    if config.max_steps:
+        groups = groups[: config.max_steps]
+    if not groups:
+        return _multi_qa_failure_record(sample, failure_reason="empty_frame_groups")
+
+    prefix_steps: list[JsonDict] = []
+    failure_step_index = None
+    failure_reason = ""
+    prefix_groups = groups[:-1]
+    for step_index, group in enumerate(prefix_groups):
+        env.evict_memory(group[-1].end_time)
+        row = _run_sft_step(
+            sample=sample,
+            env=env,
+            backend=backend,
+            group=group,
+            step_index=step_index,
+            config=config,
+            reward_config=reward_config,
+        )
+        prefix_steps.append(row)
+        if row.get("task_failed"):
+            failure_step_index = step_index
+            failure_reason = str(row.get("failure_reason") or "synthesis_prefix_step_failed")
+            break
+
+    prefix_valid = failure_step_index is None and len(prefix_steps) == len(prefix_groups) and all(
+        not row.get("task_failed") for row in prefix_steps
+    )
+    qa_results: list[JsonDict] = []
+    accepted_branch_steps: list[JsonDict] = []
+    final_group = groups[-1]
+    final_step_index = len(groups) - 1
+
+    if prefix_valid:
+        for qa_index, qa in enumerate(qa_list):
+            qa_sample = _multi_qa_branch_sample(sample, qa, qa_index, final_group)
+            branch_env = copy.deepcopy(env)
+            branch_env.add_question(
+                QARecord(
+                    timestamp=float(qa_sample.query_time or final_group[-1].end_time),
+                    text=qa_sample.question_text,
+                    role="q",
+                )
+            )
+            branch_env.evict_memory(final_group[-1].end_time)
+            row = _run_sft_step(
+                sample=qa_sample,
+                env=branch_env,
+                backend=backend,
+                group=final_group,
+                step_index=final_step_index,
+                config=config,
+                reward_config=reward_config,
+            )
+            answer_check = check_sample_answer(qa_sample, [*prefix_steps, row]) if not row.get("task_failed") else {}
+            answer_check = _maybe_judge_open_answer(
+                sample=qa_sample,
+                answer_check=answer_check,
+                backend=backend,
+                enabled=config.open_answer_semantic_judge and not row.get("task_failed"),
+            )
+            answer_correct = bool(answer_check.get("answer_correct"))
+            if answer_correct:
+                accepted_branch_steps.append(row)
+            qa_results.append(
+                {
+                    "qa_index": qa_index,
+                    "qa_id": qa_sample.qa_id,
+                    "sample_id": qa_sample.sample_id,
+                    "task_failed": bool(row.get("task_failed")),
+                    "failure_reason": row.get("failure_reason", ""),
+                    "answer_correct": answer_correct,
+                    "answer_check": answer_check,
+                    "exported_for_sft": answer_correct,
+                }
+            )
+
+    accepted_qa_count = len(accepted_branch_steps)
+    usable_for_sft = bool(prefix_valid and accepted_qa_count > 0)
+    if usable_for_sft:
+        status = "accepted"
+    else:
+        status = "failed"
+        if not failure_reason:
+            failure_reason = "no_correct_multi_qa_branch" if prefix_valid else "sample_validation_failed"
+
+    steps = [*prefix_steps, *accepted_branch_steps] if usable_for_sft else prefix_steps
+    return {
+        "sample_id": sample.sample_id,
+        "video_id": sample.video_id,
+        "qa_id": sample.qa_id,
+        "question_type": sample.task,
+        "status": status,
+        "usable_for_sft": usable_for_sft,
+        "answer_correct": usable_for_sft,
+        "failure_reason": failure_reason,
+        "failure_step_index": failure_step_index,
+        "num_steps": len(steps),
+        "num_expected_steps": len(prefix_groups) + len(qa_list),
+        "checks": {
+            "all_steps_valid": prefix_valid and accepted_qa_count == len(qa_list),
+            "prefix_valid": prefix_valid,
+            "no_empty_target": all(bool(str(row.get("target_xml") or "").strip()) for row in steps) if steps else False,
+            "answer_correct": usable_for_sft,
+            "accepted_qa_count": accepted_qa_count,
+            "qa_count": len(qa_list),
+            "qa_results": qa_results,
+        },
+        "metadata": {
+            "answer_time": sample.answer_time,
+            "annotation": sample.metadata,
+            "is_multi_qa": True,
+            "qa_count": len(qa_list),
+            "accepted_qa_count": accepted_qa_count,
+        },
+        "steps": steps,
+    }
+
+
+def _multi_qa_failure_record(sample: SamplePlan, *, failure_reason: str) -> JsonDict:
+    return {
+        "sample_id": sample.sample_id,
+        "video_id": sample.video_id,
+        "qa_id": sample.qa_id,
+        "question_type": sample.task,
+        "status": "failed",
+        "usable_for_sft": False,
+        "answer_correct": False,
+        "failure_reason": failure_reason,
+        "failure_step_index": None,
+        "num_steps": 0,
+        "num_expected_steps": len(sample.metadata.get("qa_list") or []),
+        "checks": {
+            "all_steps_valid": False,
+            "prefix_valid": False,
+            "answer_correct": False,
+            "accepted_qa_count": 0,
+            "qa_count": len(sample.metadata.get("qa_list") or []),
+            "qa_results": [],
+        },
+        "metadata": {
+            "answer_time": sample.answer_time,
+            "annotation": sample.metadata,
+            "is_multi_qa": True,
+        },
+        "steps": [],
+    }
+
+
+def _multi_qa_branch_sample(
+    sample: SamplePlan,
+    qa: JsonDict,
+    qa_index: int,
+    final_group: list[PlanFrameRef],
+) -> SamplePlan:
+    qa_id = _qa_id(qa, qa_index)
+    timestamp = _qa_timestamp(sample, qa, final_group)
+    question = str(qa.get("query_text") or qa.get("question") or "").strip()
+    task = str(qa.get("task") or sample.metadata.get("task") or sample.task or "backward").strip()
+    metadata = dict(sample.metadata)
+    metadata.update(dict(qa))
+    metadata.update(
+        {
+            "is_multi_qa_branch": True,
+            "qa_id": qa_id,
+            "qa_index": qa_index,
+            "question": qa.get("question") or question,
+            "query_text": question,
+            "raw_annotation": dict(qa),
+            "query_timestamp": timestamp,
+            "target_timestamp": timestamp,
+            "task": task,
+        }
+    )
+    return SamplePlan(
+        sample_id=f"{sample.sample_id}_{_safe_id(qa_id)}",
+        video_id=sample.video_id,
+        qa_id=qa_id,
+        task=task,
+        query_events=[QueryPlan(text=question, timestamp=timestamp)] if question else [],
+        question_text=question,
+        query_time=timestamp,
+        answer_time=timestamp,
+        frames=sample.frames,
+        metadata=metadata,
+    )
+
+
+def _qa_timestamp(sample: SamplePlan, qa: JsonDict, final_group: list[PlanFrameRef]) -> float:
+    for key in ("target_timestamp", "realtime", "query_timestamp", "ask_time", "clue_time", "answer_time"):
+        if key in qa and qa[key] is not None:
+            return float(qa[key])
+    for key in ("target_timestamp", "realtime", "query_timestamp"):
+        if key in sample.metadata and sample.metadata[key] is not None:
+            return float(sample.metadata[key])
+    return float(final_group[-1].end_time if final_group else 0.0)
+
+
+def _qa_id(qa: JsonDict, qa_index: int) -> str:
+    for key in ("qa_id", "sample_id", "source_annotation_id"):
+        value = str(qa.get(key) or "").strip()
+        if value:
+            return value
+    return f"qa_{qa_index:04d}"
+
+
+def _safe_id(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("._")
+    return safe or "qa"
+
+
+def _maybe_judge_open_answer(
+    *,
+    sample: SamplePlan,
+    answer_check: JsonDict,
+    backend: BaseBackend,
+    enabled: bool,
+) -> JsonDict:
+    if not enabled or bool(answer_check.get("answer_correct")):
+        return answer_check
+    if not _open_answer_check_needs_judge(answer_check):
+        return answer_check
+    if not _backend_supports_text_judge(backend):
+        return answer_check
+
+    model_answers = [item for item in answer_check.get("model_answers") or [] if isinstance(item, dict)]
+    if not model_answers:
+        return answer_check
+    model_answer = str(model_answers[-1].get("answer") or "").strip()
+    expected_answer = str(answer_check.get("expected_answer") or "").strip()
+    if not model_answer or not expected_answer:
+        return answer_check
+
+    prompt = _open_answer_judge_prompt(
+        question=_sample_question_text(sample),
+        expected_answer=expected_answer,
+        model_answer=model_answer,
+    )
+    out = dict(answer_check)
+    try:
+        result = backend.generate(
+            [ContentItem("text", text=prompt)],
+            generate_kwargs={"temperature": 0.0, "top_p": 1.0, "max_output_tokens": 256},
+        )
+    except Exception as exc:
+        out["semantic_judge"] = {"used": True, "accepted": False, "error": _short_error(exc)}
+        return out
+
+    accepted = _parse_semantic_judge_result(result.text)
+    out["semantic_judge"] = {
+        "used": True,
+        "accepted": accepted,
+        "raw_output": result.text,
+        "backend_result": asdict(result),
+    }
+    if accepted:
+        out["answer_correct"] = True
+        out["reason"] = "open-ended answer accepted by semantic judge"
+    return out
+
+
+def _open_answer_check_needs_judge(answer_check: JsonDict) -> bool:
+    if not answer_check.get("applicable"):
+        return False
+    if str(answer_check.get("expected_letter") or "").strip():
+        return False
+    options = answer_check.get("options")
+    if isinstance(options, list) and options:
+        return False
+    return bool(str(answer_check.get("expected_answer") or "").strip())
+
+
+def _backend_supports_text_judge(backend: BaseBackend) -> bool:
+    return "mock" not in backend.__class__.__name__.lower()
+
+
+def _sample_question_text(sample: SamplePlan) -> str:
+    for key in ("query_text", "question"):
+        value = str(sample.metadata.get(key) or "").strip()
+        if value:
+            return value
+    return sample.question_text
+
+
+def _open_answer_judge_prompt(*, question: str, expected_answer: str, model_answer: str) -> str:
+    return (
+        "You are checking a video question-answering training label.\n"
+        "Decide whether the model answer is semantically equivalent to the reference answer for the question.\n"
+        "Accept concise paraphrases and answers with extra correct details.\n"
+        "Reject refusals, contradictions, different events, or answers that miss the key point.\n"
+        "Return JSON only: {\"equivalent\": true} or {\"equivalent\": false}.\n\n"
+        f"Question: {question}\n"
+        f"Reference answer: {expected_answer}\n"
+        f"Model answer: {model_answer}\n"
+    )
+
+
+def _parse_semantic_judge_result(text: str) -> bool:
+    raw = str(text or "").strip()
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+        if match is None:
+            return bool(re.search(r"\btrue\b", raw, flags=re.IGNORECASE)) and not re.search(
+                r"\bfalse\b", raw, flags=re.IGNORECASE
+            )
+        try:
+            value = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return False
+    if isinstance(value, dict):
+        return bool(value.get("equivalent"))
+    return False
 
 
 def _run_sft_step(

@@ -6,7 +6,7 @@ This note records the recent StreamWeave RL changes made while debugging the slo
 
 All changes are limited to:
 
-- `RL/scripts/train_grpo_ovo_8gpu.sh`
+- `RL/scripts/train_grpo.sh`
 - `RL/verl/verl/trainer/ppo/core_algos.py`
 - `RL/verl/verl/trainer/ppo/ray_trainer.py`
 - `RL/verl/verl/workers/actor/dp_actor.py`
@@ -18,7 +18,7 @@ No files outside `streamweave_v5/RL` were changed for this step.
 
 File:
 
-- `RL/scripts/train_grpo_ovo_8gpu.sh`
+- `RL/scripts/train_grpo.sh`
 
 This launcher has since been consolidated into the shorter 8GPU GRPO entrypoint.
 
@@ -195,7 +195,7 @@ The next run should verify:
 
 Compared files:
 
-- StreamWeave current script: `RL/scripts/train_grpo_ovo_8gpu.sh`
+- StreamWeave current script: `RL/scripts/train_grpo.sh`
 - VAGEN reference script: `/mmu_mllm_hdd/zhouhanshu/test/VAGEN/examples/train/sokoban/train_grpo_qwen3vl4b.sh`
 
 Important settings now aligned:
@@ -230,7 +230,7 @@ Remaining major differences:
 | Area | StreamWeave current script | VAGEN Sokoban script | Note |
 | --- | --- | --- | --- |
 | Entry point | `python -m verl.trainer.main_ppo` | `python3 -m vagen.main_ppo` | Different framework wrapper and config stack. |
-| Base config | `configs/grpo_stepwise.yaml` | `vagen/configs/vagen_multiturn.yaml` | StreamWeave uses stepwise rollout/reward logic. |
+| Base config | `configs/streamweave_stepwise.yaml` | `vagen/configs/vagen_multiturn.yaml` | StreamWeave uses stepwise rollout/reward logic; experiment-specific GRPO settings live in launcher scripts. |
 | Dataset | OVO JSON via `StreamWeaveAgentDataset` | Sokoban YAML via `AgenticDataset` | Task semantics differ. |
 | Model | Qwen3-VL-8B StreamWeave SFT checkpoint | `Qwen/Qwen3-VL-4B-Instruct` | StreamWeave model is larger and already SFT-tuned. |
 | GPUs | 8 | 4 | StreamWeave uses more GPUs but also a larger model/context. |

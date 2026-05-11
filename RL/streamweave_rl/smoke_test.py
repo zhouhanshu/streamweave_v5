@@ -74,19 +74,19 @@ def main() -> None:
 
     cfg = StreamWeaveRewardConfig()
     assert cfg.w_format == 0.1
-    assert cfg.w_step == 0.2
-    assert cfg.w_success == 0.7
-    assert cfg.note_frequency_weight == 0.3
-    assert cfg.judge_weight == 0.7
-    assert cfg.score_scale == 2.0
-    assert compute_success_score("cutting onion", "onion") == 2.0
+    assert cfg.w_step == 0.1
+    assert cfg.w_success == 0.8
+    assert cfg.note_frequency_weight == 1.0
+    assert cfg.judge_weight == 1.0
+    assert cfg.score_scale == 1.0
+    assert compute_success_score("cutting onion", "onion") == 1.0
     one_note = ModelAction(
         state="state",
         answer="",
         events=[ModelEvent(kind="note", start_time=0.0, end_time=1.0)],
     )
     score, streak, reasons = compute_note_frequency_score(action=one_note, previous_no_note_streak=2, cfg=cfg)
-    assert score == 2.0 and streak == 0 and reasons == []
+    assert score == 1.0 and streak == 0 and reasons == []
 
     stale_no_note = ModelAction(
         state="state",
@@ -113,9 +113,9 @@ def main() -> None:
         ctx={"action": one_note, "previous_no_note_streak": 0},
         total_steps=5,
     )
-    assert reward.format_score == 2.0
-    assert reward.note_frequency_score == 2.0
-    assert reward.step_score == 2.0
+    assert reward.format_score == 1.0
+    assert reward.note_frequency_score == 1.0
+    assert reward.step_score == 1.0
 
     judge_cfg = StreamWeaveRewardConfig(judge=JudgeConfig(enable=True))
     judge_reward = compute_step_reward(
@@ -124,9 +124,9 @@ def main() -> None:
         ctx={"action": one_note, "previous_no_note_streak": 0, "judge_result": JudgeResult(score=0.5, status="ok")},
         total_steps=1,
     )
-    assert judge_reward.note_frequency_score == 2.0
-    assert judge_reward.judge_score == 1.0
-    assert abs(judge_reward.step_score - 1.3) < 1e-6
+    assert judge_reward.note_frequency_score == 1.0
+    assert judge_reward.judge_score == 0.5
+    assert judge_reward.step_score == 0.5
     blocked_judge_reward = compute_step_reward(
         quality=QualityReport(valid=True, parser_ok=True, metrics={"num_notes": 2}),
         cfg=judge_cfg,

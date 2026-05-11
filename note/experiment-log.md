@@ -25,16 +25,17 @@
 - [07-key-points.md](./07-key-points.md)：关键结论和避坑。
 - [08-commands-and-tools.md](./08-commands-and-tools.md)：当前有效命令。
 - [10-source-code-current-state.md](./10-source-code-current-state.md)：当前源码实际协议、SFT/RL 实现和脚本口径。
-- [02-data-construction.md](./02-data-construction.md)、[数据合成.md](./数据合成.md)：数据构造历史，当前只作追溯。
+- [数据合成0508.md](./数据合成0508.md)、[数据清洗0510.md](./数据清洗0510.md)：数据构造历史和新数据清洗策略；旧数据构造/清洗摘要已合并进 `00-overview.md`。
+- [补充实验待办.md](./补充实验待办.md)：主线之外的补充实验 checklist。
 - [09-streamweave-proposal-draft.md](./09-streamweave-proposal-draft.md)：长期方案草稿，非当前状态依据。
 
 ### 2026-05-08 源码口径同步
 
-- 当前 `<eta>` 协议已经彻底不是主线；源码协议是 `<state>`、`<answer>`、timestamp-only `<note>`、`<bridge>`。
-- `data_engine/sft` 当前没有 `_key_frame_context()` 或 `_apply_key_frame_quality_constraints()`；SFT 硬约束是 note 数量、QA answer 空/非空时机和样本级答案正确性。
+- 当前 `<eta>` 协议已经彻底不是主线；源码协议是 `<state>`、`<answer>`、timestamp-only `<anchor>`、`<delta>`。
+- `data_engine/sft` 当前没有 `_key_frame_context()` 或 `_apply_key_frame_quality_constraints()`；SFT 硬约束是 anchor 数量、QA answer 空/非空时机和样本级答案正确性。
 - RL reward 当前是 `format + step + success`，默认 `w_format=0.1`、`w_step=0.2`、`w_success=0.7`、`score_scale=2.0`；step 内部默认 `note_frequency_weight=0.3`、`judge_weight=0.7`。
-- step score 默认来自 note frequency：每窗口最多 1 个 note，连续 3 个窗口无 note 惩罚；judge 默认关闭。
-- judge 显式开启后评估 `keyframe_selection`、`bridge_quality`、`semantic_alignment`、`state_factuality`，且被 note frequency gate 住。
+- step score 默认来自 anchor frequency：每窗口最多 1 个 anchor，连续 3 个窗口无 anchor 惩罚；judge 默认关闭。
+- judge 显式开启后评估 `keyframe_selection`、`bridge_quality`、`semantic_alignment`、`state_factuality`，且被 anchor frequency gate 住。
 - 旧 GRPO launcher 已清理；当前只保留最新 fused/chunked GRPO 入口和 PPO 入口。
 - 最新 GRPO 入口使用 `save_freq=30`、`resume_mode=auto`、`use_remove_padding=true`、`use_fused_kernels=true`、`enable_chunked_prefill=true`。
 - 详细源码事实见 `10-source-code-current-state.md`。
@@ -68,9 +69,9 @@
 
 ### 2026-05-08 answered-full SFT 训练完成，OVO 1/8 回评进行中
 
-- 训练数据：`data_engine/sft/outputs/gemini_answered_full/llamafactory_sharegpt_bridge_le20.jsonl`
+- 训练数据：`data_engine/sft/outputs/gemini_answered_full/llamafactory_sharegpt_anchor_delta_le20.jsonl`
 - 数据规模：`3956` 条 sample，`2491` 条 accepted；过滤后 `32583` 行 ShareGPT step。
-- 训练输出：`/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_answered_full`
+- 训练输出：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/SFT/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_answered_full`
 - 训练结果：`759/759` steps，`train_loss=0.181242`，`eval_loss=0.246001`，耗时约 `8:10:10`。
 - vLLM 兼容模型：`models/qwen3vl8b_streamweave_sft_answered_full_vllm`
 - OVO 1/8 评测输出：`outputs/ovo_qwen3vl8b_finetuned_1of8`

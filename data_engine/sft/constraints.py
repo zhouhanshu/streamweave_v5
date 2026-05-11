@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from difflib import SequenceMatcher
 
 from streamweave.schemas import ModelAction, QualityReport, ValidationIssue
 
@@ -12,6 +13,44 @@ from .schemas import SamplePlan
 from .timing import target_window_for_time
 
 QA_TIME_TOLERANCE = 0.51
+OPEN_ANSWER_TOKEN_F1_THRESHOLD = 0.72
+OPEN_ANSWER_CONTENT_F1_THRESHOLD = 0.62
+OPEN_ANSWER_SEQUENCE_THRESHOLD = 0.82
+OPEN_ANSWER_KEYWORD_COVERAGE_THRESHOLD = 0.55
+OPEN_ANSWER_MIN_SUBSTRING_TOKENS = 3
+OPEN_ANSWER_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "to",
+    "with",
+}
+OPEN_ANSWER_REFUSAL_PATTERNS = (
+    "can't answer",
+    "cannot answer",
+    "can not answer",
+    "unable to answer",
+    "not enough information",
+    "insufficient information",
+    "i don't know",
+    "i do not know",
+    "no ",
+)
 
 
 def note_reminder_context(latest_bridge_seconds: float | None, threshold_seconds: float) -> str:
@@ -20,8 +59,8 @@ def note_reminder_context(latest_bridge_seconds: float | None, threshold_seconds
     if latest_bridge_seconds is None or latest_bridge_seconds <= threshold_seconds:
         return ""
     return (
-        "There has not been a recent <note>. If the current frames contain useful visual evidence, "
-        "please preserve one representative current frame with a <note> as soon as possible."
+        "There has not been a recent <anchor>. If the current frames contain useful visual evidence, "
+        "please preserve one representative current frame with an <anchor> as soon as possible."
     )
 
 
@@ -46,9 +85,9 @@ def apply_note_count_constraint(
             ValidationIssue(
                 "too_many_notes_in_step",
                 (
-                    f"This step outputs {len(note_times)} notes, but at most {max_notes_per_step} note is allowed. "
-                    f"Output note time ranges: {_format_interval_keys(note_times)}. "
-                    "Retry by keeping only the single most representative current-frame note."
+                    f"This step outputs {len(note_times)} anchors, but at most {max_notes_per_step} anchor is allowed. "
+                    f"Output anchor time ranges: {_format_interval_keys(note_times)}. "
+                    "Retry by keeping only the single most representative current-frame anchor."
                 ),
             )
         )
@@ -297,7 +336,46 @@ def _answer_matches(answer: str, expected: JsonDict) -> bool:
         if letter_match and letter_match.group(1).upper() == expected_letter:
             return True
     expected_answer = _normalize_answer_text(str(expected.get("expected_answer") or ""))
-    return bool(expected_answer and answer_norm == expected_answer)
+    if not expected_answer:
+        return False
+    if expected_letter:
+        return answer_norm == expected_answer
+    return _open_answer_matches(answer_norm, expected_answer)
+
+
+def _open_answer_matches(answer_norm: str, expected_norm: str) -> bool:
+    if not answer_norm or not expected_norm:
+        return False
+    if _is_refusal_answer(answer_norm) and not _is_refusal_answer(expected_norm):
+        return False
+    if answer_norm == expected_norm:
+        return True
+
+    answer_tokens = _answer_tokens(answer_norm)
+    expected_tokens = _answer_tokens(expected_norm)
+    if len(answer_tokens) <= 2 or len(expected_tokens) <= 2:
+        return False
+
+    shorter = min(len(answer_tokens), len(expected_tokens))
+    if shorter >= OPEN_ANSWER_MIN_SUBSTRING_TOKENS and (answer_norm in expected_norm or expected_norm in answer_norm):
+        return True
+
+    sequence_ratio = SequenceMatcher(None, answer_norm, expected_norm).ratio()
+    if sequence_ratio >= OPEN_ANSWER_SEQUENCE_THRESHOLD:
+        return True
+
+    token_f1 = _token_f1(answer_tokens, expected_tokens)
+    if token_f1 >= OPEN_ANSWER_TOKEN_F1_THRESHOLD:
+        return True
+
+    answer_content = _content_tokens(answer_tokens)
+    expected_content = _content_tokens(expected_tokens)
+    content_f1 = _token_f1(answer_content, expected_content)
+    if content_f1 >= OPEN_ANSWER_CONTENT_F1_THRESHOLD and sequence_ratio >= 0.45:
+        return True
+
+    keyword_coverage = _keyword_coverage(answer_content, expected_content)
+    return bool(keyword_coverage >= OPEN_ANSWER_KEYWORD_COVERAGE_THRESHOLD)
 
 
 def _normalize_answer_text(text: str) -> str:
@@ -305,6 +383,88 @@ def _normalize_answer_text(text: str) -> str:
     text = re.sub(r"^(?:option\s*)?[a-z][).:]\s*", "", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip(" .。")
+
+
+def _answer_tokens(text: str) -> list[str]:
+    tokens = re.findall(r"[\w]+", text, flags=re.UNICODE)
+    return [token for token in tokens if token]
+
+
+def _content_tokens(tokens: list[str]) -> list[str]:
+    return [token for token in tokens if token not in OPEN_ANSWER_STOPWORDS]
+
+
+def _canonical_token(token: str) -> str:
+    token = token.lower().strip()
+    token = re.sub(r"[^a-z0-9]+", "", token)
+    if not token:
+        return ""
+    if "light" in token or token in {"illuminated", "illumination", "lit"}:
+        return "light"
+    if token.startswith("dark"):
+        return "dark"
+    if token.startswith("night"):
+        return "night"
+    if token.startswith("snow"):
+        return "snow"
+    if token.startswith("blur"):
+        return "blur"
+    if token in {"car", "cars", "vehicle", "vehicles"}:
+        return "vehicle"
+    if token in {"outdoor", "outdoors", "outside"}:
+        return "outdoor"
+    if token in {"indoor", "indoors", "inside"}:
+        return "indoor"
+    if token in {"moving", "movement", "motion", "dynamic", "shaky", "shift", "shifts", "transition", "transitions", "change", "changes"}:
+        return "motion"
+    if token in {"static", "stationary"}:
+        return "static"
+    if token in {"cold", "cool", "winter", "wintery"}:
+        return "cold"
+    if token in {"colorful", "colourful", "vibrant"}:
+        return "color"
+    for suffix in ("ing", "ed", "es", "s", "ness", "ly"):
+        if len(token) > len(suffix) + 3 and token.endswith(suffix):
+            token = token[: -len(suffix)]
+            break
+    return token
+
+
+def _keyword_coverage(answer_tokens: list[str], expected_tokens: list[str]) -> float:
+    expected = {_canonical_token(token) for token in expected_tokens}
+    answer = {_canonical_token(token) for token in answer_tokens}
+    expected.discard("")
+    answer.discard("")
+    if len(expected) < 3 or not answer:
+        return 0.0
+    return len(expected & answer) / len(expected)
+
+
+def _is_refusal_answer(text: str) -> bool:
+    lowered = text.lower()
+    if any(pattern in lowered for pattern in OPEN_ANSWER_REFUSAL_PATTERNS[:-1]):
+        return True
+    return bool(re.search(r"\bno\s+[^.]{0,40}\b(video|frame|scene|mural|evidence|information)\b", lowered))
+
+
+def _token_f1(predicted: list[str], expected: list[str]) -> float:
+    if not predicted or not expected:
+        return 0.0
+    expected_counts: dict[str, int] = {}
+    for token in expected:
+        expected_counts[token] = expected_counts.get(token, 0) + 1
+    overlap = 0
+    for token in predicted:
+        count = expected_counts.get(token, 0)
+        if count <= 0:
+            continue
+        overlap += 1
+        expected_counts[token] = count - 1
+    if overlap <= 0:
+        return 0.0
+    precision = overlap / len(predicted)
+    recall = overlap / len(expected)
+    return 2 * precision * recall / max(precision + recall, 1e-8)
 
 
 def _interval_key(start: float, end: float) -> tuple[float, float]:

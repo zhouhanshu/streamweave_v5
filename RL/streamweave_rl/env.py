@@ -13,7 +13,12 @@ from streamweave.config import DatasetConfig, MemoryConfig, RewardConfig, Runtim
 from streamweave.env import StreamWeaveEnv
 from streamweave.frame_store import FrameStore
 from streamweave.policies import make_policy
-from streamweave.rollout import _group_frames, _query_events_by_frame, _truncate_frames_at_timestamp
+from streamweave.rollout import (
+    _group_frames,
+    _query_events_by_frame,
+    _truncate_frames_at_timestamp,
+    required_frame_count_from_metadata,
+)
 from streamweave.schemas import BenchmarkSample, ContentItem, FrameRef, QARecord, QueryEvent
 
 from .judge import JudgeResult, StepJudge
@@ -86,6 +91,7 @@ class StreamWeaveRLEnv:
     async def reset(self, seed: int | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         del seed
         runtime = self.settings.runtime
+        required_count = required_frame_count_from_metadata(self.sample.metadata, self.sample.sample_id)
         try:
             self.frames = self.frame_store.load_frames(
                 dataset_name=self.settings.dataset_name,
@@ -99,6 +105,12 @@ class StreamWeaveRLEnv:
                 "StreamWeave RL expects pre-extracted frames. "
                 f"Missing frames for video_id={self.sample.video_id!r} under {frame_dir}."
             ) from exc
+        self.frames = self.frames[:required_count]
+        if len(self.frames) < required_count:
+            raise RuntimeError(
+                f"Sample {self.sample.sample_id!r} declared frame_count={required_count} "
+                f"but only {len(self.frames)} frame(s) are available on disk."
+            )
         self.frames = _truncate_frames_at_timestamp(
             self.frames,
             self.sample.metadata.get("target_timestamp"),

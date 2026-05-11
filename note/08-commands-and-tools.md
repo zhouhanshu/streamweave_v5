@@ -118,13 +118,13 @@ ovo_rl_lt120s.json       <120s 子集，293 条，当前训练使用
 
 ```text
 LLaMAFactory checkpoint:
-/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_answered_full
+/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/SFT/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_answered_full
 
 vLLM-compatible model:
 /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm
 
 training ShareGPT:
-/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/data_engine/sft/outputs/gemini_answered_full/llamafactory_sharegpt_bridge_le20.jsonl
+/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/data_engine/sft/outputs/gemini_answered_full/llamafactory_sharegpt_anchor_delta_le20.jsonl
 
 current OVO 1/8 eval output:
 /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/outputs/ovo_qwen3vl8b_finetuned_1of8
@@ -142,7 +142,7 @@ cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
 
 ```text
 SFT checkpoint:
-/mmu_mllm_hdd/zhouhanshu/test/exp3/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_v2_3077
+/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/SFT/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_v2_3077
 
 SFT 小规模合成:
 /mmu_mllm_hdd/zhouhanshu/test/exp2/streamweave_v4/data_engine/sft/outputs/gemini_final_8

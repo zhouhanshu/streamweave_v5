@@ -18,7 +18,7 @@ from streamweave.parser import strict_validate_raw_output
 
 
 DEFAULT_INPUT = Path("data_engine/sft/outputs/gemini_answered_full/llamafactory_sharegpt.jsonl")
-BRIDGE_RE = re.compile(r'<bridge\s+t="(?P<t>[^"]+)">(?P<text>.*?)</bridge>', flags=re.DOTALL)
+DELTA_RE = re.compile(r'<delta\s+t="(?P<t>[^"]+)">(?P<text>.*?)</delta>', flags=re.DOTALL)
 ANSWER_RE = re.compile(r"<answer>(?P<answer>.*?)</answer>", flags=re.DOTALL)
 
 
@@ -40,13 +40,13 @@ def inspect_sharegpt(path: Path, *, bridge_threshold: float, max_examples: int) 
         "missing_answer_tag": 0,
         "format_error_rows": 0,
         "sharegpt_structure_error_rows": 0,
-        "bridge_over_threshold_rows": 0,
-        "bridge_over_threshold_count": 0,
-        "max_bridge_duration": 0.0,
+        "delta_over_threshold_rows": 0,
+        "delta_over_threshold_count": 0,
+        "max_delta_duration": 0.0,
         "format_issue_counts": Counter(),
         "examples": {
             "format_errors": [],
-            "long_bridges": [],
+            "long_deltas": [],
             "structure_errors": [],
         },
     }
@@ -100,20 +100,20 @@ def inspect_sharegpt(path: Path, *, bridge_threshold: float, max_examples: int) 
                     },
                 )
 
-            long_bridges = long_bridge_items(target_xml, threshold=bridge_threshold)
-            if long_bridges:
-                stats["bridge_over_threshold_rows"] += 1
-                stats["bridge_over_threshold_count"] += len(long_bridges)
-                stats["max_bridge_duration"] = max(
-                    float(stats["max_bridge_duration"]),
-                    max(item["duration"] for item in long_bridges),
+            long_deltas = long_bridge_items(target_xml, threshold=bridge_threshold)
+            if long_deltas:
+                stats["delta_over_threshold_rows"] += 1
+                stats["delta_over_threshold_count"] += len(long_deltas)
+                stats["max_delta_duration"] = max(
+                    float(stats["max_delta_duration"]),
+                    max(item["duration"] for item in long_deltas),
                 )
                 add_example(
-                    stats["examples"]["long_bridges"],
+                    stats["examples"]["long_deltas"],
                     max_examples,
                     {
                         "line": line_no,
-                        "bridges": long_bridges[:3],
+                        "deltas": long_deltas[:3],
                         "answer": answer_match.group("answer").strip() if answer_match else "",
                         "num_images": len(images),
                         "num_image_placeholders": user_content.count("<image>"),
@@ -161,7 +161,7 @@ def extract_row_content(row: dict[str, Any]) -> tuple[str, str, list[str], list[
 
 def long_bridge_items(target_xml: str, *, threshold: float) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for match in BRIDGE_RE.finditer(target_xml):
+    for match in DELTA_RE.finditer(target_xml):
         interval = parse_interval(match.group("t"))
         if interval is None:
             continue
@@ -208,9 +208,9 @@ def print_report(report: dict[str, Any], *, bridge_threshold: float) -> None:
     print(f"format_error_rows: {report['format_error_rows']}")
     print(f"sharegpt_structure_error_rows: {report['sharegpt_structure_error_rows']}")
     print(
-        f"bridges_longer_than_{bridge_threshold:g}s: "
-        f"rows={report['bridge_over_threshold_rows']} count={report['bridge_over_threshold_count']} "
-        f"max_duration={report['max_bridge_duration']:.3f}"
+        f"deltas_longer_than_{bridge_threshold:g}s: "
+        f"rows={report['delta_over_threshold_rows']} count={report['delta_over_threshold_count']} "
+        f"max_duration={report['max_delta_duration']:.3f}"
     )
     if report["format_issue_counts"]:
         print("format_issue_counts:")
@@ -228,7 +228,7 @@ def print_report(report: dict[str, Any], *, bridge_threshold: float) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", nargs="?", type=Path, default=DEFAULT_INPUT)
-    parser.add_argument("--bridge-threshold", type=float, default=20.0)
+    parser.add_argument("--delta-threshold", "--bridge-threshold", dest="bridge_threshold", type=float, default=20.0)
     parser.add_argument("--max-examples", type=int, default=10)
     parser.add_argument("--json-output", type=Path, default=None)
     return parser.parse_args()

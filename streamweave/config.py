@@ -1,4 +1,4 @@
-"""Configuration loading for StreamWeave V4."""
+"""Configuration loading for StreamWeave V5."""
 
 from __future__ import annotations
 

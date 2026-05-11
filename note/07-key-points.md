@@ -12,8 +12,8 @@
 - V4 第一次 SFT 在 OVO 1/8 上明显退化，不能默认当作更优 RL 起点。
 - V5 answered-full SFT 训练已完成，但 OVO 1/8 回评仍在运行中；没有 `results_summary.*` 前不能写正式分数。
 - V3 + Gemini 在 OVO full 上达到 `65.81`，证明方法上限存在，但 Forward/CRR 仍是核心短板。
-- RL 优化不要只押最终 QA reward；应分阶段做 `SFT warmup -> Process RL -> Answer RL`，先练 keyframe/bridge/记忆组织，再提高 `w_success` 训练最终推理。
-- Bridge reward 应分为结构覆盖、信息密度、一致性三类；在线 RL 先用轻量信号，强 VLM/LLM judge 更适合离线生成 reference 或训练 reward model。
+- RL 优化不要只押最终 QA reward；应分阶段做 `SFT warmup -> Process RL -> Answer RL`，先练 keyframe/delta/记忆组织，再提高 `w_success` 训练最终推理。
+- Delta reward 应分为结构覆盖、信息密度、一致性三类；在线 RL 先用轻量信号，强 VLM/LLM judge 更适合离线生成 reference 或训练 reward model。
 
 ## 协议硬约束
 
@@ -22,27 +22,27 @@
 ```xml
 <state>...</state>
 <answer>...</answer>
-<bridge t="...">...</bridge>
-<note t="..."></note>
+<delta t="...">...</delta>
+<anchor t="..."></anchor>
 ```
 
 - `state` 是当前 step 的状态总结和回答判断，不写回 Memory。
-- `note` 只保存视觉锚点，不保存文字。
-- `bridge` 保存文本压缩和绝对时间区间。
+- `anchor` 只保存视觉锚点，不保存文字。
+- `delta` 保存文本压缩和绝对时间区间。
 - `qa_history` 是时间顺序日志；runtime 用最新 QA role 判断是否还有未答问题，没有未答问题时会丢弃模型输出的非空 answer。
-- `<note .../>` 自闭合格式非法，必须使用 `<note ...></note>`。
-- `note` 只允许 `t` 属性，不再使用 `frame` 或局部 id。
-- `bridge` gap 完整性是硬约束，包括窗口边界、相邻 note 和 open-tail 继承。
-- `<eta>`、`frame="N"`、`<note .../>` 都是旧协议残留，不能进入当前 V5 训练 target。
+- `<anchor .../>` 自闭合格式非法，必须使用 `<anchor ...></anchor>`。
+- `anchor` 只允许 `t` 属性，不再使用 `frame` 或局部 id。
+- `delta` gap 完整性是硬约束，包括窗口边界、相邻 anchor 和 open-tail 继承。
+- `<eta>`、`frame="N"`、`<anchor .../>` 都是旧协议残留，不能进入当前 V5 训练 target。
 
 ## 源码事实
 
-- SFT 当前没有 annotated key-frame hard constraint；实际约束是 note 数量、answer 空/非空时机和样本级答案正确性。
+- SFT 当前没有 annotated key-frame hard constraint；实际约束是 anchor 数量、answer 空/非空时机和样本级答案正确性。
 - SFT target 来自 accepted raw XML，`repair=False`，不能用 repaired action 当训练目标。
 - RL 不自动抽帧，只读已存在的 `dataset_root/dataset_name/video/<video_id>/`。
 - RL reward 当前是 `format + step + success`，默认 `w_format=0.3`、`w_step=0.3`、`w_success=0.4`、`score_scale=2.0`。
-- step score 默认是 note frequency：每窗口最多 1 个 note，连续 3 个窗口无 note 惩罚。
-- LLM-as-Judge 默认关闭；开启后评估 keyframe、bridge、semantic alignment 和 state factuality，并被 note frequency gate 住。
+- step score 默认是 anchor frequency：每窗口最多 1 个 anchor，连续 3 个窗口无 anchor 惩罚。
+- LLM-as-Judge 默认关闭；开启后评估 keyframe、delta、semantic alignment 和 state factuality，并被 anchor frequency gate 住。
 - 当前 GRPO 主 estimator 是 `streamweave_stepwise_traj_grpo`，trajectory advantage 会广播到同一 trajectory 的所有 step response token。
 
 ## 数据口径

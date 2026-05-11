@@ -25,11 +25,11 @@ prompt_t = render(s_t):
 a_t = model(prompt_t):
   <eta>...</eta>
   <answer>...</answer>
-  <bridge t="...">...</bridge>
-  <note t="..." frame="..."/>
+  <delta t="...">...</delta>
+  <anchor t="..."></anchor>
 
 s_{t+1} = env.step(s_t, a_t):
-  apply bridge/note to memory
+  apply delta/anchor to memory
   append answer to qa_history when non-empty
   move to next video window
 ```
@@ -114,7 +114,7 @@ algorithm:
 
 - 它证明“agent 动作改变环境状态，下一步根据新状态继续 rollout”的训练范式是成立的。
 - 和 StreamWeave 类似，下一步输入不是简单历史拼接，而是环境状态经过渲染后的新 observation。
-- 不过 LOOP 更偏 API/code agent，视觉 memory 和 note/bridge 这种显式记忆动作不是它的重点。
+- 不过 LOOP 更偏 API/code agent，视觉 memory 和 anchor/delta 这种显式记忆动作不是它的重点。
 
 ### 2.4 RAGEN: Understanding Self-Evolution in LLM Agents via Multi-Turn Reinforcement Learning
 
@@ -130,8 +130,8 @@ algorithm:
 
 对 StreamWeave 的启发：
 
-- 只用整条 session 的最终 answer reward 太粗，尤其无法有效训练 note/bridge 的中间决策。
-- StreamWeave 已经有天然的 step-level reward 来源：格式、时间合法性、note 是否落在当前帧、bridge 是否忠实、memory token 成本、eta 是否合理。
+- 只用整条 session 的最终 answer reward 太粗，尤其无法有效训练 anchor/delta 的中间决策。
+- StreamWeave 已经有天然的 step-level reward 来源：格式、时间合法性、anchor 是否落在当前帧、delta 是否忠实、memory token 成本、eta 是否合理。
 - 这些 step-level reward 不应该只被平均进最终轨迹分，而应该参与每个 step 的 advantage。
 
 ### 2.5 WebAgent-R1: Training Web Agents via End-to-End Multi-Turn Reinforcement Learning
@@ -239,7 +239,7 @@ r_step_t =
 对 StreamWeave 的启发：
 
 - 这两篇不是我们要直接复现的训练算法，但它们说明 agent RL 的基础不是 transcript，而是 environment。
-- 对 StreamWeave，`MemoryStore` 和视频窗口推进就是环境状态；`note/bridge/answer` 是动作；最终回答和中间 memory 质量是 reward。
+- 对 StreamWeave，`MemoryStore` 和视频窗口推进就是环境状态；`anchor/delta/answer` 是动作；最终回答和中间 memory 质量是 reward。
 
 ## 3. 文献共识
 
@@ -271,22 +271,22 @@ WebAgent-R1 说明二值终局 reward 能推动 web agent 改进。MobileRL、GU
 对应 StreamWeave：
 
 - `answer_correct` 是 trajectory-level reward。
-- `note/bridge/eta/format/memory` 是 step-level reward。
+- `anchor/delta/eta/format/memory` 是 step-level reward。
 - 如果把整条 session 的同一个 advantage 复制给每一步，能跑，但浪费了这些 step-level 信号。
 
 ### 3.3 Step-level reward 不等于只优化当前步
 
-多步 agent 的关键是：当前 step 的动作会影响未来状态。比如错误 note 会污染 memory，导致后续 answer 错。合理做法不是只用 `r_t` 更新第 `t` 步，而是用从当前步开始的 return：
+多步 agent 的关键是：当前 step 的动作会影响未来状态。比如错误 anchor 会污染 memory，导致后续 answer 错。合理做法不是只用 `r_t` 更新第 `t` 步，而是用从当前步开始的 return：
 
 ```text
 G_t = r_t + gamma * r_{t+1} + gamma^2 * r_{t+2} + ... + terminal_reward
 ```
 
-这样，早期 note/bridge 会因为影响未来回答而获得 credit。
+这样，早期 anchor/delta 会因为影响未来回答而获得 credit。
 
 ### 3.4 视觉 agent 更需要 state / memory 监督
 
-VAGEN 的核心观点是 VLM agent 在部分可观测环境中需要 world model reasoning。StreamWeave 的 memory 正是显式 state belief。我们的 note/bridge 不只是输出格式，而是模型在构造后续可用状态。
+VAGEN 的核心观点是 VLM agent 在部分可观测环境中需要 world model reasoning。StreamWeave 的 memory 正是显式 state belief。我们的 anchor/delta 不只是输出格式，而是模型在构造后续可用状态。
 
 因此奖励应当覆盖：
 
@@ -376,7 +376,7 @@ VAGEN:
 
 StreamWeave:
   observation_t = memory_t + qa_history_t + current_frames_t
-  action_t = note/bridge/eta/answer XML
+  action_t = anchor/delta/eta/answer XML
   env.step(action_t) -> memory_{t+1}, qa_history_{t+1}, next_frames
   no-concat training instance per step
 ```
@@ -425,8 +425,8 @@ sample_uid
 ### 第二阶段：提高 credit assignment 精度
 
 - 将 `r_memory` 拆成 semantic utility 和 token cost。
-- 对 bridge 引入 groundedness judge。
-- 对 note 引入 frame/evidence relevance score。
+- 对 delta 引入 groundedness judge。
+- 对 anchor 引入 frame/evidence relevance score。
 - 对 `eta` 区分过早、过晚、不可答等待是否合理。
 
 ### 第三阶段：提高采样效率和稳定性
@@ -454,4 +454,3 @@ step response tokens receive step-specific advantage
 ```
 
 粗粒度 session advantage broadcast 可以保留为 ablation baseline，但不应作为主方案。
-

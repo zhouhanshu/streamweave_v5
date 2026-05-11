@@ -152,9 +152,9 @@ def format_memory_before(row: JsonDict) -> str:
         start = t[0] if isinstance(t, list) and t else ""
         end = t[1] if isinstance(t, list) and len(t) > 1 else ""
         if item.get("type") == "bridge":
-            lines.append(f'<bridge t="{start}-{end}">{item.get("text", "")}</bridge>')
+            lines.append(f'<delta t="{start}-{end}">{item.get("text", "")}</delta>')
         elif item.get("type") == "note":
-            lines.append(f'<note t="{start}-{end}" image="{item.get("image_path", "")}"></note>')
+            lines.append(f'<anchor t="{start}-{end}" image="{item.get("image_path", "")}"></anchor>')
     return "\n".join(lines) if lines else "<empty/>"
 
 

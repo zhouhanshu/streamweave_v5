@@ -37,14 +37,14 @@ class SFTMockBackend(MockBackend):
                 "<state>The mock backend summarizes the current memory and frame window for SFT validation.</state>",
                 f"<answer>{answer}</answer>",
             ]
-            note_intervals = [(start, end)] if "There has not been a recent <note>" in text else []
+            note_intervals = [(start, end)] if "There has not been a recent <anchor>" in text else []
             if open_tail_start is not None:
                 lines.extend(
                     _mock_observation_lines(
                         note_intervals,
                         bridge_start=open_tail_start,
                         step_end=step_end,
-                        bridge_text="Mock observation extends the current open-tail bridge.",
+                        bridge_text="Mock observation extends the current open-tail delta.",
                     )
                 )
             else:
@@ -62,8 +62,8 @@ class SFTMockBackend(MockBackend):
 
 
 def _mock_open_tail_bridge_start(memory_block: str) -> float | None:
-    events = list(re.finditer(r'<(?P<kind>note|bridge)\b(?P<attrs>[^>]*)>', memory_block))
-    if not events or events[-1].group("kind") != "bridge":
+    events = list(re.finditer(r'<(?P<kind>anchor|delta)\b(?P<attrs>[^>]*)>', memory_block))
+    if not events or events[-1].group("kind") != "delta":
         return None
     match = re.search(r't="([0-9.]+)-([0-9.]+)"', events[-1].group("attrs"))
     if match is None:
@@ -103,11 +103,11 @@ def _mock_observation_lines(
         note_start = float(start_text)
         note_end = float(end_text)
         if note_start > cursor:
-            lines.append(f'<bridge t="{cursor:.1f}-{note_start:.1f}">{bridge_text}</bridge>')
-        lines.append(f'<note t="{note_start:.1f}-{note_end:.1f}"></note>')
+            lines.append(f'<delta t="{cursor:.1f}-{note_start:.1f}">{bridge_text}</delta>')
+        lines.append(f'<anchor t="{note_start:.1f}-{note_end:.1f}"></anchor>')
         cursor = max(cursor, note_end)
     if step_end > cursor:
-        lines.append(f'<bridge t="{cursor:.1f}-{step_end:.1f}">{bridge_text}</bridge>')
+        lines.append(f'<delta t="{cursor:.1f}-{step_end:.1f}">{bridge_text}</delta>')
     if not lines:
-        lines.append(f'<bridge t="{bridge_start:.1f}-{step_end:.1f}">{bridge_text}</bridge>')
+        lines.append(f'<delta t="{bridge_start:.1f}-{step_end:.1f}">{bridge_text}</delta>')
     return lines

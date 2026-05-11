@@ -54,6 +54,21 @@ def _load_frames(config: SampleSourceConfig) -> list[SamplePlan]:
     )
 
 
+def _load_dataset2(config: SampleSourceConfig) -> list[SamplePlan]:
+    from .dataset2_source import load_sample_plans
+
+    return load_sample_plans(
+        config.input,
+        raw_data_root=config.raw_data_root,
+        sample_fps=config.fps,
+        offset=config.offset,
+        limit=config.limit,
+        sample_ids=config.sample_ids,
+        max_frames=config.max_frames,
+    )
+
+
 SOURCE_LOADERS: dict[str, SourceLoader] = {
     "frames": _load_frames,
+    "dataset2": _load_dataset2,
 }

@@ -9,22 +9,22 @@
 ```xml
 <state>...</state>
 <answer>...</answer>
-<bridge t="...">...</bridge>
-<note t="..."></note>
+<delta t="...">...</delta>
+<anchor t="..."></anchor>
 ```
 
 硬规则来自 `streamweave/parser.py` 和 `streamweave/quality.py`：
 
 - 必须恰好有一个 `<state>` 和一个 `<answer>`。
 - 输出必须以 `<state>` 后接 `<answer>` 开头。
-- `<answer>` 之后只能出现 `<bridge>` 和 `<note>`。
+- `<answer>` 之后只能出现 `<delta>` 和 `<anchor>`。
 - `<state>` 不能为空，不能包含 XML tag，也不写入 Memory。
-- `<note>` 只允许 `t` 属性，必须是成对标签；不再接受 `frame`、`id` 或自闭合 note。
-- `<bridge>` 必须有非空文本和合法绝对时间区间。
-- 至少要有一个 observation tag：`<bridge>` 或 `<note>`。
+- `<anchor>` 只允许 `t` 属性，必须是成对标签；不再接受 `frame`、`id` 或自闭合 anchor。
+- `<delta>` 必须有非空文本和合法绝对时间区间。
+- 至少要有一个 observation tag：`<delta>` 或 `<anchor>`。
 - `<eta>` 已不是合法协议字段；旧 SFT 或旧 trace 不能和当前协议直接混训。
 
-`qa_history` 是时间顺序日志，但 runtime 仍有 active-question 守卫：`MemoryStore.has_unanswered_question()` 用最新 QA role 判断是否还有未答问题；如果模型在没有未答问题时输出非空 answer，`StreamWeaveEnv.evaluate_attempt()` 会把该 answer 丢弃，不写入 Memory。
+`qa_history` 是时间顺序日志；模型可以在后续窗口根据 Memory 和当前帧继续更新 `<answer>`。runtime 只在 QA History 从未出现过问题时丢弃非空 answer，避免无题样本写入答案。
 
 ## Runtime 与评测
 
@@ -79,8 +79,8 @@ SamplePlan
 
 当前源码实际存在的 SFT-only constraints：
 
-- `apply_note_count_constraint()`：每 step 最多 `max_notes_per_step` 个 note，默认 1。
-- `note_reminder_context()`：长时间没有 note 时给 teacher 软提醒。
+- `apply_note_count_constraint()`：每 step 最多 `max_notes_per_step` 个 anchor，默认 1。
+- `note_reminder_context()`：长时间没有 anchor 时给 teacher 软提醒。
 - `apply_qa_answer_constraints()`：只检查 answer 是否该空或非空。
 - `check_sample_answer()`：整条样本级别检查 emitted answer 是否匹配 GT。
 - answer step 会额外采样 variants，正确 variant 可以在 finalize/export 阶段救回样本。
@@ -89,7 +89,7 @@ SamplePlan
 
 - 没有 `_key_frame_context()`。
 - 没有 `_apply_key_frame_quality_constraints()`。
-- 没有“必须输出标注 key frame 且不能输出额外 note”的硬约束。
+- 没有“必须输出标注 key frame 且不能输出额外 anchor”的硬约束。
 
 因此，笔记里若看到“关键帧标注提示不能混入训练数据”，应理解为历史 V4/V3 产物的注意事项；当前 V5 SFT 源码不再注入 annotated key-frame hard constraint。
 
@@ -101,7 +101,7 @@ SamplePlan
 
 ```text
 RL/scripts/train_grpo*.sh
-  -> python -m verl.trainer.main_ppo --config-name=grpo_stepwise
+  -> python -m verl.trainer.main_ppo --config-name=streamweave_stepwise
   -> StreamWeaveAgentDataset
   -> StreamWeaveAgentLoop
   -> StreamWeaveRLEnv.reset()/step()
@@ -118,31 +118,33 @@ RL 环境和 Eval/SFT 的重要区别：
 - 每个 StreamWeave step 都生成一条训练 row；`group_idx`、`traj_idx`、`turn_idx` 保留 trajectory 结构。
 - env step 按 raw XML 算 quality/reward，但用 repaired action 推进 Memory，避免单步坏输出直接让后续环境崩掉。
 
-当前 `grpo_stepwise.yaml` 口径：
+当前 `streamweave_stepwise.yaml` 是公共基础配置，主要保留 dataset、runtime、memory、reward、judge 默认值、agent loop、batch 和 vLLM/FSDP 通用开关。启动脚本只负责具体数据集/模型/run 路径，以及打开 GRPO/PPO、judge、DAPO 等实验开关。
+
+当前 `train_grpo_ovo_8gpu.sh` 实验口径：
 
 - `algorithm.adv_estimator=streamweave_stepwise_traj_grpo`
 - `critic.enable=false`
 - `actor_rollout_ref.rollout.n=8`
 - `trainer.stepwise_rollout=true`
 - `trainer.stepwise_value_mask=true`
-- `reward.w_format=0.3`
-- `reward.w_step=0.3`
-- `reward.w_success=0.4`
+- `reward.w_format=0.1`
+- `reward.w_step=0.2`
+- `reward.w_success=0.7`
 - `reward.score_scale=2.0`
 - `enable_note_frequency_reward=true`
-- judge 默认 disabled，只有显式打开且 `judge_weight > 0` 才影响 `step_score`
+- judge 默认参数在 YAML 中配置为 Gemini Flash，当前 GRPO 脚本会打开 judge，`judge_weight=0.7` 时影响 `step_score`
 
 当前 reward 组成：
 
 - format score：来自 raw XML 的 valid/parser 结果，默认满分为 2.0。
-- step score：当前主要是 note frequency，可选接 LLM/VLM judge。
+- step score：当前主要是 anchor frequency，可选接 LLM/VLM judge。
 - success score：最终 answer 用 dataset scorer 打分，OVO scorer 会按 task 处理 MCQ、REC、SSR、CRR，默认满分为 2.0。
 - final turn 会额外加 `w_success * success_score` 到 turn reward。
 
 当前 custom advantage：
 
 - `streamweave_stepwise_traj_grpo`：同一 `group_idx` 内按 trajectory score 做组内归一化，再广播到该 trajectory 的所有 step response token。
-- `streamweave_stepwise_gae`：按 `(group_idx, traj_idx, turn_idx)` 做 stepwise GAE，主要给 PPO/critic 路径预留。
+- `streamweave_stepwise_ppo_gae`：按 `(group_idx, traj_idx, turn_idx)` 做 stepwise GAE，主要给 PPO/critic 路径预留。
 
 ## 当前训练脚本口径
 
@@ -154,14 +156,17 @@ RL/scripts/train_grpo_ovo_8gpu.sh
 
 这是当前最新 GRPO reward v2 入口：
 
-- `CUDA_VISIBLE_DEVICES=3,4,6,7`
+- `CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7`
 - 默认模型：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm`
-- `save_freq=30`
+- `save_freq=20`
 - `resume_mode=auto`
 - `use_remove_padding=true`
 - `use_fused_kernels=true`
 - `enable_chunked_prefill=true`
-- `data.train_batch_size=32`，`data.gen_batch_size=4`
+- `data.train_batch_size=32`，`data.gen_batch_size=16`
+- `rollout.n=8`
+- `algorithm.filter_groups.enable=true`
+- `algorithm.filter_groups.min_std=0.1`
 
 ```text
 RL/scripts/train_ppo.sh

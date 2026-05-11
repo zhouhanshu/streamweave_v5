@@ -1,2 +1,1 @@
-"""StreamWeave V4 core package."""
-
+"""StreamWeave V5 core package."""

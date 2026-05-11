@@ -43,4 +43,4 @@
 - 总分、分 category、分 task。
 - 是否为 `task macro`，是否另有 `sample weighted`。
 - run 输出目录和 summary 文件路径。
-- 当前源码使用 `<state>` 协议和 timestamp-only note；若评测旧 checkpoint 或旧 trace，必须单独记录是否出现 `<eta>` 或 `frame="N"` 格式退化。
+- 当前源码使用 `<state>` 协议和 timestamp-only anchor；若评测旧 checkpoint 或旧 trace，必须单独记录是否出现 `<eta>` 或 `frame="N"` 格式退化。

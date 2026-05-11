@@ -212,6 +212,7 @@ def make_synthesis_config(args: argparse.Namespace, source_config: SampleSourceC
         answer_step_rollouts=args.answer_step_rollouts,
         answer_step_temperature=args.answer_step_temperature,
         answer_step_top_p=args.answer_step_top_p,
+        open_answer_semantic_judge=args.open_answer_semantic_judge,
     )
 
 
@@ -371,7 +372,7 @@ def resolve_stages(stage: str) -> list[str]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=Path("data_engine/synthesize/outputs/annotations_qa.jsonl"))
-    parser.add_argument("--source", choices=("frames",), default="frames")
+    parser.add_argument("--source", choices=("frames", "dataset2"), default="frames")
     parser.add_argument("--raw-data-root", type=Path, default=Path("raw_data"))
     parser.add_argument("--output-dir", type=Path, default=Path("data_engine/sft/outputs"))
     parser.add_argument("--stage", choices=("all", "intermediate", "finalize", "sharegpt"), default="all")
@@ -402,9 +403,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument("--max-notes-per-step", type=int, default=1)
     parser.add_argument("--bridge-note-reminder-seconds", type=float, default=20.0)
-    parser.add_argument("--answer-step-rollouts", type=int, default=5)
+    parser.add_argument("--answer-step-rollouts", type=int, default=2)
     parser.add_argument("--answer-step-temperature", type=float, default=0.3)
     parser.add_argument("--answer-step-top-p", type=float, default=0.95)
+    parser.add_argument("--no-open-answer-semantic-judge", dest="open_answer_semantic_judge", action="store_false", default=True)
 
     parser.add_argument("--backend", default="mock")
     parser.add_argument("--model", default="mock")

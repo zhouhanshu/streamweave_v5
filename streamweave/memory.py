@@ -1,4 +1,4 @@
-"""Memory state for notes, bridges, and QA history."""
+"""Memory state for anchors, deltas, and QA history."""
 
 from __future__ import annotations
 
@@ -31,12 +31,6 @@ class MemoryStore:
 
     def has_question(self) -> bool:
         return any(qa.role == "q" for qa in self.qa_history)
-
-    def has_unanswered_question(self) -> bool:
-        if not self.qa_history:
-            return False
-        latest = sorted(self.qa_history, key=lambda qa: qa.timestamp)[-1]
-        return latest.role == "q"
 
     def evict(self, current_time: float) -> None:
         cutoff = current_time - self.memory_window
@@ -75,18 +69,18 @@ class MemoryStore:
                 content.append(
                     ContentItem(
                         "text",
-                        text=f'<bridge t="{bridge.start_time:.1f}-{bridge.end_time:.1f}">{bridge.text}</bridge>',
+                        text=f'<delta t="{bridge.start_time:.1f}-{bridge.end_time:.1f}">{bridge.text}</delta>',
                     )
                 )
             else:
                 note = item
                 assert isinstance(note, NoteRecord)
                 if note.image_available:
-                    content.append(ContentItem("text", text=f'<note t="{note.start_time:.1f}-{note.end_time:.1f}">'))
+                    content.append(ContentItem("text", text=f'<anchor t="{note.start_time:.1f}-{note.end_time:.1f}">'))
                     content.append(ContentItem("image", image_path=note.image_path))
-                    content.append(ContentItem("text", text="</note>"))
+                    content.append(ContentItem("text", text="</anchor>"))
                 else:
-                    content.append(ContentItem("text", text=f'<note t="{note.start_time:.1f}-{note.end_time:.1f}"></note>'))
+                    content.append(ContentItem("text", text=f'<anchor t="{note.start_time:.1f}-{note.end_time:.1f}"></anchor>'))
         return content
 
     def build_qa_text(self) -> str:
@@ -101,10 +95,10 @@ class MemoryStore:
         lines = ["Memory:"]
         events: list[tuple[float, int, str]] = []
         for bridge in self.bridges:
-            events.append((bridge.start_time, 0, f'bridge {bridge.start_time:.1f}-{bridge.end_time:.1f}: {bridge.text}'))
+            events.append((bridge.start_time, 0, f'delta {bridge.start_time:.1f}-{bridge.end_time:.1f}: {bridge.text}'))
         for note in self.notes:
             status = str(note.image_path) if note.image_available else f"{note.image_path} (image_evicted)"
-            events.append((note.start_time, 1, f"note {note.start_time:.1f}-{note.end_time:.1f}: {status}"))
+            events.append((note.start_time, 1, f"anchor {note.start_time:.1f}-{note.end_time:.1f}: {status}"))
         for qa in self.qa_history:
             events.append((qa.timestamp, 2, f"qa {qa.timestamp:.1f} {qa.role}: {qa.text}"))
         for _, _, text in sorted(events, key=lambda item: (item[0], item[1])):

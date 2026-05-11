@@ -1,4 +1,4 @@
-"""Shared data structures for StreamWeave V4."""
+"""Shared data structures for StreamWeave V5."""
 
 from __future__ import annotations
 

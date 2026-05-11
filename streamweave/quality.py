@@ -18,6 +18,7 @@ class QualityContext:
     step_start: float
     step_end: float
     open_tail_bridge: BridgeRecord | None = None
+    require_initial_anchor: bool = False
 
 
 def score_raw_output(raw: str, context: QualityContext, reward_config: object | None = None) -> tuple[ModelAction, QualityReport]:
@@ -35,27 +36,27 @@ def score_raw_output(raw: str, context: QualityContext, reward_config: object | 
         if event.kind == "note":
             matching_frames = _matching_frames_for_note(event, context.frames)
             if not matching_frames:
-                issues.append(ValidationIssue("note_time_unmatched", "Note time does not match any current frame."))
+                issues.append(ValidationIssue("note_time_unmatched", "Anchor time does not match any current frame."))
                 timing_reward = 0
                 continue
             if len(matching_frames) > 1:
-                issues.append(ValidationIssue("note_time_ambiguous", "Note time matches multiple current frames."))
+                issues.append(ValidationIssue("note_time_ambiguous", "Anchor time matches multiple current frames."))
                 timing_reward = 0
         elif event.kind == "bridge":
             if not event.text.strip():
-                issues.append(ValidationIssue("empty_bridge", "Bridge text is empty."))
+                issues.append(ValidationIssue("empty_bridge", "Delta text is empty."))
                 timing_reward = 0
             if context.open_tail_bridge is not None and event_index == 0:
                 extends_open_tail = abs(event.start_time - context.open_tail_bridge.start_time) <= TIME_TOLERANCE
                 if not extends_open_tail:
-                    issues.append(ValidationIssue("open_tail_start_mismatch", "First bridge does not inherit open-tail start."))
+                    issues.append(ValidationIssue("open_tail_start_mismatch", "First delta does not inherit open-tail start."))
                     opentail_reward = 0
             if not extends_open_tail:
                 if event.start_time < context.step_start - TIME_TOLERANCE or event.end_time > context.step_end + TIME_TOLERANCE:
-                    issues.append(ValidationIssue("bridge_time_oob", "Bridge time is outside current step."))
+                    issues.append(ValidationIssue("bridge_time_oob", "Delta time is outside current step."))
                     timing_reward = 0
             elif event.end_time > context.step_end + TIME_TOLERANCE:
-                issues.append(ValidationIssue("open_tail_end_oob", "Open-tail bridge end is outside current step."))
+                issues.append(ValidationIssue("open_tail_end_oob", "Open-tail delta end is outside current step."))
                 opentail_reward = 0
 
         if not extends_open_tail and event.start_time < previous_end - TIME_TOLERANCE:
@@ -65,8 +66,14 @@ def score_raw_output(raw: str, context: QualityContext, reward_config: object | 
         previous_end = max(previous_end, event.end_time)
 
     if context.open_tail_bridge is not None and action.events and action.events[0].kind != "bridge":
-        issues.append(ValidationIssue("missing_open_tail_bridge", "Open-tail memory requires first event to be a bridge."))
+        issues.append(ValidationIssue("missing_open_tail_bridge", "Open-tail memory requires first event to be a delta."))
         opentail_reward = 0
+
+    initial_anchor_issues = _initial_anchor_issues(action, context)
+    if initial_anchor_issues:
+        issues.extend(initial_anchor_issues)
+        format_reward = 0
+        timing_reward = 0
 
     gap_issues, gap_metrics = _bridge_gap_issues(action, context)
     if gap_issues:
@@ -121,7 +128,7 @@ def _bridge_gap_issues(action: ModelAction, context: QualityContext) -> tuple[li
             issues.append(
                 ValidationIssue(
                     "missing_bridge_gap",
-                    f"Missing bridge for required gap {gap[0]:.1f}-{gap[1]:.1f}.",
+                    f"Missing delta for required gap {gap[0]:.1f}-{gap[1]:.1f}.",
                 )
             )
             continue
@@ -135,14 +142,14 @@ def _bridge_gap_issues(action: ModelAction, context: QualityContext) -> tuple[li
             issues.append(
                 ValidationIssue(
                     "duplicate_bridge_gap",
-                    f"Multiple bridges cover required gap {bridge.start_time:.1f}-{bridge.end_time:.1f}.",
+                    f"Multiple deltas cover required gap {bridge.start_time:.1f}-{bridge.end_time:.1f}.",
                 )
             )
         else:
             issues.append(
                 ValidationIssue(
                     "invalid_bridge_gap",
-                    f"Bridge interval {bridge.start_time:.1f}-{bridge.end_time:.1f} does not match any required note/window gap.",
+                    f"Delta interval {bridge.start_time:.1f}-{bridge.end_time:.1f} does not match any required anchor/window gap.",
                 )
             )
 
@@ -152,6 +159,34 @@ def _bridge_gap_issues(action: ModelAction, context: QualityContext) -> tuple[li
         "output_bridge_gaps": [[bridge.start_time, bridge.end_time] for bridge in bridges],
     }
     return issues, metrics
+
+
+def _initial_anchor_issues(action: ModelAction, context: QualityContext) -> list[ValidationIssue]:
+    if not context.require_initial_anchor or not context.frames:
+        return []
+    first_frame = context.frames[0]
+    expected = f"{first_frame.start_time:.1f}-{first_frame.end_time:.1f}"
+    if not action.events:
+        return [
+            ValidationIssue(
+                "missing_initial_anchor",
+                f'Empty memory requires the first observation tag to be <anchor t="{expected}"></anchor>.',
+            )
+        ]
+    first_event = action.events[0]
+    if first_event.kind != "note" or not _same_interval(
+        first_event.start_time,
+        first_event.end_time,
+        first_frame.start_time,
+        first_frame.end_time,
+    ):
+        return [
+            ValidationIssue(
+                "missing_initial_anchor",
+                f'Empty memory requires the first observation tag to be <anchor t="{expected}"></anchor>.',
+            )
+        ]
+    return []
 
 
 def _expected_bridge_gaps(notes: list[ModelEvent], context: QualityContext) -> list[tuple[float, float]]:

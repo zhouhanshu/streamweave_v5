@@ -162,11 +162,11 @@ for future video question answering. Judge the process quality, not the final ta
 
 The agent output protocol is strict:
 - The output must start with exactly one <state>, then exactly one <answer>.
-- Only <note> and <bridge> observation tags may appear after <answer>.
+- Only <anchor> and <delta> observation tags may appear after <answer>.
 - <state>: transient reasoning about the current evidence and QA decision. It is not saved to memory.
 - <answer>: current QA answer, possibly empty.
-- <note t="..."></note>: selected visual anchor frame interval. The note saves the frame image, not text.
-- <bridge t="...">...</bridge>: concise text describing observable changes between visual anchors.
+- <anchor t="..."></anchor>: selected visual anchor frame interval. The anchor saves the frame image, not text.
+- <delta t="...">...</delta>: concise text describing observable changes between visual anchors.
 
 Use only the provided memory text, QA history, current frames, and agent output.
 Do not use outside knowledge or hidden ground truth.
@@ -197,21 +197,21 @@ Do not infer hidden intent, identity, fine-grained counts, causes, or object att
 Scoring dimensions, each from 0.0 to 1.0:
 
 1. keyframe_selection
-Evaluate whether <note> preserves important visual anchor frames in the current window.
+Evaluate whether <anchor> preserves important visual anchor frames in the current window.
 Important anchors include query-relevant evidence, major object/person/state changes,
-scene/camera/workspace changes, event boundaries, or visual details that a text bridge
+scene/camera/workspace changes, event boundaries, or visual details that a text delta
 cannot reliably preserve.
 - 1.0: Selects the right important anchor(s), avoids duplicates, and does not save unimportant frames.
-- 0.7: Relevant note choice, but misses a moderately useful anchor or selects a suboptimal frame.
+- 0.7: Relevant anchor choice, but misses a moderately useful anchor or selects a suboptimal frame.
 - 0.4: Weakly relevant, redundant, poorly timed, or only loosely useful as visual memory.
-- 0.0: Misses a clearly important anchor, selects irrelevant frames, or emits duplicate/unhelpful notes.
-If no current frame contains meaningful new visual evidence, no note can be acceptable; do not punish absence of a note solely for frequency, because a separate rule handles note frequency.
+- 0.0: Misses a clearly important anchor, selects irrelevant frames, or emits duplicate/unhelpful anchors.
+If no current frame contains meaningful new visual evidence, no anchor can be acceptable; do not punish absence of an anchor solely for frequency, because a separate rule handles anchor frequency.
 Special first-window rule: if the current frame window spans exactly t="0.0-5.0" (or "0-5"),
-keyframe_selection may be 1.0 only when the output contains exactly one note with t="0.0-1.0" (or "0-1").
-For that first window, keyframe_selection must be 0.0 if the note is absent, duplicated, or uses any timing other than exactly t="0.0-1.0" (or "0-1").
+keyframe_selection may be 1.0 only when the output contains exactly one anchor with t="0.0-1.0" (or "0-1").
+For that first window, keyframe_selection must be 0.0 if the anchor is absent, duplicated, or uses any timing other than exactly t="0.0-1.0" (or "0-1").
 
 2. bridge_quality
-Evaluate whether <bridge> uses concise, faithful language to describe frame-to-frame changes.
+Evaluate whether <delta> uses concise, faithful language to describe frame-to-frame changes.
 It should summarize observable action/state/layout changes over its time span, not invent details.
 - 1.0: Concise, faithful, covers the main observable changes over the interval, and preserves useful state for future QA.
 - 0.7: Mostly faithful, but slightly vague, slightly long, or misses minor changes.
@@ -219,12 +219,12 @@ It should summarize observable action/state/layout changes over its time span, n
 - 0.0: Hallucinates, contradicts frames/memory, describes the wrong interval, or is unusable.
 
 3. semantic_alignment
-Evaluate whether the note/bridge sequence is semantically aligned with the current frame order and visual content.
+Evaluate whether the anchor/delta sequence is semantically aligned with the current frame order and visual content.
 The visual anchors and text should form a coherent time-ordered memory update.
-- 1.0: Note times, bridge intervals, frame order, and described content all align.
+- 1.0: Anchor times, delta intervals, frame order, and described content all align.
 - 0.7: Minor omissions or mild ambiguity, but no material contradiction.
 - 0.4: Partial mismatch between text and images, weak temporal ordering, or unclear grounding.
-- 0.0: Clear contradiction, wrong event order, note/bridge mismatch, or text not grounded in the images.
+- 0.0: Clear contradiction, wrong event order, anchor/delta mismatch, or text not grounded in the images.
 
 4. state_factuality
 Evaluate whether <state> is correct, useful, and hallucination-free.
@@ -237,10 +237,10 @@ and make a sound decision about whether <answer> should be empty or non-empty.
 
 Hard caps:
 - If parser/timing issues make a component unusable, cap that component at 0.4.
-- If the output has no usable note/bridge content, cap overall at 0.2.
+- If the output has no usable anchor/delta content, cap overall at 0.2.
 - If the output clearly contradicts current frames or memory, cap overall at 0.5.
 - If the output fabricates important visual facts, cap overall at 0.3.
-- If <state> or <bridge> relies on hidden future frames or outside knowledge, cap overall at 0.3.
+- If <state> or <delta> relies on hidden future frames or outside knowledge, cap overall at 0.3.
 
 Overall score:
 Use the average of the four dimension scores after applying any hard caps. Keep scores calibrated;
@@ -271,9 +271,9 @@ def _action_summary(action: ModelAction) -> str:
     ]
     for event in action.events:
         if event.kind == "note":
-            lines.append(f'note t="{event.start_time:.1f}-{event.end_time:.1f}"')
+            lines.append(f'anchor t="{event.start_time:.1f}-{event.end_time:.1f}"')
         else:
-            lines.append(f'bridge t="{event.start_time:.1f}-{event.end_time:.1f}": {event.text}')
+            lines.append(f'delta t="{event.start_time:.1f}-{event.end_time:.1f}": {event.text}')
     return "\n".join(lines)
 
 
@@ -319,8 +319,8 @@ def _mock_judge_result(action: ModelAction, quality: QualityReport) -> JudgeResu
         status="mock",
         scores=scores,
         reasons={
-            "keyframe_selection": "Mock score from note count.",
-            "bridge_quality": "Mock score from bridge presence and non-empty text.",
+            "keyframe_selection": "Mock score from anchor count.",
+            "bridge_quality": "Mock score from delta presence and non-empty text.",
             "semantic_alignment": "Mock score from parser validity.",
             "state_factuality": "Mock score from state presence.",
         },

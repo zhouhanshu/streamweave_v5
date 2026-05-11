@@ -11,12 +11,12 @@ from .schemas import ModelAction, ModelEvent, ValidationIssue
 TOKEN_RE = re.compile(
     r"<state>(?P<state>.*?)</state>"
     r"|<answer>(?P<answer>.*?)</answer>"
-    r'|<note\s+t="(?P<note_t>[^"]+)">\s*</note>'
-    r'|<bridge\s+t="(?P<bridge_t>[^"]+)">(?P<bridge_text>.*?)</bridge>',
+    r'|<anchor\s+t="(?P<anchor_t>[^"]+)">\s*</anchor>'
+    r'|<delta\s+t="(?P<delta_t>[^"]+)">(?P<delta_text>.*?)</delta>',
     flags=re.DOTALL,
 )
 
-SELF_CLOSING_NOTE_RE = re.compile(r'<note\b[^>]*\bt="[^"]+"[^>]*/>', flags=re.DOTALL)
+SELF_CLOSING_ANCHOR_RE = re.compile(r'<anchor\b[^>]*\bt="[^"]+"[^>]*/>', flags=re.DOTALL)
 
 
 @dataclass(slots=True)
@@ -46,11 +46,11 @@ def strict_validate_raw_output(raw: str) -> ParseResult:
     action, parse_issues = _tokens_to_action(raw, tokens)
     issues.extend(parse_issues)
     kinds = [_token_kind(match) for match in tokens]
-    if SELF_CLOSING_NOTE_RE.search(raw):
+    if SELF_CLOSING_ANCHOR_RE.search(raw):
         issues.append(
             ValidationIssue(
-                "note_tag_format",
-                'Current output notes must use paired tags like <note t="36.0-37.0"></note>, not self-closing <note .../>.',
+                "anchor_tag_format",
+                'Current output anchors must use paired tags like <anchor t="36.0-37.0"></anchor>, not self-closing <anchor .../>.',
             )
         )
     if kinds.count("state") != 1:
@@ -62,7 +62,7 @@ def strict_validate_raw_output(raw: str) -> ParseResult:
     if kinds.count("answer") != 1:
         issues.append(ValidationIssue("answer_count", "Raw output must contain exactly one <answer> tag."))
     if not action.events:
-        issues.append(ValidationIssue("missing_observation", "Raw output must contain at least one note or bridge tag."))
+        issues.append(ValidationIssue("missing_observation", "Raw output must contain at least one anchor or delta tag."))
     if len(kinds) >= 2:
         if kinds[0] != "state" or kinds[1] != "answer":
             issues.append(ValidationIssue("tag_order", "Raw output must start with <state> then <answer>."))
@@ -70,7 +70,7 @@ def strict_validate_raw_output(raw: str) -> ParseResult:
         issues.append(ValidationIssue("tag_order", "Raw output must start with <state> then <answer>."))
     for kind in kinds[2:]:
         if kind not in {"note", "bridge"}:
-            issues.append(ValidationIssue("tag_order", "Only note/bridge tags may appear after <answer>."))
+            issues.append(ValidationIssue("tag_order", "Only anchor/delta tags may appear after <answer>."))
 
     return ParseResult(action=action, parser_ok=not issues, issues=issues)
 
@@ -100,10 +100,10 @@ def _tokens_to_action(raw: str, tokens: list[re.Match[str]]) -> tuple[ModelActio
                 answer_present = True
                 answer = (match.group("answer") or "").strip()
             elif kind == "note":
-                note_t = match.group("note_t")
-                if note_t is None:
-                    raise ValueError("Missing note time attribute")
-                start, end = _parse_interval(note_t)
+                anchor_t = match.group("anchor_t")
+                if anchor_t is None:
+                    raise ValueError("Missing anchor time attribute")
+                start, end = _parse_interval(anchor_t)
                 events.append(
                     ModelEvent(
                         kind="note",
@@ -112,13 +112,13 @@ def _tokens_to_action(raw: str, tokens: list[re.Match[str]]) -> tuple[ModelActio
                     )
                 )
             elif kind == "bridge":
-                start, end = _parse_interval(match.group("bridge_t"))
+                start, end = _parse_interval(match.group("delta_t"))
                 events.append(
                     ModelEvent(
                         kind="bridge",
                         start_time=start,
                         end_time=end,
-                        text=(match.group("bridge_text") or "").strip(),
+                        text=(match.group("delta_text") or "").strip(),
                     )
                 )
         except Exception as exc:
@@ -146,7 +146,7 @@ def _token_kind(match: re.Match[str]) -> str:
         return "state"
     if match.group("answer") is not None:
         return "answer"
-    if match.group("note_t") is not None:
+    if match.group("anchor_t") is not None:
         return "note"
     return "bridge"
 

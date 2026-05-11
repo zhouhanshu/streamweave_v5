@@ -12,7 +12,7 @@ from .schemas import AppliedAction, BridgeRecord, FrameRef, ModelAction, ModelEv
 NOTE_TIME_TOLERANCE = 0.11
 BRIDGE_GAP_TOLERANCE = 1e-6
 BRIDGE_INTERVAL_TOLERANCE = 0.11
-FALLBACK_BRIDGE_TEXT = "The video continues through this interval, but no reliable bridge description was recovered."
+FALLBACK_BRIDGE_TEXT = "The video continues through this interval, but no reliable delta description was recovered."
 
 
 def repair_for_execution(raw: str, context: QualityContext) -> AppliedAction:
@@ -161,6 +161,7 @@ def _normalize_observation_events(
     repair_types: list[str],
 ) -> tuple[list[ModelEvent], list[NoteRecord], list[BridgeRecord], bool]:
     notes = _dedupe_note_events(events, repair_types)
+    notes = _ensure_initial_anchor(notes, context, repair_types)
     source_bridges = [event for event in events if event.kind == "bridge" and event.text.strip()]
     expected_gaps = _expected_bridge_gaps(notes, context)
     normalized_bridges: list[ModelEvent] = []
@@ -212,6 +213,27 @@ def _normalize_observation_events(
         and abs(normalized_bridges[0].start_time - context.open_tail_bridge.start_time) <= BRIDGE_INTERVAL_TOLERANCE
     )
     return normalized_events, note_records, bridge_records, replace_open_tail
+
+
+def _ensure_initial_anchor(
+    notes: list[ModelEvent],
+    context: QualityContext,
+    repair_types: list[str],
+) -> list[ModelEvent]:
+    if not context.require_initial_anchor or not context.frames:
+        return notes
+    first_frame = context.frames[0]
+    for note in notes:
+        if _same_interval(note.start_time, note.end_time, first_frame.start_time, first_frame.end_time):
+            return notes
+    repair_types.append("add_initial_anchor")
+    return sorted(
+        [
+            ModelEvent(kind="note", start_time=first_frame.start_time, end_time=first_frame.end_time),
+            *notes,
+        ],
+        key=lambda item: (item.start_time, item.end_time),
+    )
 
 
 def _dedupe_note_events(events: list[ModelEvent], repair_types: list[str]) -> list[ModelEvent]:
@@ -377,8 +399,8 @@ def synthesis_feedback(
         sections.append("Other reported errors:")
         sections.extend(other_errors)
     sections.append(
-        "Output format: <state>...</state>, <answer>...</answer>, then bridge/note tags in chronological order, "
-        "no overlap and no text outside tags. Notes use paired <note t=\"...\"></note>."
+        "Output format: <state>...</state>, <answer>...</answer>, then delta/anchor tags in chronological order, "
+        "no overlap and no text outside tags. Anchors use paired <anchor t=\"...\"></anchor>."
     )
     return "\n".join(sections)
 
@@ -415,9 +437,9 @@ def _bridge_fixes(
     for message in messages:
         # Anchor on full prefixes so duplicate_bridge_gap ("Multiple bridges cover required gap X-Y")
         # is not mistaken for a missing gap.
-        required_gaps.extend(re.findall(r"Missing bridge for required gap ([0-9]+(?:\.[0-9]+)?-[0-9]+(?:\.[0-9]+)?)", message))
-        invalid_gaps.extend(re.findall(r"Bridge interval ([0-9]+(?:\.[0-9]+)?-[0-9]+(?:\.[0-9]+)?)", message))
-        duplicate_gaps.extend(re.findall(r"Multiple bridges cover required gap ([0-9]+(?:\.[0-9]+)?-[0-9]+(?:\.[0-9]+)?)", message))
+        required_gaps.extend(re.findall(r"Missing delta for required gap ([0-9]+(?:\.[0-9]+)?-[0-9]+(?:\.[0-9]+)?)", message))
+        invalid_gaps.extend(re.findall(r"Delta interval ([0-9]+(?:\.[0-9]+)?-[0-9]+(?:\.[0-9]+)?)", message))
+        duplicate_gaps.extend(re.findall(r"Multiple deltas cover required gap ([0-9]+(?:\.[0-9]+)?-[0-9]+(?:\.[0-9]+)?)", message))
     required_gaps = _unique_keep_order(required_gaps)
     invalid_gaps = _unique_keep_order(invalid_gaps)
     duplicate_gaps = _unique_keep_order(duplicate_gaps)
@@ -432,40 +454,40 @@ def _bridge_fixes(
             # "Add required" + "Drop invalid" branches below handle them so we
             # don't tell the model to copy text from a different gap.
             continue
-        lines.append(f'- Bridge `t="{invalid}"` should be `t="{required}"`. Replace it.')
+        lines.append(f'- Delta `t="{invalid}"` should be `t="{required}"`. Replace it.')
         used_invalid.add(invalid)
         used_required.add(required)
 
     for required in required_gaps:
         if required in used_required:
             continue
-        lines.append(f'- Add a `<bridge t="{required}">...</bridge>` for the missing gap.')
+        lines.append(f'- Add a `<delta t="{required}">...</delta>` for the missing gap.')
 
     for invalid in invalid_gaps:
         if invalid in used_invalid:
             continue
-        lines.append(f'- Bridge `t="{invalid}"` does not match any required gap; drop it.')
+        lines.append(f'- Delta `t="{invalid}"` does not match any required gap; drop it.')
 
     for duplicate in duplicate_gaps:
-        lines.append(f'- Multiple bridges cover gap `t="{duplicate}"`; keep only one.')
+        lines.append(f'- Multiple deltas cover gap `t="{duplicate}"`; keep only one.')
 
     if memory_tail_kind == "note" and memory_tail_end is not None:
         lines.append(
-            f"- Memory ends with a <note ending at {_fmt_time(memory_tail_end)}>, so do NOT inherit any bridge. "
-            f"Your first new bridge cannot start before {_fmt_time(memory_tail_end)}."
+            f"- Memory ends with an <anchor> ending at {_fmt_time(memory_tail_end)}, so do NOT inherit any delta. "
+            f"Your first new delta cannot start before {_fmt_time(memory_tail_end)}."
         )
     elif memory_tail_kind == "bridge" and ("missing_open_tail_bridge" in code_set or "open_tail_start_mismatch" in code_set):
-        anchor = _fmt_time(open_tail_start) if open_tail_start is not None else "the original Memory bridge start"
+        anchor = _fmt_time(open_tail_start) if open_tail_start is not None else "the original Memory delta start"
         lines.append(
-            f"- Memory ends with an open-tail <bridge>, so your first event must be a <bridge> starting at t={anchor} "
-            "(rewrite/extend that bridge; do not start a new one)."
+            f"- Memory ends with an open-tail <delta>, so your first event must be a <delta> starting at t={anchor} "
+            "(rewrite/extend that delta; do not start a new one)."
         )
 
     if step_start is not None and step_end is not None and not lines:
         # No specific gaps to point at, but bridge timing was wrong — give the structural anchor.
         lines.append(
             f"- This step covers {_fmt_time(step_start)}-{_fmt_time(step_end)}. "
-            "Bridge `t` is structural (must align with note/window boundaries), not a description of when the action started."
+            "Delta `t` is structural (must align with anchor/window boundaries), not a description of when the action started."
         )
     return lines
 
@@ -481,23 +503,23 @@ def _zero_duration_bridge_fixes(codes: list[str], messages: list[str], raw_outpu
     unique = _unique_keep_order(intervals)
     label = ", ".join(f'`t="{value}"`' for value in unique)
     return [
-        f"- Drop the zero-duration bridge {label}. "
-        "A step does not need to end with a bridge: if the last frame in this step is anchored as a <note>, stop after that note.",
+        f"- Drop the zero-duration delta {label}. "
+        "A step does not need to end with a delta: if the last frame in this step is anchored as an <anchor>, stop after that anchor.",
     ]
 
 
 def _unclosed_note_fixes(codes: list[str], raw_output: str) -> list[str]:
     if "text_outside_tags" not in codes and "tag_parse_error" not in codes:
         return []
-    open_tags = re.findall(r'<note\b[^>/]*\bt="([^"]+)"[^>/]*>', raw_output)
-    closed_count = len(re.findall(r"</note>", raw_output))
+    open_tags = re.findall(r'<anchor\b[^>/]*\bt="([^"]+)"[^>/]*>', raw_output)
+    closed_count = len(re.findall(r"</anchor>", raw_output))
     if not open_tags or len(open_tags) <= closed_count:
         return []
     unclosed_times = open_tags[closed_count:]
     label = ", ".join(f't="{time_range}"' for time_range in _unique_keep_order(unclosed_times))
     return [
-        f"- Note tag for {label} was opened but never closed. "
-        'Always pair: `<note t="..."></note>`.',
+        f"- Anchor tag for {label} was opened but never closed. "
+        'Always pair: `<anchor t="..."></anchor>`.',
     ]
 
 
@@ -577,7 +599,7 @@ def _unique_keep_order(values: list[str]) -> list[str]:
     return out
 
 
-NOTE_TAG_RE = re.compile(r"<note\b(?P<attrs>[^>]*)>(?P<body>.*?)</note>", re.DOTALL)
+NOTE_TAG_RE = re.compile(r"<anchor\b(?P<attrs>[^>]*)>(?P<body>.*?)</anchor>", re.DOTALL)
 ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
 
 

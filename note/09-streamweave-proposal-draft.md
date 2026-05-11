@@ -42,8 +42,8 @@ benchmark 作用：
 
 迁移到 StreamWeave：
 
-- `note = I-frame`：完整保留当前视觉状态
-- `bridge = P-frame`：只描述相对上一个关键状态的变化
+- `anchor = I-frame`：完整保留当前视觉状态
+- `delta = P-frame`：只描述相对上一个关键状态的变化
 
 目标不是把历史全部压成文本，而是让模型学会区分：
 
@@ -65,13 +65,13 @@ benchmark 作用：
 
 每个新 `chunk` 到来时，模型并行做两个决策：
 
-- 状态决策：`note / bridge`
+- 状态决策：`anchor / delta`
 - 响应决策：`silent / answer`
 
 说明：
 
-- `note`：当前视觉状态永久保留，同时附极短内部标注
-- `bridge`：不保留视觉状态，只写相对上一个 `active note` 的短变化文本
+- `anchor`：当前视觉状态永久保留，同时附极短内部标注
+- `delta`：不保留视觉状态，只写相对上一个 `active anchor` 的短变化文本
 - `silent`：当前证据不足，继续等待
 - `answer`：当前证据已足够，输出回答
 
@@ -81,7 +81,7 @@ benchmark 作用：
 
 数据构造阶段拆成两条 teacher：
 
-- `state teacher`：判断当前 `chunk` 应该成为 `note` 还是 `bridge`
+- `state teacher`：判断当前 `chunk` 应该成为 `anchor` 还是 `delta`
 - `response teacher`：判断当前前缀应保持 `silent` 还是输出 `answer`
 
 最终学生模型仍然是统一策略：
@@ -103,9 +103,9 @@ f_theta(x_t) -> (a_t^state, a_t^resp, y_t^state, y_t^resp)
 运行时完整 schema 当前记为：
 
 ```text
-<state>note|bridge</state>
-<note>...</note>
-<bridge>...</bridge>
+<state>anchor|delta</state>
+<anchor t="..."></anchor>
+<delta t="...">...</delta>
 <query>...</query>
 <response>silent|answer</response>
 <answer>...</answer>
@@ -114,19 +114,19 @@ f_theta(x_t) -> (a_t^state, a_t^resp, y_t^state, y_t^resp)
 约束：
 
 - tag 顺序固定
-- `note` 与 `bridge` 互斥
+- `anchor` 与 `delta` 互斥
 - `response=silent` 时 `<answer>` 必须为空
-- `<note>` 和 `<bridge>` 不允许偷渡最终答案
-- `note` 保持极短，尽量收紧到 `event + cue + reason`
-- `bridge` 只写相对 `active note` 的变化，不写长摘要
+- `<anchor>` 和 `<delta>` 不允许偷渡最终答案
+- `anchor` 只保存视觉锚点时间戳和图像，不写文本
+- `delta` 只写相对 `active anchor` 的变化，不写长摘要
 
 ### 2.4 混合状态结构
 
 ```text
-x_t = {V_<t^keep, T_<t^bridge, W_t^recent, c_t, q_t}
+x_t = {V_<t^keep, T_<t^delta, W_t^recent, c_t, q_t}
 ```
 
-- `V_keep`：所有历史 `note`
+- `V_keep`：所有历史 `anchor`
 - `T_bridge`：历史桥接文本
 - `W_recent`：最近窗口原始视觉内容
 - `c_t`：当前 `chunk`
@@ -139,9 +139,9 @@ x_t = {V_<t^keep, T_<t^bridge, W_t^recent, c_t, q_t}
 ### 3.1 第一版的基本单位
 
 - 决策单位：`1s chunk`
-- 系统始终维护一个 `active note`
-- 后续所有 `bridge` 都相对这个锚点书写
-- 一旦新 `note` 出现，它接管 `active note`
+- 系统始终维护一个 `active anchor`
+- 后续所有 `delta` 都相对这个锚点书写
+- 一旦新 `anchor` 出现，它接管 `active anchor`
 
 ### 3.2 结构化状态
 
@@ -160,7 +160,7 @@ x_t = {V_<t^keep, T_<t^bridge, W_t^recent, c_t, q_t}
 `v0` 先解决两件事：
 
 1. 当前 `chunk` 是否像一个新的视觉锚点
-2. 当前 `chunk` 能否相对 `active note` 压成一条足够短的 `bridge`
+2. 当前 `chunk` 能否相对 `active anchor` 压成一条足够短的 `delta`
 
 锚点分数来自三类信号：
 
@@ -176,16 +176,16 @@ a_t = alpha1 * scene + alpha2 * pred + alpha3 * layout
 
 压缩判决基于：
 
-- `bridge` 预算 `B = 0.3 * N_frame_tokens`
+- `delta` 预算 `B = 0.3 * N_frame_tokens`
 - 结构化重建误差 `E_rec`
 
-若满足以下任一条件，则当前 `chunk` 记为 `note`：
+若满足以下任一条件，则当前 `chunk` 记为 `anchor`：
 
 - 锚点分数足够高
-- 在预算 `B` 内无法稳定生成短 `bridge`
+- 在预算 `B` 内无法稳定生成短 `delta`
 - 结构化重建误差超过阈值
 
-否则记为 `bridge`。
+否则记为 `delta`。
 
 ### 3.4 四层数据组织
 
@@ -206,8 +206,8 @@ a_t = alpha1 * scene + alpha2 * pred + alpha3 * layout
 `state teacher` 输入：
 
 - 当前任务
-- 当前 `active note`
-- 历史 `bridge`
+- 当前 `active anchor`
+- 历史 `delta`
 - 最近视觉窗口
 - 当前 `chunk`
 - 可选结构化状态
@@ -215,16 +215,16 @@ a_t = alpha1 * scene + alpha2 * pred + alpha3 * layout
 输出只允许：
 
 ```text
-<state>note|bridge</state>
-<note>...</note>
-<bridge>...</bridge>
+<state>anchor|delta</state>
+<anchor t="..."></anchor>
+<delta t="...">...</delta>
 ```
 
 `response teacher` 输入：
 
 - 当前任务
-- 历史 `note`
-- 历史 `bridge`
+- 历史 `anchor`
+- 历史 `delta`
 - 最近视觉窗口
 - 当前 `chunk`
 
@@ -238,9 +238,9 @@ a_t = alpha1 * scene + alpha2 * pred + alpha3 * layout
 最终再拼成联合轨迹：
 
 ```text
-<state>note|bridge</state>
-<note>...</note>
-<bridge>...</bridge>
+<state>anchor|delta</state>
+<anchor t="..."></anchor>
+<delta t="...">...</delta>
 <response>silent|answer</response>
 <answer>...</answer>
 ```
@@ -292,11 +292,11 @@ r_keep_cost = -lambda * note_count / total_chunks
 
 - `recent-only`
 - `recent + text`
-- `recent + note + bridge (learned)`
+- `recent + anchor + delta (learned)`
 
 ### 4.2 关键消融
 
-- 全 `note` vs 全 `bridge`
+- 全 `anchor` vs 全 `delta`
 - 去掉 `silent`
 - 有无 RL
 - 不同 `lambda`
@@ -306,7 +306,7 @@ r_keep_cost = -lambda * note_count / total_chunks
 - 主战场：`OVO-Bench Backward Tracing`
 - 约束项：`StreamingBench 60s Main`
 - 时机指标：主动回答的 timing 质量
-- 效率指标：视觉保留率 = `note` 数 / 总 `chunk` 数
+- 效率指标：视觉保留率 = `anchor` 数 / 总 `chunk` 数
 
 核心图：
 
@@ -320,7 +320,7 @@ r_keep_cost = -lambda * note_count / total_chunks
 - `plain recent-window benchmark` 继续放在 `exp1/SimpleStream`
 - `StreamWeave` 的 baseline 和后续 agent 实现放在 `exp1/streamweave`
 - 第一版工程目标不是训练，而是先把：
-  - `note / bridge`
+  - `anchor / delta`
   - `silent / answer`
   - parser
   - state

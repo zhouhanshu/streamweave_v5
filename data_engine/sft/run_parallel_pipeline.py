@@ -559,7 +559,7 @@ def format_duration(value: float | None) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=DEFAULT_INPUT)
-    parser.add_argument("--source", choices=("frames",), default="frames")
+    parser.add_argument("--source", choices=("frames", "dataset2"), default="frames")
     parser.add_argument("--raw-data-root", type=Path, default=DEFAULT_RAW_DATA_ROOT)
     parser.add_argument("--output-dir", type=Path, default=Path("data_engine/sft/outputs/gemini_final_full"))
     parser.add_argument("--num-workers", type=int, default=4)
@@ -586,9 +586,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument("--max-notes-per-step", type=int, default=1)
     parser.add_argument("--bridge-note-reminder-seconds", type=float, default=20.0)
-    parser.add_argument("--answer-step-rollouts", type=int, default=5)
+    parser.add_argument("--answer-step-rollouts", type=int, default=2)
     parser.add_argument("--answer-step-temperature", type=float, default=0.3)
     parser.add_argument("--answer-step-top-p", type=float, default=0.95)
+    parser.add_argument("--no-open-answer-semantic-judge", dest="open_answer_semantic_judge", action="store_false", default=True)
 
     parser.add_argument("--backend", default="gemini")
     parser.add_argument("--model", default="gemini-2.5-pro")

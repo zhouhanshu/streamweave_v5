@@ -129,17 +129,17 @@ trajectory_score = 0.1 * mean(format_score)
 step score：
 
 - 默认配置中 `note_frequency_weight=0.3`、`judge_weight=0.7`。
-- 如果 judge 关闭，则 `step_score` 只来自 note frequency。
+- 如果 judge 关闭，则 `step_score` 只来自 anchor frequency。
 - 当前 8GPU GRPO launcher 默认开启 judge，因此 `step_score = 0.3 * note_frequency_score + 0.7 * judge_score`。
-- 每个窗口最多 1 个 note。
-- 连续 3 个窗口没有 note 会被惩罚。
-- 正常 `note_frequency_score=2.0`；一个窗口超过 1 个 note 或连续 3 个窗口无 note 时为 `0.0`。
+- 每个窗口最多 1 个 anchor。
+- 连续 3 个窗口没有 anchor 会被惩罚。
+- 正常 `note_frequency_score=2.0`；一个窗口超过 1 个 anchor 或连续 3 个窗口无 anchor 时为 `0.0`。
 
 LLM-as-Judge：
 
 - 评估 `keyframe_selection`、`bridge_quality`、`semantic_alignment`、`state_factuality`。
 - 配置文件默认 `judge.enable=false`，但 judge 权重默认保留为 `0.7`；8GPU launcher 默认显式开启 judge。
-- judge 被 note frequency gate 住：note frequency 没拿满分时，不调用 judge，`judge_score=0`。
+- judge 被 anchor frequency gate 住：anchor frequency 没拿满分时，不调用 judge，`judge_score=0`。
 
 日志字段：
 
@@ -222,7 +222,7 @@ reward/format 观测：
 判断：
 
 - fused/chunked 配置明显降低显存和训练侧耗时，性能方向是正的。
-- 但 resume 后 `format_score` 明显偏低，`step_score` 仍为 `0.0`；这批历史日志不能证明当前 note-frequency step reward 有效。
+- 但 resume 后 `format_score` 明显偏低，`step_score` 仍为 `0.0`；这批历史日志不能证明当前 anchor-frequency step reward 有效。
 - 在产出论文或主结果前，应重新跑一条明确使用当前 reward 配置的 run，或至少从 checkpoint 恢复后确认 reward 配置、格式率和 step_score。
 
 ### Run C：2026-05-09 judge-enabled GRPO 负结果
@@ -297,16 +297,16 @@ STREAMWEAVE_JUDGE_RETRY_BACKOFF_SECONDS=5.0
 
 本轮 reward 策略：
 
-- 输出协议：`<state>`、`<answer>`、timestamp-only `<note>`、`<bridge>`。
-- 分值统一放大：`score_scale=2.0`，因此 format、note frequency、judge、success 的满分都是 `2.0`。
+- 输出协议：`<state>`、`<answer>`、timestamp-only `<anchor>`、`<delta>`。
+- 分值统一放大：`score_scale=2.0`，因此 format、anchor frequency、judge、success 的满分都是 `2.0`。
 - trajectory 聚合权重：`w_format=0.3`、`w_step=0.3`、`w_success=0.4`。
 - `format_score`：基于 raw XML 输出计算，修复后的 action 只用于推进环境，不用于格式奖励。
-- `note_frequency_score`：每个窗口最多允许 `1` 个 note；一个窗口输出大于 `1` 个 note，或连续 `3` 个窗口没有 note，得 `0.0`；否则得 `2.0`。
+- `note_frequency_score`：每个窗口最多允许 `1` 个 anchor；一个窗口输出大于 `1` 个 anchor，或连续 `3` 个窗口没有 anchor，得 `0.0`；否则得 `2.0`。
 - `judge_score`：开启 Gemini LLM-as-judge，维度为 `keyframe_selection`、`bridge_quality`、`semantic_alignment`、`state_factuality`，每维 `0.0-1.0` 后聚合并乘以 `2.0`。
-- judge gate：如果当前 step 没拿到完整 note frequency 奖励，则不调用或不计 judge，`judge_score=0.0`。
-- judge prompt 特殊规则：如果当前帧窗口正好是 `0.0-5.0`，只有输出且仅输出 `note t="0.0-1.0"` 时，`keyframe_selection` 才能给 `1.0`；其他 note 时刻、缺 note 或多个 note 都给 `0.0`。
+- judge gate：如果当前 step 没拿到完整 anchor frequency 奖励，则不调用或不计 judge，`judge_score=0.0`。
+- judge prompt 特殊规则：如果当前帧窗口正好是 `0.0-5.0`，只有输出且仅输出 `anchor t="0.0-1.0"` 时，`keyframe_selection` 才能给 `1.0`；其他 anchor 时刻、缺 anchor 或多个 anchor 都给 `0.0`。
 - judge 输出结构：四个维度都要求返回 `score` 和简短 `reason`，用于 debug。
-- `step_score`：judge 开启且权重大于 `0` 时，由 note frequency 和 judge 加权平均得到；当前 `judge_weight=1.0`，等价于二者各占一半。
+- `step_score`：judge 开启且权重大于 `0` 时，由 anchor frequency 和 judge 加权平均得到；当前 `judge_weight=1.0`，等价于二者各占一半。
 - `success_score`：trajectory 结束时按 OVO answer scorer 计算，满分 `2.0`。
 - `trajectory_score = 0.3 * mean(format_score) + 0.3 * mean(step_score) + 0.4 * success_score`。
 - `turn_reward`：非终止 step 分摊 `format + step`，最后一个 step 额外加入 `success` 项；日志里的 `critic/score` 和 `critic/rewards` 主要对应 token-level turn reward，不等同于 trajectory score。
@@ -352,8 +352,8 @@ STREAMWEAVE_JUDGE_RETRY_BACKOFF_SECONDS=5.0
 
 - trajectory 聚合权重从 `format=0.3, step=0.3, success=0.4` 调整为 `format=0.1, step=0.2, success=0.7`。
 - 当前公式：`trajectory_score = 0.1 * mean(format_score) + 0.2 * mean(step_score) + 0.7 * success_score`。
-- step 内部权重从 note/judge 各半调整为 `note_frequency_weight=0.3`、`judge_weight=0.7`。
-- 目的：降低格式奖励占比，强化最终答案成功信号；step 部分更依赖 judge 内容质量，只保留 note frequency 作为频率约束。
+- step 内部权重从 anchor/judge 各半调整为 `note_frequency_weight=0.3`、`judge_weight=0.7`。
+- 目的：降低格式奖励占比，强化最终答案成功信号；step 部分更依赖 judge 内容质量，只保留 anchor frequency 作为频率约束。
 - 当前 8GPU launcher 对应环境变量默认值：`STREAMWEAVE_REWARD_NOTE_WEIGHT=0.3`、`STREAMWEAVE_REWARD_JUDGE_WEIGHT=0.7`。
 
 ## 配置问题与记录口径
@@ -376,41 +376,41 @@ STREAMWEAVE_JUDGE_RETRY_BACKOFF_SECONDS=5.0
 当前已经可工作的 reward 信号优先包括：
 
 - 格式分：XML/parser、字段完整性、stepwise 输出协议。
-- step 分：当前主要是 note frequency，可选 LLM/VLM judge 默认关闭。
+- step 分：当前主要是 anchor frequency，可选 LLM/VLM judge 默认关闭。
 - 成功分：最终 answer/trajectory 是否满足 OVO 任务，OVO scorer 会按 MCQ、REC、SSR、CRR 分别处理。
 - trajectory 聚合：对同一 query 的多条 rollout 做组内优化。
 
 后续再逐步增强：
 
 - 回答时机：早答/迟答、state 与 answer 是否一致、forward 是否提前答。
-- memory 成本：note 数、bridge token、long bridge、open-tail bridge。
+- memory 成本：anchor 数、delta token、long delta、open-tail delta。
 - 语义保真：先做离线 evaluator，不要一开始塞进主训练阻塞链路。
 
-## Bridge Reward 设计
+## Delta Reward 设计
 
-Bridge 的目标不是写得长，而是把两个视觉 anchor 之间的状态变化压缩成后续推理可用的记忆。后续 reward 可以分三层推进：
+Delta 的目标不是写得长，而是把两个视觉 anchor 之间的状态变化压缩成后续推理可用的记忆。后续 reward 可以分三层推进：
 
 - 结构 reward：
-  - bridge 时间段必须准确覆盖 note/window gap。
-  - open-tail bridge 必须正确继承起点。
-  - bridge 不应和 note 时间重叠。
+  - delta 时间段必须准确覆盖 anchor/window gap。
+  - open-tail delta 必须正确继承起点。
+  - delta 不应和 anchor 时间重叠。
 - 信息 reward：
-  - bridge 应包含实体、动作、状态变化、数量变化、位置变化等可用于推理的信息。
-  - 对空泛句、重复上一段 memory、没有对象或状态描述的 bridge 给惩罚。
+  - delta 应包含实体、动作、状态变化、数量变化、位置变化等可用于推理的信息。
+  - 对空泛句、重复上一段 memory、没有对象或状态描述的 delta 给惩罚。
 - 一致性 reward：
-  - bridge 不能和相邻 note 图像矛盾。
+  - delta 不能和相邻 anchor 图像矛盾。
   - 可以先用 teacher/VLM judge 或 caption overlap 做弱 reward。
-  - 更稳的路线是先离线生成 reference bridge，再训练轻量 reward model 或用相似度打分。
+  - 更稳的路线是先离线生成 reference delta，再训练轻量 reward model 或用相似度打分。
 
-不要一开始把强 LLM/VLM judge 放进在线 RL 主链路：成本高、延迟大、稳定性差。更实用的路线是 SFT 阶段先生成高质量 bridge，RL 阶段主要奖励结构覆盖、非空泛、弱一致性和最终 QA 增益。
+不要一开始把强 LLM/VLM judge 放进在线 RL 主链路：成本高、延迟大、稳定性差。更实用的路线是 SFT 阶段先生成高质量 delta，RL 阶段主要奖励结构覆盖、非空泛、弱一致性和最终 QA 增益。
 
 ## RL 训练课程
 
 提高图文交错记忆推理能力不能只调最终 reward，需要分阶段训练：
 
-1. SFT warmup：先让模型学会 XML 协议、state/answer 判断、note/bridge 风格，减少 RL 在格式探索上的浪费。
-2. Process RL：先提高 `w_step`，重点训练 keyframe selection 和 bridge 行为；最终 QA reward 保留，但不要唯一主导。
-3. Answer RL：等 note/bridge 行为稳定后，再提高 `w_success`，让模型学习利用 memory 和当前帧进行问答。
+1. SFT warmup：先让模型学会 XML 协议、state/answer 判断、anchor/delta 风格，减少 RL 在格式探索上的浪费。
+2. Process RL：先提高 `w_step`，重点训练 keyframe selection 和 delta 行为；最终 QA reward 保留，但不要唯一主导。
+3. Answer RL：等 anchor/delta 行为稳定后，再提高 `w_success`，让模型学习利用 memory 和当前帧进行问答。
 
 这条课程的核心假设是：先把“会记、会写、会按时间组织记忆”练稳，再让最终答案 reward 主导推理能力提升。
 
