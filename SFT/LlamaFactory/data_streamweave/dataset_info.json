@@ -82,5 +82,19 @@
       "user_tag": "user",
       "assistant_tag": "assistant"
     }
+  },
+  "streamweave_sft_0511_note": {
+    "file_name": "/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset2/sft_0511_note.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages",
+      "images": "images"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant"
+    }
   }
 }

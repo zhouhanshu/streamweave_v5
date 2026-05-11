@@ -56,12 +56,18 @@ class SupervisedDatasetProcessor(DatasetProcessor):
         images: list["ImageInput"],
         videos: list["VideoInput"],
         audios: list["AudioInput"],
-    ) -> tuple[list[int], list[int]]:
+    ) -> Optional[tuple[list[int], list[int]]]:
         messages = self.template.mm_plugin.process_messages(prompt + response, images, videos, audios, self.processor)
         input_ids, labels = self.template.mm_plugin.process_token_ids(
             [], [], images, videos, audios, self.tokenizer, self.processor
         )
         encoded_pairs = self.template.encode_multiturn(self.tokenizer, messages, system, tools)
+        mm_token_ids = self._get_mm_token_ids()
+        full_mm_token_count = self._count_token_ids(input_ids, mm_token_ids)
+        for source_ids, target_ids in encoded_pairs:
+            full_mm_token_count += self._count_token_ids(source_ids, mm_token_ids)
+            full_mm_token_count += self._count_token_ids(target_ids, mm_token_ids)
+
         total_length = len(input_ids) + (1 if self.template.efficient_eos else 0)
         if self.data_args.mask_history:
             encoded_pairs = encoded_pairs[::-1]  # high priority for last turns
@@ -100,7 +106,39 @@ class SupervisedDatasetProcessor(DatasetProcessor):
             input_ids += [self.tokenizer.eos_token_id]
             labels += [self.tokenizer.eos_token_id]
 
+        kept_mm_token_count = self._count_token_ids(input_ids, mm_token_ids)
+        if kept_mm_token_count != full_mm_token_count:
+            logger.warning_rank0_once(
+                "Dropped example because cutoff_len truncated multimodal placeholder tokens "
+                f"({kept_mm_token_count} kept, {full_mm_token_count} expected). "
+                "Increase cutoff_len or reduce image/video tokens to keep these samples."
+            )
+            return None
+
         return input_ids, labels
+
+    def _get_mm_token_ids(self) -> set[int]:
+        token_ids = set()
+        for token in (
+            self.template.mm_plugin.image_token,
+            self.template.mm_plugin.video_token,
+            self.template.mm_plugin.audio_token,
+        ):
+            if token is None:
+                continue
+
+            token_id = self.tokenizer.convert_tokens_to_ids(token)
+            if isinstance(token_id, int) and token_id >= 0:
+                token_ids.add(token_id)
+
+        return token_ids
+
+    @staticmethod
+    def _count_token_ids(input_ids: list[int], token_ids: set[int]) -> int:
+        if len(token_ids) == 0:
+            return 0
+
+        return sum(token_id in token_ids for token_id in input_ids)
 
     def preprocess_dataset(self, examples: dict[str, list[Any]]) -> dict[str, list[Any]]:
         # build inputs with format `<bos> X Y <eos>` and labels with format `<ignore> ... <ignore> Y <eos>`
@@ -113,7 +151,7 @@ class SupervisedDatasetProcessor(DatasetProcessor):
                 )
                 continue
 
-            input_ids, labels = self._encode_data_example(
+            encoded = self._encode_data_example(
                 prompt=examples["_prompt"][i],
                 response=examples["_response"][i],
                 system=examples["_system"][i],
@@ -122,6 +160,10 @@ class SupervisedDatasetProcessor(DatasetProcessor):
                 videos=examples["_videos"][i] or [],
                 audios=examples["_audios"][i] or [],
             )
+            if encoded is None:
+                continue
+
+            input_ids, labels = encoded
             model_inputs["input_ids"].append(input_ids)
             model_inputs["attention_mask"].append([1] * len(input_ids))
             model_inputs["labels"].append(labels)
@@ -156,7 +198,7 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
                 )
                 continue
 
-            input_ids, labels = self._encode_data_example(
+            encoded = self._encode_data_example(
                 prompt=examples["_prompt"][i],
                 response=examples["_response"][i],
                 system=examples["_system"][i],
@@ -165,6 +207,10 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
                 videos=examples["_videos"][i] or [],
                 audios=examples["_audios"][i] or [],
             )
+            if encoded is None:
+                continue
+
+            input_ids, labels = encoded
             length = len(input_ids)
             if length > self.data_args.cutoff_len:
                 logger.warning_rank0(f"Dropped lengthy example with length {length} > {self.data_args.cutoff_len}.")

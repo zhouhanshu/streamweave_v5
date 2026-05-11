@@ -3,8 +3,8 @@ set -euo pipefail
 
 LF_ROOT=/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/SFT/LlamaFactory
 CONDA_ENV=/mmu_mllm_hdd/zhouhanshu/conda/envs/llama_0425
-CONFIG=configs/qwen3vl_8b_full_sft_streamweave_0511_150k_6to4.yaml
-OUTPUT_DIR=saves/qwen3-vl-8b/full/streamweave_sft_0511_150k_6to4
+CONFIG=configs/qwen3vl_8b_full_sft_streamweave_0511_note.yaml
+OUTPUT_DIR=saves/qwen3-vl-8b/full/streamweave_sft_0511_note
 
 cd "$LF_ROOT"
 

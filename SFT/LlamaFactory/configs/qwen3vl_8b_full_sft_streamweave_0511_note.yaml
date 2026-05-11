@@ -14,18 +14,18 @@ freeze_language_model: false
 deepspeed: examples/deepspeed/ds_z3_config.json
 
 ### dataset
-dataset: streamweave_sft_0511_150k_6to4
+dataset: streamweave_sft_0511_note
 dataset_dir: data_streamweave
 media_dir: /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset2
 template: qwen3_vl_nothink
 cutoff_len: 12288
 preprocessing_num_workers: 32
-dataloader_num_workers: 0
-tokenized_path: /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/SFT/LlamaFactory/cache/streamweave_sft_0511_150k_6to4
+dataloader_num_workers: 8
+tokenized_path: /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/SFT/LlamaFactory/cache/streamweave_sft_0511_note
 overwrite_cache: true
 
 ### output
-output_dir: saves/qwen3-vl-8b/full/streamweave_sft_0511_150k_6to4
+output_dir: saves/qwen3-vl-8b/full/streamweave_sft_0511_note
 logging_steps: 1
 save_steps: 200
 save_total_limit: 5
@@ -35,7 +35,7 @@ save_only_model: false
 report_to: swanlab
 use_swanlab: true
 swanlab_project: streamweave-sft
-swanlab_run_name: qwen3vl-8b-full-streamweave-sft-0511-150k-6to4
+swanlab_run_name: qwen3vl-8b-full-streamweave-sft-0511-note
 
 ### train
 per_device_train_batch_size: 2

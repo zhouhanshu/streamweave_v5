@@ -31,6 +31,61 @@ logger = logging.getLogger(__name__)
 MLFLOW_MAX_ATTEMPTS = 3
 MLFLOW_SLEEP_SECONDS = 5
 
+_COMPACT_CONSOLE_METRIC_KEYS = (
+    "training/global_step",
+    "training/epoch",
+    "traj/score_mean",
+    "traj/score_std",
+    "traj/valid_group_ratio",
+    "traj/total_groups",
+    "traj/valid_groups",
+    "traj/dapo_kept_row_ratio",
+    "traj/dapo_filtered_groups",
+    "traj/score/mean",
+    "traj/score/max",
+    "traj/score/min",
+    "traj/success/mean",
+    "streamweave/format_score/mean",
+    "streamweave/step_score/mean",
+    "streamweave/note_frequency_score/mean",
+    "streamweave/judge_score/mean",
+    "streamweave/turn_reward/mean",
+    "actor/lr",
+    "actor/entropy",
+    "actor/pg_loss",
+    "actor/ppo_kl",
+    "actor/pg_clipfrac",
+    "actor/grad_norm",
+    "critic/advantages/mean",
+    "critic/advantages/max",
+    "critic/advantages/min",
+    "prompt_length/mean",
+    "prompt_length/max",
+    "prompt_length/clip_ratio",
+    "response_length/mean",
+    "response_length/max",
+    "response_length/clip_ratio",
+    "timing_s/gen",
+    "timing_s/old_log_prob",
+    "timing_s/update_actor",
+    "timing_s/update_weights",
+    "timing_s/reward",
+    "timing_s/step",
+    "perf/total_num_tokens",
+    "perf/throughput",
+    "perf/max_memory_allocated_gb",
+    "perf/max_memory_reserved_gb",
+    "perf/cpu_memory_used_gb",
+)
+
+
+def _filter_console_metrics(data: dict[str, Any]) -> dict[str, Any]:
+    mode = os.environ.get("STREAMWEAVE_CONSOLE_METRICS", "full").strip().lower()
+    if mode not in {"compact", "short"}:
+        return data
+    compact = {key: data[key] for key in _COMPACT_CONSOLE_METRIC_KEYS if key in data}
+    return compact or data
+
 
 class Tracking:
     """A unified tracking interface for logging experiment data to multiple backends.
@@ -179,9 +234,10 @@ class Tracking:
             self.logger["file"] = FileLogger(project_name, experiment_name)
 
     def log(self, data, step, backend=None):
+        logger_data = _filter_console_metrics(data)
         for default_backend, logger_instance in self.logger.items():
             if backend is None or default_backend in backend:
-                logger_instance.log(data=data, step=step)
+                logger_instance.log(data=logger_data, step=step)
 
     def __del__(self):
         if "wandb" in self.logger:
