@@ -70,6 +70,12 @@ class StreamWeaveAgentLoop(AgentLoopBase):
 
                 output.reward_score = float(reward)
                 output.num_turns = 1
+                reward_info_dict = info.get("reward_info", {}) or {}
+                # Flatten judge_status / judge_error to the top level of
+                # reward_extra_info so they survive _postprocess and become
+                # columns in non_tensor_batch (otherwise they stay buried in
+                # the nested "reward_info" object column and are invisible to
+                # the stepwise metrics aggregator).
                 reward_extra_info = {
                     "format_score": float(info.get("format_score", 0.0)),
                     "step_score": float(info.get("step_score", 0.0)),
@@ -77,7 +83,9 @@ class StreamWeaveAgentLoop(AgentLoopBase):
                     "judge_score": float(info.get("judge_score", 0.0)),
                     "success_score": float(info.get("success_score", 0.0)),
                     "trajectory_score": float(info.get("trajectory_score", 0.0)),
-                    "reward_info": info.get("reward_info", {}),
+                    "judge_status": str(reward_info_dict.get("judge_status", "disabled")),
+                    "judge_error": str(reward_info_dict.get("judge_error", "") or ""),
+                    "reward_info": reward_info_dict,
                 }
                 output.extra_fields.update(
                     {
@@ -406,6 +414,10 @@ def _finalize_aborted_outputs(
             "judge_score": 0.0,
             "success_score": 0.0,
             "trajectory_score": 0.0,
+            # Keep these keys aligned with the non-abort branch so
+            # _postprocess produces a stable non_tensor_batch schema.
+            "judge_status": "aborted",
+            "judge_error": "",
             "reward_info": {"rollout_error": reason},
         }
         item.extra_fields.update(

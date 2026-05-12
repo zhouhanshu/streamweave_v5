@@ -70,6 +70,8 @@
 - Gemini Pro 不支持把 Flash 的 thinking 参数直接照搬；`thinking_budget=0` 可能导致大量 `400 INVALID_ARGUMENT`。
 - retryable API 错误要 sample-level 重跑，不能把失败请求写成 done 后继续统计。
 - 共享磁盘上控制 GPU 占用的 pid/log 文件必须按 hostname 隔离，否则两台机器会互相覆盖。
+- RL stepwise 训练当前建议继续走 `trainer.use_legacy_worker_impl=enable`。如果改成 `disable` 且同时 `critic.enable=true`，non-legacy critic 的 `_compute_values/_update_critic` 没有像 actor 一样给 stepwise 变长 row 做 padding，DAPO 过滤后 batch 行数可能不满足 DP/mini-batch 整除要求。
+- RL stepwise 训练当前建议保持 `trainer.balance_batch=false`。stepwise 是一 turn 一 row，行数随 trajectory 长度和 DAPO 过滤变化；`balance_batch=true` 会在 padding 前用 `equal_size=True` 做 DP 分组，要求 `len(batch) % dp_size == 0`，变长 stepwise batch 不保证满足。
 
 ## 当前下一步
 

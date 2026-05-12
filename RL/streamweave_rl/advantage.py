@@ -307,3 +307,275 @@ def _config_get_float(config: Any, key: str, default: float) -> float:
         return float(config.get(key, default))
     except AttributeError:
         return float(getattr(config, key, default))
+
+
+def _config_get_bool(config: Any, key: str, default: bool) -> bool:
+    if config is None:
+        return bool(default)
+    try:
+        value = config.get(key, default)
+    except AttributeError:
+        value = getattr(config, key, default)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _config_get_sequence(config: Any, key: str, default: list[Any]) -> list[Any]:
+    if config is None:
+        return list(default)
+    try:
+        value = config.get(key, default)
+    except AttributeError:
+        value = getattr(config, key, default)
+    if value is None:
+        return list(default)
+    if isinstance(value, str):
+        items = [item.strip() for item in value.split(",")]
+        return [item for item in items if item]
+    try:
+        return [item for item in value]
+    except TypeError:
+        return list(default)
+
+
+@register_adv_est("streamweave_stepwise_rlmlr")
+def compute_streamweave_stepwise_rlmlr(
+    data,
+    gamma=1.0,
+    lam=1.0,
+    config=None,
+    epsilon: float = 1e-6,
+    norm_adv_by_std_in_grpo: bool = True,
+    **kwargs,
+):
+    """RLMLR-style stepwise advantage.
+
+    Implements the multi-level reward scheme from "Look Back to Reason Forward"
+    (arXiv 2509.23040). Two clean signals are kept separate so they don't double-count:
+
+    - **outcome reward** (default: ``success_score``) is the trajectory-level
+      final-answer signal, normalized inside each ``group_idx`` group. ``success_score``
+      is back-filled into every turn output at episode end, so taking the first
+      occurrence per ``(group, traj)`` is sufficient.
+    - **state reward** is a turn-level process signal assembled from one or more
+      components (default: ``step_score + format_score``), normalized inside each
+      ``(group, turn)`` cohort so step-level baselines only compare same-turn rollouts.
+
+    NOTE: do NOT default the outcome to ``trajectory_score`` — that field already
+    bakes ``w_format * format_mean + w_step * step_mean + w_success * success_score``
+    together (see ``rewards.compute_trajectory_reward``), so feeding it as outcome
+    while also adding state reward would re-credit the process signal twice.
+    The legacy behaviour stays reachable via ``rlmlr_outcome_key=trajectory_score``
+    for ablation purposes.
+
+    By default we omit the std term, matching the paper's recommendation. The two
+    advantages are blended with alpha (default 0.8 favouring outcome):
+        A_t = alpha * A_out + (1 - alpha) * A_state,t
+    """
+    del gamma, lam, norm_adv_by_std_in_grpo, kwargs
+    response_mask = data.batch["response_mask"]
+    device = response_mask.device
+
+    alpha = _config_get_float(config, "rlmlr_alpha", 0.8)
+    alpha = min(max(alpha, 0.0), 1.0)
+    norm_by_std = _config_get_bool(config, "rlmlr_norm_by_std", False)
+    outcome_key = str(_config_get_str(config, "rlmlr_outcome_key", "success_score"))
+    state_components = _config_get_sequence(config, "rlmlr_state_components", ["step_score", "format_score"])
+    state_components = [str(item) for item in state_components if str(item).strip()]
+    raw_weights = _config_get_sequence(config, "rlmlr_state_weights", [])
+    state_weights = _coerce_state_weights(raw_weights, len(state_components))
+
+    if outcome_key not in data.non_tensor_batch:
+        raise KeyError(
+            f"streamweave_stepwise_rlmlr outcome key {outcome_key!r} not found in non_tensor_batch; "
+            f"available keys include {sorted(data.non_tensor_batch.keys())}"
+        )
+    if not state_components:
+        raise ValueError("streamweave_stepwise_rlmlr requires at least one state component")
+    for required in state_components:
+        if required not in data.non_tensor_batch:
+            raise KeyError(
+                f"streamweave_stepwise_rlmlr state component {required!r} not found in non_tensor_batch"
+            )
+
+    with torch.no_grad():
+        uniq_key, first_idx, inverse = _unique_turn_rows(data)
+        first_idx_t = torch.as_tensor(first_idx, dtype=torch.long, device=device)
+        mask_u = response_mask.index_select(0, first_idx_t).to(dtype=torch.float32)
+
+        group = uniq_key[:, 0]
+        traj = uniq_key[:, 1]
+        turn = uniq_key[:, 2]
+        raw_groups = np.asarray(data.non_tensor_batch["group_idx"], dtype=object).reshape(-1)
+        group_labels = {int(group[row]): str(raw_groups[int(first_idx[row])]) for row in range(len(first_idx))}
+
+        outcome_full = _to_float_array(data.non_tensor_batch[outcome_key])
+        outcome_scores = outcome_full[first_idx]
+
+        state_scores = np.zeros(len(first_idx), dtype=np.float32)
+        for component, weight in zip(state_components, state_weights, strict=True):
+            component_full = _to_float_array(data.non_tensor_batch[component])
+            state_scores = state_scores + float(weight) * component_full[first_idx]
+
+        outcome_by_traj: dict[tuple[int, int], float] = {}
+        for row, score in enumerate(outcome_scores):
+            outcome_by_traj[(int(group[row]), int(traj[row]))] = float(score)
+
+        group_to_outcome: dict[int, list[tuple[int, float]]] = defaultdict(list)
+        for (group_id, traj_id), score in outcome_by_traj.items():
+            group_to_outcome[group_id].append((traj_id, score))
+
+        adv_outcome: dict[tuple[int, int], float] = {}
+        for group_id, items in group_to_outcome.items():
+            values = torch.tensor([score for _, score in items], dtype=torch.float32, device=device)
+            normed = _normalize_centered(values, norm_by_std=norm_by_std, epsilon=epsilon)
+            for (traj_id, _), adv in zip(items, normed.tolist(), strict=True):
+                adv_outcome[(group_id, traj_id)] = float(adv)
+
+        group_turn_to_state: dict[tuple[int, int], list[tuple[int, float]]] = defaultdict(list)
+        for row, score in enumerate(state_scores):
+            key = (int(group[row]), int(turn[row]))
+            group_turn_to_state[key].append((int(traj[row]), float(score)))
+
+        adv_state: dict[tuple[int, int, int], float] = {}
+        for (group_id, turn_id), items in group_turn_to_state.items():
+            values = torch.tensor([score for _, score in items], dtype=torch.float32, device=device)
+            normed = _normalize_centered(values, norm_by_std=norm_by_std, epsilon=epsilon)
+            for (traj_id, _), adv in zip(items, normed.tolist(), strict=True):
+                adv_state[(group_id, traj_id, turn_id)] = float(adv)
+
+        if _trace_rlmlr_enabled():
+            _trace_rlmlr_groups(
+                group_to_outcome=group_to_outcome,
+                group_turn_to_state=group_turn_to_state,
+                adv_outcome=adv_outcome,
+                adv_state=adv_state,
+                group_labels=group_labels,
+                alpha=alpha,
+                norm_by_std=norm_by_std,
+                outcome_key=outcome_key,
+                state_components=state_components,
+                state_weights=state_weights,
+            )
+
+        advantages_u = torch.zeros_like(mask_u)
+        for row in range(len(first_idx)):
+            g_id = int(group[row])
+            t_id = int(traj[row])
+            tu_id = int(turn[row])
+            adv_out = adv_outcome.get((g_id, t_id), 0.0)
+            adv_st = adv_state.get((g_id, t_id, tu_id), 0.0)
+            adv_combined = alpha * adv_out + (1.0 - alpha) * adv_st
+            advantages_u[row] = float(adv_combined) * mask_u[row]
+
+        inverse_t = torch.as_tensor(inverse, dtype=torch.long, device=device)
+        advantages = advantages_u.index_select(0, inverse_t)
+        returns_u = torch.as_tensor(outcome_scores, dtype=torch.float32, device=device).unsqueeze(-1) * mask_u
+        returns = returns_u.index_select(0, inverse_t)
+    return advantages, returns
+
+
+def _coerce_state_weights(weights: list[Any], num_components: int) -> list[float]:
+    if num_components <= 0:
+        return []
+    if not weights:
+        return [1.0] * num_components
+    if len(weights) != num_components:
+        raise ValueError(
+            f"rlmlr_state_weights length {len(weights)} must match rlmlr_state_components length {num_components}"
+        )
+    out: list[float] = []
+    for value in weights:
+        try:
+            out.append(float(value))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"rlmlr_state_weights contains non-numeric value: {value!r}") from exc
+    return out
+
+
+def _config_get_str(config: Any, key: str, default: str) -> str:
+    if config is None:
+        return str(default)
+    try:
+        value = config.get(key, default)
+    except AttributeError:
+        value = getattr(config, key, default)
+    if value is None:
+        return str(default)
+    return str(value)
+
+
+def _normalize_centered(
+    values: torch.Tensor,
+    *,
+    norm_by_std: bool,
+    epsilon: float,
+) -> torch.Tensor:
+    if values.numel() <= 1:
+        return torch.zeros_like(values)
+    centered = values - values.mean()
+    if norm_by_std:
+        return centered / (values.std(unbiased=True) + epsilon)
+    return centered
+
+
+def _trace_rlmlr_enabled() -> bool:
+    return env_flag(
+        "STREAMWEAVE_TRACE_RLMLR_GROUPS",
+        default=env_flag("STREAMWEAVE_TRACE_FIRST_ROLLOUT", default=False),
+    )
+
+
+def _trace_rlmlr_groups(
+    *,
+    group_to_outcome: dict[int, list[tuple[int, float]]],
+    group_turn_to_state: dict[tuple[int, int], list[tuple[int, float]]],
+    adv_outcome: dict[tuple[int, int], float],
+    adv_state: dict[tuple[int, int, int], float],
+    group_labels: dict[int, str],
+    alpha: float,
+    norm_by_std: bool,
+    outcome_key: str = "success_score",
+    state_components: list[str] | None = None,
+    state_weights: list[float] | None = None,
+) -> None:
+    for group_id in sorted(group_to_outcome, key=lambda item: group_labels.get(int(item), str(item))):
+        if not trace_group_allowed(group_labels.get(int(group_id), str(group_id))):
+            continue
+        items = sorted(group_to_outcome[group_id], key=lambda item: item[0])
+        outcome_values = np.asarray([score for _, score in items], dtype=np.float32)
+        outcome_mean = float(outcome_values.mean()) if outcome_values.size else 0.0
+        outcome_std = float(outcome_values.std(ddof=1)) if outcome_values.size > 1 else 0.0
+        outcome_scores = {int(traj_id): round(float(score), 4) for traj_id, score in items}
+        outcome_advs = {
+            int(traj_id): round(float(adv_outcome.get((int(group_id), int(traj_id)), 0.0)), 4)
+            for traj_id, _ in items
+        }
+        turn_keys = sorted(turn_id for (g_id, turn_id) in group_turn_to_state if g_id == group_id)
+        state_summary = {}
+        for turn_id in turn_keys:
+            state_items = sorted(group_turn_to_state[(group_id, turn_id)], key=lambda item: item[0])
+            state_summary[int(turn_id)] = {
+                "scores": {int(t_id): round(float(s), 4) for t_id, s in state_items},
+                "advs": {
+                    int(t_id): round(
+                        float(adv_state.get((int(group_id), int(t_id), int(turn_id)), 0.0)),
+                        4,
+                    )
+                    for t_id, _ in state_items
+                },
+            }
+        components_label = ""
+        if state_components:
+            weights = state_weights or [1.0] * len(state_components)
+            components_label = " state_components=" + ",".join(
+                f"{name}*{weight:.2f}" for name, weight in zip(state_components, weights, strict=False)
+            )
+        trace_print(
+            "[SW-TRACE rlmlr-group] "
+            f"group={group_labels.get(int(group_id), str(group_id))} "
+            f"alpha={alpha:.3f} norm_by_std={norm_by_std} outcome_key={outcome_key}{components_label} "
+            f"outcome_scores={outcome_scores} outcome_mean={outcome_mean:.4f} outcome_std={outcome_std:.4f} "
+            f"outcome_advs={outcome_advs} state={state_summary}"
+        )

@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import threading
 import time
 from dataclasses import dataclass, field, fields
 from typing import Any
 
+from backend.base import BaseBackend
 from backend.factory import create_backend
 from streamweave.config import BackendConfig, RuntimeConfig
 from streamweave.schemas import ContentItem, FrameRef, ModelAction, QualityReport
@@ -16,6 +18,75 @@ from streamweave.schemas import ContentItem, FrameRef, ModelAction, QualityRepor
 
 JUDGE_PROMPT_VERSION = "streamweave_step_judge_v3"
 JUDGE_SCORE_KEYS = ("keyframe_selection", "bridge_quality", "semantic_alignment", "state_factuality")
+
+
+# Backends are expensive to instantiate (GeminiBackend builds a google-genai
+# client; OpenAICompatibleBackend opens an HTTP session) and StepJudge is
+# instantiated once per StreamWeaveRLEnv -> i.e. per rollout trajectory. Without
+# a cache we end up paying that init cost batch_size * rollout.n times per
+# training step. Cache by JudgeConfig identity so different judge configs (e.g.
+# different model / base_url) stay isolated.
+_JUDGE_BACKEND_CACHE: dict[tuple, BaseBackend] = {}
+_JUDGE_BACKEND_LOCK = threading.Lock()
+
+
+def _judge_backend_cache_key(config: JudgeConfig) -> tuple:
+    return (
+        str(config.backend),
+        str(config.model),
+        str(config.base_url),
+        str(config.api_key),
+        str(config.api_key_env),
+        int(config.max_tokens),
+        float(config.timeout_seconds),
+        int(config.image_quality),
+        int(config.max_image_side),
+        int(config.max_retries),
+        float(config.retry_backoff_seconds),
+        float(config.retry_backoff_multiplier),
+    )
+
+
+def _build_backend(config: JudgeConfig) -> BaseBackend:
+    backend_config = BackendConfig(
+        backend=config.backend,
+        model=config.model,
+        base_url=config.base_url,
+        api_key=config.api_key,
+        api_key_env=config.api_key_env,
+        max_tokens=config.max_tokens,
+        temperature=config.temperature,
+        top_p=config.top_p,
+        timeout_seconds=config.timeout_seconds,
+        image_quality=config.image_quality,
+        max_retries=config.max_retries,
+        retry_backoff_seconds=config.retry_backoff_seconds,
+        retry_backoff_multiplier=config.retry_backoff_multiplier,
+    )
+    runtime = RuntimeConfig(resolution=config.max_image_side)
+    return create_backend(backend_config, runtime)
+
+
+def get_judge_backend(config: JudgeConfig) -> BaseBackend:
+    """Return a process-local shared backend for the given judge config.
+
+    Multiple StepJudge instances with the same judge config share one backend
+    so we only pay client-init cost once per process (or once per distinct
+    config). Thread-safe via _JUDGE_BACKEND_LOCK.
+    """
+    cache_key = _judge_backend_cache_key(config)
+    with _JUDGE_BACKEND_LOCK:
+        backend = _JUDGE_BACKEND_CACHE.get(cache_key)
+        if backend is None:
+            backend = _build_backend(config)
+            _JUDGE_BACKEND_CACHE[cache_key] = backend
+        return backend
+
+
+def reset_judge_backend_cache() -> None:
+    """Clear the cache. Intended for tests only."""
+    with _JUDGE_BACKEND_LOCK:
+        _JUDGE_BACKEND_CACHE.clear()
 
 
 @dataclass(slots=True)
@@ -55,7 +126,6 @@ class JudgeResult:
 class StepJudge:
     def __init__(self, config: JudgeConfig) -> None:
         self.config = config
-        self._backend = None
 
     async def score_step(
         self,
@@ -108,25 +178,7 @@ class StepJudge:
             )
 
     def _ensure_backend(self):
-        if self._backend is None:
-            backend_config = BackendConfig(
-                backend=self.config.backend,
-                model=self.config.model,
-                base_url=self.config.base_url,
-                api_key=self.config.api_key,
-                api_key_env=self.config.api_key_env,
-                max_tokens=self.config.max_tokens,
-                temperature=self.config.temperature,
-                top_p=self.config.top_p,
-                timeout_seconds=self.config.timeout_seconds,
-                image_quality=self.config.image_quality,
-                max_retries=self.config.max_retries,
-                retry_backoff_seconds=self.config.retry_backoff_seconds,
-                retry_backoff_multiplier=self.config.retry_backoff_multiplier,
-            )
-            runtime = RuntimeConfig(resolution=self.config.max_image_side)
-            self._backend = create_backend(backend_config, runtime)
-        return self._backend
+        return get_judge_backend(self.config)
 
 
 def judge_config_from_mapping(data: Any) -> JudgeConfig:

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import shutil
 from typing import TYPE_CHECKING, Literal, Optional, Union
 
 import numpy as np
@@ -283,6 +284,24 @@ def get_dataset(
     processor: Optional["ProcessorMixin"] = None,
 ) -> "DatasetModule":
     r"""Get the train dataset and optionally gets the evaluation dataset."""
+    # Honor overwrite_cache against the saved tokenized_path. Without this, a stale
+    # cache built with different image_max_pixels/cutoff_len/etc. will silently be
+    # reused and cause runtime token-vs-feature mismatches in VLM training.
+    if (
+        data_args.tokenized_path is not None
+        and data_args.overwrite_cache
+        and has_tokenized_data(data_args.tokenized_path)
+    ):
+        with training_args.main_process_first(
+            desc="clear stale tokenized cache",
+            local=(not data_args.data_shared_file_system),
+        ):
+            if training_args.should_save:
+                logger.warning_rank0(
+                    f"overwrite_cache=true: removing existing tokenized_path before rebuild: {data_args.tokenized_path}"
+                )
+                shutil.rmtree(data_args.tokenized_path, ignore_errors=True)
+
     # Load tokenized dataset if path exists
     if data_args.tokenized_path is not None:
         if has_tokenized_data(data_args.tokenized_path):

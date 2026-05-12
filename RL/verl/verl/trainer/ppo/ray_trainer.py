@@ -167,6 +167,45 @@ def _compute_streamweave_stepwise_metrics(batch: DataProto) -> dict[str, Any]:
         if key in non_tensor_batch:
             _add_metric_stats(metrics, f"streamweave/{key}", non_tensor_batch[key])
 
+    if "judge_status" in non_tensor_batch:
+        statuses = [str(item) for item in np.asarray(non_tensor_batch["judge_status"], dtype=object).reshape(-1)]
+        total = len(statuses)
+        if total > 0:
+            # Keep this list aligned with JudgeResult.status producers in
+            # streamweave_rl/judge.py and the aborted-output branch in
+            # streamweave_rl/agent_loop_stepwise.py._finalize_aborted_outputs.
+            known_statuses = (
+                "ok",
+                "mock",
+                "error",
+                "disabled",
+                "skipped_invalid",
+                "blocked_note_frequency",
+                "aborted",
+            )
+            counts = {name: 0 for name in known_statuses}
+            other = 0
+            for status in statuses:
+                if status in counts:
+                    counts[status] += 1
+                else:
+                    other += 1
+            for name, count in counts.items():
+                metrics[f"streamweave/judge_status/{name}_rate"] = count / total
+            if other > 0:
+                metrics["streamweave/judge_status/other_rate"] = other / total
+            success_count = counts["ok"] + counts["mock"]
+            metrics["streamweave/judge_success_rate"] = success_count / total
+            metrics["streamweave/judge_failure_rate"] = counts["error"] / total
+            metrics["streamweave/judge_total_steps"] = float(total)
+
+    if "judge_error" in non_tensor_batch:
+        errors = [str(item) for item in np.asarray(non_tensor_batch["judge_error"], dtype=object).reshape(-1)]
+        total = len(errors)
+        if total > 0:
+            nonempty = sum(1 for e in errors if e)
+            metrics["streamweave/judge_error_message_rate"] = nonempty / total
+
     return metrics
 
 
