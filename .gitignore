@@ -19,6 +19,7 @@ SFT/LlamaFactory/saves/
 SFT/LlamaFactory/output/
 SFT/LlamaFactory/outputs/
 SFT/LlamaFactory/runs/
+SFT/LlamaFactory/logs/
 SFT/LlamaFactory/swanlab/
 SFT/LlamaFactory/*.log
 dataset/

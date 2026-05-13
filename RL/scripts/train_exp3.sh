@@ -5,7 +5,7 @@ RL_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 V5_DIR="$(cd -- "${RL_DIR}/.." && pwd)"
 PYTHON_BIN="/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/python"
 
-RUN_NAME="exp2_rlmlr"
+RUN_NAME="${STREAMWEAVE_EXP3_RUN_NAME:-exp3}"
 RUN_DIR="${RL_DIR}/outputs/runs/${RUN_NAME}"
 LOG_FILE="${RUN_DIR}/train.log"
 RAY_TMPDIR="/tmp/swray_$$"
@@ -18,15 +18,21 @@ VAL_FILE="${DATASET_ROOT}/rl_0512_val.jsonl"
 SOURCE_MODEL_PATH="${V5_DIR}/models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm"
 
 GPU_IDS="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
-JUDGE_ENABLE="true"
-JUDGE_BACKEND="gemini"
-TRACE_FIRST_ROLLOUT="1"
-TRACE_SAMPLE_EVERY="64"
-RLMLR_ALPHA="0.8"
-RLMLR_NORM_BY_STD="false"
-RLMLR_OUTCOME_KEY="success_score"
-RLMLR_STATE_COMPONENTS="[step_score,format_score]"
-RLMLR_STATE_WEIGHTS="[1.0,0.2]"
+JUDGE_ENABLE="${STREAMWEAVE_EXP3_JUDGE_ENABLE:-true}"
+JUDGE_BACKEND="${STREAMWEAVE_EXP3_JUDGE_BACKEND:-gemini}"
+TRACE_FIRST_ROLLOUT="${STREAMWEAVE_TRACE_FIRST_ROLLOUT:-1}"
+TRACE_SAMPLE_EVERY="${STREAMWEAVE_TRACE_SAMPLE_EVERY:-64}"
+
+ADV_ESTIMATOR="${STREAMWEAVE_EXP3_ADV_ESTIMATOR:-}"
+TRAIN_BATCH_SIZE="${STREAMWEAVE_EXP3_TRAIN_BATCH_SIZE:-4}"
+GEN_BATCH_SIZE="${STREAMWEAVE_EXP3_GEN_BATCH_SIZE:-4}"
+VAL_BATCH_SIZE="${STREAMWEAVE_EXP3_VAL_BATCH_SIZE:-16}"
+ROLLOUT_N="${STREAMWEAVE_EXP3_ROLLOUT_N:-8}"
+MAX_STEPS="${STREAMWEAVE_EXP3_MAX_STEPS:-0}"
+TEST_FREQ="${STREAMWEAVE_EXP3_TEST_FREQ:--1}"
+SAVE_FREQ="${STREAMWEAVE_EXP3_SAVE_FREQ:-20}"
+TOTAL_EPOCHS="${STREAMWEAVE_EXP3_TOTAL_EPOCHS:-2}"
+FILTER_GROUPS_ENABLE="${STREAMWEAVE_EXP3_FILTER_GROUPS_ENABLE:-false}"
 
 for arg in "$@"; do
     case "${arg}" in
@@ -36,23 +42,17 @@ for arg in "$@"; do
         data.streamweave.reward.judge.backend=*)
             JUDGE_BACKEND="${arg#*=}"
             ;;
-        algorithm.rlmlr_alpha=*|+algorithm.rlmlr_alpha=*)
-            RLMLR_ALPHA="${arg#*=}"
-            ;;
-        algorithm.rlmlr_norm_by_std=*|+algorithm.rlmlr_norm_by_std=*)
-            RLMLR_NORM_BY_STD="${arg#*=}"
-            ;;
-        algorithm.rlmlr_outcome_key=*|+algorithm.rlmlr_outcome_key=*)
-            RLMLR_OUTCOME_KEY="${arg#*=}"
-            ;;
-        algorithm.rlmlr_state_components=*|+algorithm.rlmlr_state_components=*)
-            RLMLR_STATE_COMPONENTS="${arg#*=}"
-            ;;
-        algorithm.rlmlr_state_weights=*|+algorithm.rlmlr_state_weights=*)
-            RLMLR_STATE_WEIGHTS="${arg#*=}"
+        algorithm.adv_estimator=*|+algorithm.adv_estimator=*)
+            ADV_ESTIMATOR="${arg#*=}"
             ;;
     esac
 done
+
+if [[ -z "${ADV_ESTIMATOR}" ]]; then
+    echo "Experiment 3 requires the new algorithm name." >&2
+    echo "Set STREAMWEAVE_EXP3_ADV_ESTIMATOR or pass algorithm.adv_estimator=... on the command line." >&2
+    exit 2
+fi
 
 if [[ "${STREAMWEAVE_ALLOW_EXISTING_RL:-0}" != "1" ]] && pgrep -f "verl.trainer.main_ppo" >/dev/null 2>&1; then
     echo "Another verl.trainer.main_ppo process is already running." >&2
@@ -104,7 +104,10 @@ fi
 ulimit -n 65535
 
 if [[ ! -f "${TRAIN_FILE}" || ! -f "${VAL_FILE}" ]]; then
-    echo "Missing exp2 split files. Generate them first:" >&2
+    echo "Missing exp3 split files inherited from exp2:" >&2
+    echo "  train=${TRAIN_FILE}" >&2
+    echo "  val=${VAL_FILE}" >&2
+    echo "Generate them first with:" >&2
     echo "  ${PYTHON_BIN} ${RL_DIR}/scripts/prepare_rl0512_split.py --val-size 80" >&2
     exit 2
 fi
@@ -128,10 +131,6 @@ dump_run_artifacts() {
     "${PYTHON_BIN}" --version > "${RUN_DIR}/python_version.txt" 2>&1
     "${PYTHON_BIN}" -m pip list > "${RUN_DIR}/pip_list.txt" 2>&1
 
-    if command -v nvidia-smi >/dev/null 2>&1; then
-        nvidia-smi > "${RUN_DIR}/nvidia_smi.txt" 2>&1
-    fi
-
     if [ -d "${RAY_TMPDIR}/session_latest/logs" ]; then
         mkdir -p "${RUN_DIR}/ray_logs"
         cp -a "${RAY_TMPDIR}/session_latest/logs/." "${RUN_DIR}/ray_logs/"
@@ -148,10 +147,10 @@ echo "StreamWeave model source=${SOURCE_MODEL_PATH}"
 echo "StreamWeave model path=${MODEL_PATH}"
 echo "StreamWeave train file=${TRAIN_FILE}"
 echo "StreamWeave validation file=${VAL_FILE}"
-echo "StreamWeave RLMLR alpha=${RLMLR_ALPHA} norm_by_std=${RLMLR_NORM_BY_STD} outcome_key=${RLMLR_OUTCOME_KEY}"
-echo "StreamWeave RLMLR state=${RLMLR_STATE_COMPONENTS} weights=${RLMLR_STATE_WEIGHTS}"
+echo "StreamWeave exp3 adv_estimator=${ADV_ESTIMATOR}"
+echo "StreamWeave exp3 scale train_batch=${TRAIN_BATCH_SIZE} gen_batch=${GEN_BATCH_SIZE} rollout.n=${ROLLOUT_N} max_steps=${MAX_STEPS}"
 echo "StreamWeave judge enable=${JUDGE_ENABLE}"
-echo "StreamWeave base config=${RL_DIR}/configs/streamweave_stepwise.yaml (RLMLR via CLI overrides)"
+echo "StreamWeave base config=${RL_DIR}/configs/streamweave_stepwise.yaml"
 echo "StreamWeave trace first_rollout=${TRACE_FIRST_ROLLOUT} sample_every=${TRACE_SAMPLE_EVERY}"
 
 cd "${RL_DIR}"
@@ -161,14 +160,15 @@ env "${RUNTIME_ENV[@]}" "${PYTHON_BIN%/python}/ray" stop --force >/dev/null 2>&1
 DATA_ARGS=(
     data.train_files="${TRAIN_FILE}"
     data.val_files="${VAL_FILE}"
-    data.train_batch_size=16
-    +data.gen_batch_size=16
-    data.val_batch_size=16
+    data.train_batch_size="${TRAIN_BATCH_SIZE}"
+    +data.gen_batch_size="${GEN_BATCH_SIZE}"
+    data.val_batch_size="${VAL_BATCH_SIZE}"
     data.max_prompt_length=6144
     data.max_response_length=2048
     data.streamweave.dataset_name="${DATASET_NAME}"
     data.streamweave.dataset.dataset_root="${DATASET_ROOT}"
     data.streamweave.dataset.dataset_name="${DATASET_NAME}"
+    data.streamweave.runtime.max_steps="${MAX_STEPS}"
 )
 
 MODEL_ARGS=(
@@ -177,7 +177,7 @@ MODEL_ARGS=(
 
 ACTOR_ARGS=(
     actor_rollout_ref.actor.optim.lr=1e-5
-    actor_rollout_ref.actor.ppo_mini_batch_size=16
+    actor_rollout_ref.actor.ppo_mini_batch_size="${TRAIN_BATCH_SIZE}"
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768
     actor_rollout_ref.actor.clip_ratio_low=0.2
@@ -187,7 +187,7 @@ ACTOR_ARGS=(
 )
 
 ROLLOUT_ARGS=(
-    actor_rollout_ref.rollout.n=8
+    actor_rollout_ref.rollout.n="${ROLLOUT_N}"
     actor_rollout_ref.rollout.temperature=1.0
     actor_rollout_ref.rollout.top_p=0.95
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8
@@ -204,14 +204,9 @@ ROLLOUT_ARGS=(
 
 ALGO_ARGS=(
     data.streamweave.reward.judge.enable="${JUDGE_ENABLE}"
-    algorithm.adv_estimator=streamweave_stepwise_rlmlr
-    +algorithm.rlmlr_alpha="${RLMLR_ALPHA}"
-    +algorithm.rlmlr_norm_by_std="${RLMLR_NORM_BY_STD}"
-    +algorithm.rlmlr_outcome_key="${RLMLR_OUTCOME_KEY}"
-    +algorithm.rlmlr_state_components="${RLMLR_STATE_COMPONENTS}"
-    +algorithm.rlmlr_state_weights="${RLMLR_STATE_WEIGHTS}"
+    algorithm.adv_estimator="${ADV_ESTIMATOR}"
     algorithm.use_kl_in_reward=false
-    algorithm.filter_groups.enable=false
+    algorithm.filter_groups.enable="${FILTER_GROUPS_ENABLE}"
     critic.enable=false
 )
 
@@ -229,9 +224,9 @@ TRAINER_ARGS=(
     +ray_kwargs.ray_init.object_store_memory=40000000000
     +ray_kwargs.ray_init._temp_dir="${RAY_TMPDIR}"
     +ray_kwargs.ray_init.include_dashboard=false
-    trainer.save_freq=20
-    trainer.test_freq=20
-    trainer.total_epochs=2
+    trainer.save_freq="${SAVE_FREQ}"
+    trainer.test_freq="${TEST_FREQ}"
+    trainer.total_epochs="${TOTAL_EPOCHS}"
 )
 
 set +e

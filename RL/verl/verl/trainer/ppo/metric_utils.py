@@ -508,6 +508,28 @@ def calc_maj_val(data: list[dict[str, Any]], vote_key: str, val_key: str) -> flo
     return maj_val
 
 
+def _numeric_scalar_list(values: list[Any]) -> list[float] | None:
+    if not values:
+        return None
+    numeric_values: list[float] = []
+    for value in values:
+        if isinstance(value, (str, bytes, dict, list, tuple, set)) or value is None:
+            return None
+        if isinstance(value, np.ndarray):
+            if value.ndim != 0:
+                return None
+            value = value.item()
+        if isinstance(value, torch.Tensor):
+            if value.numel() != 1:
+                return None
+            value = value.item()
+        try:
+            numeric_values.append(float(value))
+        except (TypeError, ValueError):
+            return None
+    return numeric_values
+
+
 def process_validation_metrics(
     data_sources: list[str], sample_uids: list[str], infos_dict: dict[str, list[Any]], seed: int = 42
 ) -> dict[str, dict[str, dict[str, float]]]:
@@ -593,16 +615,18 @@ def process_validation_metrics(
             var_dict = uid_dict.setdefault(uid, {})
 
             for var_name, var_vals in var2vals.items():
-                # skip empty or string values
-                if not var_vals or isinstance(var_vals[0], str):
+                # Only scalar numeric values can be reduced into validation
+                # metrics. Extra rollout info may contain debug dicts/lists.
+                var_vals_numeric = _numeric_scalar_list(var_vals)
+                if var_vals_numeric is None:
                     continue
 
                 # compute mean and std
-                n_resps = len(var_vals)
-                metric = {f"mean@{n_resps}": float(np_mean(var_vals))}
+                n_resps = len(var_vals_numeric)
+                metric = {f"mean@{n_resps}": float(np_mean(var_vals_numeric))}
 
                 if n_resps > 1:
-                    metric[f"std@{n_resps}"] = float(np_std(var_vals))
+                    metric[f"std@{n_resps}"] = float(np_std(var_vals_numeric))
 
                     # cache ns list
                     if n_resps not in ns_cache:
@@ -613,7 +637,7 @@ def process_validation_metrics(
                     for n in ns:
                         # compute best/worst metrics
                         (bon_mean, bon_std), (won_mean, won_std) = bootstrap_metric(
-                            data=var_vals,
+                            data=var_vals_numeric,
                             subset_size=n,
                             reduce_fns=reduce_fns_best_worst,
                             n_bootstrap=n_bootstrap,
@@ -628,7 +652,8 @@ def process_validation_metrics(
                         if has_pred:
                             # create vote_data
                             vote_data = [
-                                {"val": val, "pred": pred} for val, pred in zip(var_vals, pred_vals, strict=True)
+                                {"val": val, "pred": pred}
+                                for val, pred in zip(var_vals_numeric, pred_vals, strict=True)
                             ]
                             # compute maj metrics
                             [(maj_n_mean, maj_n_std)] = bootstrap_metric(
