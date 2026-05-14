@@ -17,7 +17,163 @@ Before starting a new run:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-05-12 | running-old-config | 3927597 | Experiment 1: `grpo_rl0511_8gpu_judge` | `RL/scripts/train_grpo.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_0511.jsonl` | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | `streamweave_stepwise_traj_grpo`; `rollout.n=16`; DAPO filter enabled; `gen_batch_size=16` in the live command | Gemini judge enabled | `RL/outputs/runs/grpo_rl0511_8gpu_judge` | Demo experiment. Existing process uses an old config. Curves: <https://swanlab.cn/@zhs/streamweave_rl/runs/gmtjhm9u05m58326zmpe6/chart>. Do not stop or reuse this run name for new experiments. |
 | 2026-05-12 | ready | TBD | Experiment 2: `exp2_rlmlr` | `RL/scripts/train_exp2_rlmlr.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_0512_train.jsonl`; val `dataset2/rl_0512_val.jsonl` | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | `streamweave_stepwise_rlmlr`; `train_batch_size=16`; `gen_batch_size=16`; `rollout.n=8`; `outcome=success_score`; `state=1.0*step_score+0.2*format_score`; DAPO filter disabled; validation every 20 steps | Gemini judge enabled | `RL/outputs/runs/exp2_rlmlr` | Uses `rl_0512` deterministic video-level split: train 1420 rows, val 80 rows. Fixed output dir; do not start the same script concurrently on multiple machines sharing this disk. |
+| 2026-05-14 | stopped-after-step20 | manual stop | Experiment 3: `exp3` | `RL/scripts/train_exp3.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_exp3.jsonl`; val same file | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | `streamweave_stepwise_grppo`; `train_batch_size=16`; `gen_batch_size=16`; `rollout.n=8`; `answer_decay=0.4`; final advantage `1.0*step_adv + 0.3*answer_adv`; `grppo_min_std=0.07`; step filter enabled with `filter_min_std=0.04`; `process_weight=1.0`; `format_weight=0.1`; validation every 30 steps | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp3` | Stopped manually after `global_step_20`; checkpoint available. Curves were close to exp4/exp5, so no immediate evaluation. |
+| 2026-05-14 | stopped-evaluating-step20 | manual stop | Experiment 4: `exp4` | `RL/scripts/train_exp4.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_exp3.jsonl`; val same file | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | Same as exp3 except final advantage `1.0*step_adv + 0.5*answer_adv`; `filter_min_std=0.04` | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp4` | Stopped manually after `global_step_20`; exported to `models/exp4_grppo_aw05_step20`; OVO 1/8 evaluation directory created at `outputs/ovo_exp4_grppo_aw05_step20_1of8`. |
+| 2026-05-14 | running | TBD | Experiment 5: `exp5` | `RL/scripts/train_exp5.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_exp3.jsonl`; val same file | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | Same as exp3/4 except final advantage `1.0*step_adv + 0.7*answer_adv`; `filter_min_std=0.04` | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp5` | Continue running while exp4 step20 is evaluated; latest checkpoint observed at `global_step_20`. |
 | 2026-05-12 | planned | TBD | `TBD` | `RL/scripts/TBD.sh` | `RL/configs/streamweave_stepwise.yaml` | `TBD` | `TBD` | `TBD` | `TBD` | `RL/outputs/runs/TBD` | Fill this row when the next launch script is created. |
+
+## Experiment 3-5: GRPPO Answer-Weight Sweep
+
+These runs share the same dataset, model initialization, judge prompt, and GRPPO estimator. They differ
+only in the final answer-advantage weight:
+
+| Run | Script | Output dir | Final advantage | Step reward | Answer credit | Filter |
+| --- | --- | --- | --- | --- | --- | --- |
+| `exp3` | `RL/scripts/train_exp3.sh` | `RL/outputs/runs/exp3` | `1.0*step_adv + 0.3*answer_adv` | `(1.0*judge_step + 0.1*format_score)/1.1` | `answer_credit_t = answer_reward_t + 0.4*answer_credit_{t+1}` | step-level GRPPO filter enabled, `filter_min_std=0.04` |
+| `exp4` | `RL/scripts/train_exp4.sh` | `RL/outputs/runs/exp4` | `1.0*step_adv + 0.5*answer_adv` | same as exp3 | same as exp3 | same as exp3 |
+| `exp5` | `RL/scripts/train_exp5.sh` | `RL/outputs/runs/exp5` | `1.0*step_adv + 0.7*answer_adv` | same as exp3 | same as exp3 | same as exp3 |
+
+Common launch config for exp3/exp4/exp5:
+
+Data and runtime overrides:
+
+- Base config: `--config-name=streamweave_stepwise`.
+- Dataset root: `data.streamweave.dataset.dataset_root=dataset2`.
+- Dataset name: `data.streamweave.dataset_name=mixed_rl_exp3` and
+  `data.streamweave.dataset.dataset_name=mixed_rl_exp3`.
+- Train file: `data.train_files=dataset2/rl_exp3.jsonl`.
+- Validation file: `data.val_files=dataset2/rl_exp3.jsonl`.
+- Batch sizes: `data.train_batch_size=16`, `+data.gen_batch_size=16`,
+  `data.val_batch_size=16`.
+- Lengths: `data.max_prompt_length=6144`, `data.max_response_length=2048`.
+- Stream runtime override: `data.streamweave.runtime.max_steps=0`; other stream runtime settings
+  come from `RL/configs/streamweave_stepwise.yaml`.
+
+Model initialization:
+
+- Source model: `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm`.
+- Prepared model config: `RL/outputs/runs/{exp3,exp4,exp5}/model_config`.
+- Actor model path override: `actor_rollout_ref.model.path=${RUN_DIR}/model_config`.
+
+Actor, ref, and rollout:
+
+- Actor optimizer: `actor_rollout_ref.actor.optim.lr=1e-5`.
+- PPO batch: `actor_rollout_ref.actor.ppo_mini_batch_size=16`,
+  `actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8`.
+- Actor token cap: `actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768`.
+- PPO clip: `actor_rollout_ref.actor.clip_ratio_low=0.2`,
+  `actor_rollout_ref.actor.clip_ratio_high=0.28`.
+- Ref logprob: `actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8`,
+  `actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=32768`.
+- Rollout sampling: `actor_rollout_ref.rollout.n=8`, `temperature=1.0`, `top_p=0.95`.
+- Rollout logprob: `actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8`,
+  `actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=32768`.
+- vLLM limits: `actor_rollout_ref.rollout.gpu_memory_utilization=0.7`,
+  `actor_rollout_ref.rollout.max_model_len=8192`,
+  `actor_rollout_ref.rollout.max_num_batched_tokens=65536`,
+  `actor_rollout_ref.rollout.max_num_seqs=2048`.
+- Agent workers: `actor_rollout_ref.rollout.agent.num_workers=32`.
+- Validation generation: `actor_rollout_ref.rollout.val_kwargs.n=1`,
+  `do_sample=false`, `temperature=0`.
+
+GRPPO, reward, and judge:
+
+- Estimator: `algorithm.adv_estimator=streamweave_stepwise_grppo`.
+- KL/reward path: `algorithm.use_kl_in_reward=false`; `critic.enable=false`.
+- Legacy DAPO filter disabled: `algorithm.filter_groups.enable=false`.
+- GRPPO answer credit: `+algorithm.grppo_answer_decay=0.4`.
+- Final advantage weights: exp3 uses `+algorithm.grppo_answer_weight=0.3`, exp4 uses `0.5`,
+  exp5 uses `0.7`; all use `+algorithm.grppo_step_weight=1.0`.
+- Component normalization: `+algorithm.grppo_norm_by_std=true`,
+  `+algorithm.grppo_min_std=0.07`.
+- Step-level GRPPO filter: `+algorithm.grppo_filter_groups.enable=true`,
+  `+algorithm.grppo_filter_groups.min_std=0.04`.
+- GRPPO step reward mix: `+data.streamweave.reward.grppo_process_weight=1.0`,
+  `+data.streamweave.reward.grppo_format_weight=0.1`, so
+  `grppo_step_reward=(1.0*grppo_judge_step_reward + 0.1*grppo_format_score)/1.1`.
+- Judge: `data.streamweave.reward.judge.enable=true`,
+  `data.streamweave.reward.judge.backend=gemini`,
+  `+data.streamweave.reward.judge.prompt_version=streamweave_grppo_judge_v1`.
+- Default Gemini credentials path in scripts:
+  `/mmu_ssd3/group_lisize/hetu/xujia10/joint_tags/scripts/gemini_client/config.json`,
+  unless `GOOGLE_APPLICATION_CREDENTIALS` is already set.
+
+Trainer and Ray:
+
+- Trainer worker path: `trainer.use_legacy_worker_impl=enable`, `trainer.critic_warmup=0`.
+- Logging: `trainer.logger=["console","swanlab"]`,
+  `trainer.project_name=streamweave_rl`, `trainer.experiment_name={exp3,exp4,exp5}`.
+- Checkpoint dir: `trainer.default_local_dir=RL/outputs/runs/{exp3,exp4,exp5}/checkpoints`.
+- Resume: `trainer.resume_mode=auto`.
+- Hardware: `trainer.n_gpus_per_node=8`, `trainer.nnodes=1`.
+- Ray: `ray_kwargs.ray_init.num_cpus=64`,
+  `+ray_kwargs.ray_init.object_store_memory=40000000000`,
+  `+ray_kwargs.ray_init.include_dashboard=false`.
+- Ray temp dirs: exp3 uses `/tmp/swray_$$`; exp4 uses `/tmp/swray_exp4_$$`;
+  exp5 uses `/tmp/swray_exp5_$$`.
+- Schedule: `trainer.save_freq=20`, `trainer.test_freq=30`, `trainer.total_epochs=2`.
+
+Script environment and artifacts:
+
+- `CUDA_VISIBLE_DEVICES` defaults to `0,1,2,3,4,5,6,7`.
+- `STREAMWEAVE_CONSOLE_METRICS=compact`, `TOKENIZERS_PARALLELISM=false`,
+  `RAY_DEDUP_LOGS=0`, `RAY_ENABLE_UV_RUN_RUNTIME_ENV=0`.
+- `SWANLAB_LOG_DIR=RL/outputs/runs/{exp3,exp4,exp5}/swanlab`.
+- Trace defaults: `STREAMWEAVE_TRACE_FIRST_ROLLOUT=1`,
+  `STREAMWEAVE_TRACE_SAMPLE_EVERY=64`.
+- Each script stops Ray before launch unless `STREAMWEAVE_ALLOW_EXISTING_RL=1` is set.
+- On exit, each script records `exit_code.txt`, `git_status.txt`, `python_version.txt`,
+  `pip_list.txt`, and Ray logs under the run directory when available.
+
+### 2026-05-14 Evaluation Decision
+
+Initial SwanLab curves showed exp3, exp4, and exp5 are close. exp3 and exp4 were stopped manually;
+exp5 remains running. Start evaluation from exp4 because it is the middle answer-weight setting
+(`answer_weight=0.5`) and already has checkpoint `global_step_20`.
+
+Progress snapshot:
+
+- `exp3`: manually stopped after `global_step_20`; checkpoint exists at
+  `RL/outputs/runs/exp3/checkpoints/global_step_20/actor`.
+- `exp4`: manually stopped after `global_step_20`; checkpoint exists at
+  `RL/outputs/runs/exp4/checkpoints/global_step_20/actor`.
+- `exp5`: continues running; latest observed checkpoint is
+  `RL/outputs/runs/exp5/checkpoints/global_step_20/actor`.
+- Exp4 step20 export completed: `models/exp4_grppo_aw05_step20` contains sharded safetensors.
+- Exp4 OVO 1/8 evaluation directory exists at `outputs/ovo_exp4_grppo_aw05_step20_1of8`;
+  `results.jsonl` had not been observed yet when this note was written.
+
+Export exp4 step 20 FSDP actor checkpoint to a vLLM/HF-loadable model:
+
+```bash
+cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
+PYTHONPATH=RL/verl:RL:. /mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/python \
+  -m verl.model_merger merge \
+  --backend fsdp \
+  --local_dir RL/outputs/runs/exp4/checkpoints/global_step_20/actor \
+  --target_dir models/exp4_grppo_aw05_step20 \
+  --trust-remote-code
+```
+
+Run OVO-Bench 1/8 sanity evaluation:
+
+```bash
+cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
+OUTPUT_DIR=outputs/ovo_exp4_grppo_aw05_step20_1of8 \
+  bash scripts/run_ovo_8gpu_vllm_finetuned.sh models/exp4_grppo_aw05_step20
+```
+
+Run OVO-Bench full evaluation:
+
+```bash
+cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
+ANNO_PATH=/mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/OVO-Bench/data/ovo_bench_new.json \
+OUTPUT_DIR=outputs/ovo_exp4_grppo_aw05_step20_full \
+  bash scripts/run_ovo_8gpu_vllm_finetuned.sh models/exp4_grppo_aw05_step20
+```
+
+Do not launch the OVO vLLM evaluation on the same machine as a live exp5 run unless the GPUs are
+intentionally reserved for evaluation; the script starts eight local vLLM servers on ports 8000-8007.
 
 ## Experiment 1: `grpo_rl0511_8gpu_judge`
 
@@ -472,6 +628,9 @@ memory 里同时存在多个语义接近的候选动作，state 选了符合 que
 | --- | --- | --- | --- |
 | `RL/scripts/train_grpo.sh` | GRPO-style stepwise trajectory training | `grpo_rl0511_8gpu_judge` | This script matches the currently running old-config process. Copy it before changing major experiment settings. |
 | `RL/scripts/train_exp2_rlmlr.sh` | Experiment 2 RLMLR training on `rl_0512` split | `exp2_rlmlr` | Uses `train_batch_size=16`, `gen_batch_size=16`, `rollout.n=8`, validation every 20 steps. |
+| `RL/scripts/train_exp3.sh` | Experiment 3 GRPPO baseline on `rl_exp3` | `exp3` | Final advantage `1.0*step_adv + 0.3*answer_adv`; step filter min std `0.04`. |
+| `RL/scripts/train_exp4.sh` | Experiment 4 GRPPO answer-weight sweep | `exp4` | Same as exp3, but final answer-advantage weight is `0.5`. |
+| `RL/scripts/train_exp5.sh` | Experiment 5 GRPPO answer-weight sweep | `exp5` | Same as exp3, but final answer-advantage weight is `0.7`. |
 | `RL/scripts/train_ppo.sh` | PPO/GAE with critic enabled | `ppo_test4rl_8gpu` | Uses `streamweave_stepwise_ppo_gae`, `rollout.n=1`, critic enabled, and judge weight forced to `0.0` by default. |
 | `RL/scripts/train_rlmlr.sh` | RLMLR stepwise/outcome mixed advantage | `rlmlr_rl0511_8gpu` | Uses `streamweave_stepwise_rlmlr`; DAPO filter is off by default in the script. |
 | `RL/scripts/run_smoke.sh` | Smoke test | N/A | Use for quick integration checks before long runs. |

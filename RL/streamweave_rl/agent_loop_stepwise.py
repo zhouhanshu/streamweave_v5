@@ -87,6 +87,8 @@ class StreamWeaveAgentLoop(AgentLoopBase):
                     "judge_error": str(reward_info_dict.get("judge_error", "") or ""),
                     "reward_info": reward_info_dict,
                 }
+                grppo_fields = _grppo_extra_fields(info)
+                reward_extra_info.update(grppo_fields)
                 output.extra_fields.update(
                     {
                         "group_idx": group_idx,
@@ -102,6 +104,7 @@ class StreamWeaveAgentLoop(AgentLoopBase):
                         "turn_reward": float(info.get("turn_reward", reward)),
                         "final_answer": info.get("final_answer", ""),
                         "reward_extra_info": reward_extra_info,
+                        **grppo_fields,
                     }
                 )
                 outputs.append(output)
@@ -142,7 +145,13 @@ class StreamWeaveAgentLoop(AgentLoopBase):
         except _TrajectoryAbort as exc:
             logger.warning("Aborting StreamWeave trajectory: %s", exc.reason)
             outputs.append(self._build_abort_output(exc.reason, prompt_ids=exc.prompt_ids))
-            _finalize_aborted_outputs(outputs, group_idx=group_idx, traj_idx=traj_idx, reason=exc.reason)
+            _finalize_aborted_outputs(
+                outputs,
+                group_idx=group_idx,
+                traj_idx=traj_idx,
+                reason=exc.reason,
+                grppo_enabled=getattr(env, "grppo_enabled", False),
+            )
             if trace_rollout:
                 trace_print(
                     "[SW-TRACE rollout-abort] "
@@ -151,7 +160,13 @@ class StreamWeaveAgentLoop(AgentLoopBase):
         except Exception as exc:
             logger.exception("StreamWeave trajectory failed; returning a zero-reward fallback.")
             outputs.append(self._build_abort_output(f"{type(exc).__name__}: {exc}"))
-            _finalize_aborted_outputs(outputs, group_idx=group_idx, traj_idx=traj_idx, reason=str(exc))
+            _finalize_aborted_outputs(
+                outputs,
+                group_idx=group_idx,
+                traj_idx=traj_idx,
+                reason=str(exc),
+                grppo_enabled=getattr(env, "grppo_enabled", False),
+            )
             if trace_rollout:
                 trace_print(
                     "[SW-TRACE rollout-error] "
@@ -332,6 +347,31 @@ def _sample_index(kwargs: dict[str, Any]) -> Any:
     return None
 
 
+def _grppo_extra_fields(info: dict[str, Any]) -> dict[str, Any]:
+    if not info.get("grppo_enabled", False):
+        return {}
+    return {
+        "grppo_delta_groundedness": float(info.get("grppo_delta_groundedness", 0.0)),
+        "grppo_anchor_keyframe": float(info.get("grppo_anchor_keyframe", 0.0)),
+        "grppo_semantic_alignment": float(info.get("grppo_semantic_alignment", 0.0)),
+        "grppo_state_groundedness": float(info.get("grppo_state_groundedness", 0.0)),
+        "grppo_judge_step_reward": float(info.get("grppo_judge_step_reward", 0.0)),
+        "grppo_format_score": float(info.get("grppo_format_score", 0.0)),
+        "grppo_step_reward": float(info.get("grppo_step_reward", 0.0)),
+        "grppo_answer_reward": float(info.get("grppo_answer_reward", 0.0)),
+        "grppo_answer_reward_raw": float(info.get("grppo_answer_reward_raw", 0.0)),
+        "grppo_answer_event": float(info.get("grppo_answer_event", 0.0)),
+        "grppo_has_query": float(info.get("grppo_has_query", 0.0)),
+        "grppo_has_answer_target": float(info.get("grppo_has_answer_target", 0.0)),
+        "grppo_has_answer": float(info.get("grppo_has_answer", 0.0)),
+        "grppo_answer_correctness": float(info.get("grppo_answer_correctness", 0.0)),
+        "grppo_query_count": float(info.get("grppo_query_count", 0.0)),
+        "grppo_answer_target_count": float(info.get("grppo_answer_target_count", 0.0)),
+        "grppo_prompt_kind": str(info.get("grppo_prompt_kind", "")),
+        "grppo_label_status": str(info.get("grppo_label_status", "")),
+    }
+
+
 def _trace_traj_done(
     *,
     group_idx: Any,
@@ -403,6 +443,7 @@ def _finalize_aborted_outputs(
     group_idx: Any,
     traj_idx: int,
     reason: str,
+    grppo_enabled: bool = False,
 ) -> None:
     for turn_idx, item in enumerate(outputs, start=1):
         item.reward_score = 0.0
@@ -420,6 +461,8 @@ def _finalize_aborted_outputs(
             "judge_error": "",
             "reward_info": {"rollout_error": reason},
         }
+        grppo_fields = _grppo_aborted_fields() if grppo_enabled else {}
+        reward_info.update(grppo_fields)
         item.extra_fields.update(
             {
                 "group_idx": group_idx,
@@ -436,5 +479,29 @@ def _finalize_aborted_outputs(
                 "final_answer": "",
                 "rollout_error": reason,
                 "reward_extra_info": reward_info,
+                **grppo_fields,
             }
         )
+
+
+def _grppo_aborted_fields() -> dict[str, Any]:
+    return {
+        "grppo_delta_groundedness": 0.0,
+        "grppo_anchor_keyframe": 0.0,
+        "grppo_semantic_alignment": 0.0,
+        "grppo_state_groundedness": 0.0,
+        "grppo_judge_step_reward": 0.0,
+        "grppo_format_score": 0.0,
+        "grppo_step_reward": 0.0,
+        "grppo_answer_reward": 0.0,
+        "grppo_answer_reward_raw": 0.0,
+        "grppo_answer_event": 0.0,
+        "grppo_has_query": 0.0,
+        "grppo_has_answer_target": 0.0,
+        "grppo_has_answer": 0.0,
+        "grppo_answer_correctness": 0.0,
+        "grppo_query_count": 0.0,
+        "grppo_answer_target_count": 0.0,
+        "grppo_prompt_kind": "aborted",
+        "grppo_label_status": "aborted",
+    }

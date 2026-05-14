@@ -32,6 +32,8 @@ class StreamWeaveRewardConfig:
     max_notes_per_step: int = 1
     stale_note_after_steps: int = 3
     note_frequency_penalty_score: float = 0.0
+    grppo_process_weight: float = 1.0
+    grppo_format_weight: float = 0.1
     judge: JudgeConfig = field(default_factory=JudgeConfig)
 
 
@@ -160,6 +162,27 @@ def compute_step_reward(
             "judge_issues": judge_result.issues if isinstance(judge_result, JudgeResult) else [],
             "judge_error": judge_result.error if isinstance(judge_result, JudgeResult) else "",
         },
+    )
+
+
+def compute_grppo_step_reward(
+    *,
+    process_score: float,
+    format_score: float,
+    cfg: StreamWeaveRewardConfig,
+) -> float:
+    """Combine GRPPO process judge and format rewards into a per-step scalar."""
+
+    process_weight = max(float(cfg.grppo_process_weight), 0.0)
+    format_weight = max(float(cfg.grppo_format_weight), 0.0)
+    denominator = process_weight + format_weight
+    if denominator <= 0.0:
+        return 0.0
+    process_value = _clamp_score(float(process_score), cfg=cfg)
+    format_value = _clamp_score(float(format_score), cfg=cfg)
+    return _clamp_score(
+        (process_weight * process_value + format_weight * format_value) / denominator,
+        cfg=cfg,
     )
 
 

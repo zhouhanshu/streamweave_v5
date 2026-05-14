@@ -165,11 +165,22 @@ def _first_present(row: dict[str, Any], keys: list[str], default: Any = None) ->
 
 
 def _row_has_question(row: dict[str, Any]) -> bool:
-    if str(_first_present(row, ["question", "query", "query_text"], default="")).strip():
+    question_value = _first_present(row, ["question", "query", "query_text"], default="")
+    if isinstance(question_value, list):
+        return any(
+            isinstance(item, Mapping)
+            and str(_first_present(dict(item), ["content", "text", "question", "query"], default="")).strip()
+            for item in question_value
+        )
+    if str(question_value).strip():
         return True
     events = row.get("query_events")
     if isinstance(events, list):
-        return any(isinstance(item, Mapping) and str(_first_present(dict(item), ["text", "question"], default="")).strip() for item in events)
+        return any(
+            isinstance(item, Mapping)
+            and str(_first_present(dict(item), ["content", "text", "question", "query"], default="")).strip()
+            for item in events
+        )
     return False
 
 
@@ -179,10 +190,19 @@ def _question_text(row: dict[str, Any]) -> str:
         for item in events:
             if not isinstance(item, Mapping):
                 continue
-            text = str(_first_present(dict(item), ["text", "question"], default="")).strip()
+            text = str(_first_present(dict(item), ["content", "text", "question", "query"], default="")).strip()
             if text:
                 return text
-    question = str(_first_present(row, ["question", "query", "query_text"], default="")).strip()
+    raw_question = _first_present(row, ["question", "query", "query_text"], default="")
+    if isinstance(raw_question, list):
+        for item in raw_question:
+            if not isinstance(item, Mapping):
+                continue
+            text = str(_first_present(dict(item), ["content", "text", "question", "query"], default="")).strip()
+            if text:
+                return text
+        return ""
+    question = str(raw_question).strip()
     if not question:
         return ""
     task = str(row.get("task") or "").strip()
@@ -210,7 +230,15 @@ def _query_timestamp(row: dict[str, Any], task: str) -> float:
         for item in events:
             if not isinstance(item, Mapping):
                 continue
-            value = _first_present(dict(item), ["timestamp", "query_time", "ask_time", "realtime"], default=None)
+            value = _first_present(dict(item), ["timestamp", "time", "query_time", "ask_time", "realtime"], default=None)
+            if value is not None:
+                return float(value)
+    question_value = row.get("question")
+    if isinstance(question_value, list):
+        for item in question_value:
+            if not isinstance(item, Mapping):
+                continue
+            value = _first_present(dict(item), ["timestamp", "time", "query_time", "ask_time", "realtime"], default=None)
             if value is not None:
                 return float(value)
     for key in ("query_timestamp", "query_time", "ask_time", "realtime", "timestamp"):
@@ -276,6 +304,9 @@ def _sample_metadata(row: dict[str, Any], *, task: str, question: str, ground_tr
     metadata = _to_plain_value(row)
     if not isinstance(metadata, dict):
         metadata = dict(row)
+    raw_question = metadata.get("question")
+    if isinstance(raw_question, (list, dict)):
+        metadata["raw_question"] = raw_question
     metadata["task"] = task
     metadata["question"] = question
     metadata["ground_truth"] = ground_truth

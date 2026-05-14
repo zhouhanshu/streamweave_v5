@@ -27,7 +27,7 @@ overwrite_cache: true
 ### output
 output_dir: saves/qwen3-vl-8b/full/streamweave_sft_0511_note
 logging_steps: 1
-save_steps: 100
+save_steps: 25
 save_total_limit: 5
 plot_loss: true
 overwrite_output_dir: false

@@ -14,6 +14,17 @@ from verl.trainer.ppo.core_algos import register_adv_est
 
 from .trace import env_flag, trace_group_allowed, trace_print
 
+GRPPO_STEP_REWARD_KEY = "grppo_step_reward"
+GRPPO_ANSWER_REWARD_KEY = "grppo_answer_reward"
+GRPPO_ANSWER_CREDIT_KEY = "grppo_answer_credit"
+GRPPO_REWARD_KEY = "grppo_reward"
+GRPPO_STEP_ADVANTAGE_KEY = "grppo_step_advantage"
+GRPPO_ANSWER_ADVANTAGE_KEY = "grppo_answer_advantage"
+GRPPO_ADVANTAGE_KEY = "grppo_advantage"
+GRPPO_STEP_VALID_KEY = "grppo_step_signal_valid"
+GRPPO_ANSWER_VALID_KEY = "grppo_answer_signal_valid"
+GRPPO_UPDATE_VALID_KEY = "grppo_update_signal_valid"
+
 
 def _to_numpy_int64(values: Any, *, factorize: bool = False) -> np.ndarray:
     if isinstance(values, torch.Tensor):
@@ -268,6 +279,318 @@ def compute_streamweave_stepwise_traj_grpo(
     return advantages, returns
 
 
+def compute_grppo_step_reward_values(non_tensor_batch: dict[str, Any], config: Any = None) -> dict[str, np.ndarray]:
+    """Return row-aligned GRPPO reward components.
+
+    Answer credit is computed on full trajectories before any row-level DAPO
+    filtering. If a batch has duplicate rows for the same turn, the credit is
+    computed once for that unique ``(group, traj, turn)`` and copied back.
+    """
+    required = ("group_idx", "traj_idx", "turn_idx")
+    missing = [key for key in required if key not in non_tensor_batch]
+    if missing:
+        raise KeyError(f"GRPPO requires non_tensor_batch keys {missing}")
+
+    if GRPPO_STEP_REWARD_KEY in non_tensor_batch:
+        step_reward_full = _to_float_array(non_tensor_batch[GRPPO_STEP_REWARD_KEY])
+    elif all(
+        key in non_tensor_batch
+        for key in (
+            "grppo_delta_groundedness",
+            "grppo_anchor_keyframe",
+            "grppo_semantic_alignment",
+            "grppo_state_groundedness",
+        )
+    ):
+        step_reward_full = (
+            _to_float_array(non_tensor_batch["grppo_delta_groundedness"])
+            + _to_float_array(non_tensor_batch["grppo_anchor_keyframe"])
+            + _to_float_array(non_tensor_batch["grppo_semantic_alignment"])
+            + _to_float_array(non_tensor_batch["grppo_state_groundedness"])
+        ) / 4.0
+    elif all(
+        key in non_tensor_batch
+        for key in (
+            "grppo_delta_groundedness",
+            "grppo_note_keyframe",
+            "grppo_semantic_alignment",
+            "grppo_state_groundedness",
+        )
+    ):
+        step_reward_full = (
+            _to_float_array(non_tensor_batch["grppo_delta_groundedness"])
+            + _to_float_array(non_tensor_batch["grppo_note_keyframe"])
+            + _to_float_array(non_tensor_batch["grppo_semantic_alignment"])
+            + _to_float_array(non_tensor_batch["grppo_state_groundedness"])
+        ) / 4.0
+    elif "step_score" in non_tensor_batch:
+        step_reward_full = _to_float_array(non_tensor_batch["step_score"])
+    else:
+        raise KeyError(
+            "GRPPO requires grppo_step_reward, the four GRPPO judge dimensions, "
+            "or step_score as a fallback"
+        )
+
+    row_count = int(step_reward_full.shape[0])
+    answer_reward_full = (
+        _to_float_array(non_tensor_batch[GRPPO_ANSWER_REWARD_KEY])
+        if GRPPO_ANSWER_REWARD_KEY in non_tensor_batch
+        else np.zeros(row_count, dtype=np.float32)
+    )
+    if answer_reward_full.shape[0] != row_count:
+        raise ValueError(
+            f"{GRPPO_ANSWER_REWARD_KEY} length {answer_reward_full.shape[0]} "
+            f"does not match {GRPPO_STEP_REWARD_KEY} length {row_count}"
+        )
+
+    groups = np.asarray(non_tensor_batch["group_idx"], dtype=object).reshape(-1)
+    trajs = np.asarray(non_tensor_batch["traj_idx"], dtype=object).reshape(-1)
+    turns = _to_numpy_int64(non_tensor_batch["turn_idx"], factorize=False).reshape(-1)
+    if not (len(groups) == len(trajs) == len(turns) == row_count):
+        raise ValueError("GRPPO group_idx/traj_idx/turn_idx/reward columns must have the same length")
+
+    beta = max(_config_get_float(config, "grppo_answer_decay", 0.7), 0.0)
+    step_weight = _config_get_float(config, "grppo_step_weight", 1.0)
+    answer_weight = _config_get_float(config, "grppo_answer_weight", 1.0)
+
+    unique_keys: list[tuple[str, str, int]] = []
+    first_indices: list[int] = []
+    inverse = np.zeros(row_count, dtype=np.int64)
+    key_to_unique: dict[tuple[str, str, int], int] = {}
+    for row in range(row_count):
+        key = (str(groups[row]), str(trajs[row]), int(turns[row]))
+        unique_row = key_to_unique.get(key)
+        if unique_row is None:
+            unique_row = len(unique_keys)
+            key_to_unique[key] = unique_row
+            unique_keys.append(key)
+            first_indices.append(row)
+        inverse[row] = unique_row
+
+    first = np.asarray(first_indices, dtype=np.int64)
+    step_reward_u = step_reward_full[first].astype(np.float32, copy=False)
+    answer_reward_u = answer_reward_full[first].astype(np.float32, copy=False)
+    answer_credit_u = np.zeros_like(answer_reward_u, dtype=np.float32)
+
+    traj_to_unique_rows: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for unique_row, (group_id, traj_id, _turn_id) in enumerate(unique_keys):
+        traj_to_unique_rows[(group_id, traj_id)].append(unique_row)
+
+    for rows in traj_to_unique_rows.values():
+        running = 0.0
+        for unique_row in sorted(rows, key=lambda idx: unique_keys[idx][2], reverse=True):
+            running = float(answer_reward_u[unique_row]) + beta * running
+            answer_credit_u[unique_row] = running
+
+    grppo_reward_u = (step_weight * step_reward_u + answer_weight * answer_credit_u).astype(np.float32, copy=False)
+
+    return {
+        GRPPO_STEP_REWARD_KEY: step_reward_u[inverse].astype(np.float32, copy=False),
+        GRPPO_ANSWER_REWARD_KEY: answer_reward_u[inverse].astype(np.float32, copy=False),
+        GRPPO_ANSWER_CREDIT_KEY: answer_credit_u[inverse].astype(np.float32, copy=False),
+        GRPPO_REWARD_KEY: grppo_reward_u[inverse].astype(np.float32, copy=False),
+    }
+
+
+def compute_grppo_component_advantage_values(
+    non_tensor_batch: dict[str, Any],
+    config: Any = None,
+    *,
+    epsilon: float = 1e-6,
+) -> dict[str, np.ndarray]:
+    """Return row-aligned GRPPO component rewards and component advantages.
+
+    ``step_reward`` and discounted ``answer_credit`` are normalized separately
+    inside each ``(group_idx, turn_idx)`` cohort. A low-variance cohort only
+    zeroes that signal's component advantage; rows are still trainable when the
+    other signal has enough variance.
+    """
+    reward_values = compute_grppo_step_reward_values(non_tensor_batch, config)
+    step_reward_full = reward_values[GRPPO_STEP_REWARD_KEY]
+    answer_credit_full = reward_values[GRPPO_ANSWER_CREDIT_KEY]
+    row_count = int(step_reward_full.shape[0])
+
+    groups = np.asarray(non_tensor_batch["group_idx"], dtype=object).reshape(-1)
+    trajs = np.asarray(non_tensor_batch["traj_idx"], dtype=object).reshape(-1)
+    turns = _to_numpy_int64(non_tensor_batch["turn_idx"], factorize=False).reshape(-1)
+    if not (len(groups) == len(trajs) == len(turns) == row_count):
+        raise ValueError("GRPPO group_idx/traj_idx/turn_idx/reward columns must have the same length")
+
+    unique_keys: list[tuple[str, str, int]] = []
+    first_indices: list[int] = []
+    inverse = np.zeros(row_count, dtype=np.int64)
+    key_to_unique: dict[tuple[str, str, int], int] = {}
+    for row in range(row_count):
+        key = (str(groups[row]), str(trajs[row]), int(turns[row]))
+        unique_row = key_to_unique.get(key)
+        if unique_row is None:
+            unique_row = len(unique_keys)
+            key_to_unique[key] = unique_row
+            unique_keys.append(key)
+            first_indices.append(row)
+        inverse[row] = unique_row
+
+    first = np.asarray(first_indices, dtype=np.int64)
+    step_reward_u = step_reward_full[first].astype(np.float32, copy=False)
+    answer_credit_u = answer_credit_full[first].astype(np.float32, copy=False)
+    step_adv_u = np.zeros_like(step_reward_u, dtype=np.float32)
+    answer_adv_u = np.zeros_like(answer_credit_u, dtype=np.float32)
+    step_valid_u = np.zeros_like(step_reward_u, dtype=np.float32)
+    answer_valid_u = np.zeros_like(answer_credit_u, dtype=np.float32)
+
+    norm_by_std = _config_get_bool(config, "grppo_norm_by_std", False)
+    min_std = max(_config_get_float(config, "grppo_min_std", 0.03), 0.0)
+    step_weight = _config_get_float(config, "grppo_step_weight", 1.0)
+    answer_weight = _config_get_float(config, "grppo_answer_weight", 1.0)
+
+    cohort_to_unique_rows: dict[tuple[str, int], list[int]] = defaultdict(list)
+    for unique_row, (group_id, _traj_id, turn_id) in enumerate(unique_keys):
+        cohort_to_unique_rows[(group_id, int(turn_id))].append(unique_row)
+
+    for rows in cohort_to_unique_rows.values():
+        row_idx = np.asarray(rows, dtype=np.int64)
+        step_adv, step_valid = _normalize_grppo_component(
+            step_reward_u[row_idx],
+            norm_by_std=norm_by_std,
+            min_std=min_std,
+            epsilon=epsilon,
+        )
+        answer_adv, answer_valid = _normalize_grppo_component(
+            answer_credit_u[row_idx],
+            norm_by_std=norm_by_std,
+            min_std=min_std,
+            epsilon=epsilon,
+        )
+        step_adv_u[row_idx] = step_adv
+        answer_adv_u[row_idx] = answer_adv
+        if step_valid:
+            step_valid_u[row_idx] = 1.0
+        if answer_valid:
+            answer_valid_u[row_idx] = 1.0
+
+    grppo_adv_u = (step_weight * step_adv_u + answer_weight * answer_adv_u).astype(np.float32, copy=False)
+    update_valid_u = np.maximum(step_valid_u, answer_valid_u).astype(np.float32, copy=False)
+
+    out = dict(reward_values)
+    out.update(
+        {
+            GRPPO_STEP_ADVANTAGE_KEY: step_adv_u[inverse].astype(np.float32, copy=False),
+            GRPPO_ANSWER_ADVANTAGE_KEY: answer_adv_u[inverse].astype(np.float32, copy=False),
+            GRPPO_ADVANTAGE_KEY: grppo_adv_u[inverse].astype(np.float32, copy=False),
+            GRPPO_STEP_VALID_KEY: step_valid_u[inverse].astype(np.float32, copy=False),
+            GRPPO_ANSWER_VALID_KEY: answer_valid_u[inverse].astype(np.float32, copy=False),
+            GRPPO_UPDATE_VALID_KEY: update_valid_u[inverse].astype(np.float32, copy=False),
+        }
+    )
+    return out
+
+
+def _precomputed_grppo_component_values(
+    non_tensor_batch: dict[str, Any],
+    *,
+    row_count: int,
+) -> dict[str, np.ndarray] | None:
+    """Return precomputed GRPPO values when the trainer already populated them.
+
+    Step-level filtering may remove middle turns from a trajectory. In that
+    case answer credit must stay the value computed on the full trajectory
+    before filtering; recomputing from the filtered rows changes the discount
+    distance. Missing fields mean the estimator is being used without the
+    trainer-side GRPPO hook, so the caller should compute them normally.
+    """
+    keys = (
+        GRPPO_STEP_REWARD_KEY,
+        GRPPO_ANSWER_REWARD_KEY,
+        GRPPO_ANSWER_CREDIT_KEY,
+        GRPPO_REWARD_KEY,
+        GRPPO_STEP_ADVANTAGE_KEY,
+        GRPPO_ANSWER_ADVANTAGE_KEY,
+        GRPPO_ADVANTAGE_KEY,
+        GRPPO_STEP_VALID_KEY,
+        GRPPO_ANSWER_VALID_KEY,
+        GRPPO_UPDATE_VALID_KEY,
+    )
+    if not all(key in non_tensor_batch for key in keys):
+        return None
+
+    out: dict[str, np.ndarray] = {}
+    for key in keys:
+        values = _to_float_array(non_tensor_batch[key]).reshape(-1)
+        if values.shape[0] != row_count:
+            raise ValueError(
+                f"precomputed {key} length {values.shape[0]} does not match batch row count {row_count}"
+            )
+        out[key] = values.astype(np.float32, copy=False)
+    return out
+
+
+@register_adv_est("streamweave_stepwise_grppo")
+def compute_streamweave_stepwise_grppo(
+    data,
+    gamma=1.0,
+    lam=1.0,
+    config=None,
+    epsilon: float = 1e-6,
+    norm_adv_by_std_in_grpo: bool = True,
+    **kwargs,
+):
+    """GRPPO stepwise advantage normalized within ``(group_idx, turn_idx)``."""
+    del gamma, lam, norm_adv_by_std_in_grpo, kwargs
+    response_mask = data.batch["response_mask"]
+    device = response_mask.device
+    norm_by_std = _config_get_bool(config, "grppo_norm_by_std", False)
+
+    with torch.no_grad():
+        uniq_key, first_idx, inverse = _unique_turn_rows(data)
+        first_idx_t = torch.as_tensor(first_idx, dtype=torch.long, device=device)
+        mask_u = response_mask.index_select(0, first_idx_t).to(dtype=torch.float32)
+
+        component_values = _precomputed_grppo_component_values(
+            data.non_tensor_batch,
+            row_count=int(response_mask.shape[0]),
+        )
+        if component_values is None:
+            component_values = compute_grppo_component_advantage_values(data.non_tensor_batch, config, epsilon=epsilon)
+        for key, values in component_values.items():
+            data.non_tensor_batch[key] = np.asarray(values, dtype=np.float32)
+
+        grppo_reward_full = _to_float_array(component_values[GRPPO_REWARD_KEY])
+        grppo_adv_full = _to_float_array(component_values[GRPPO_ADVANTAGE_KEY])
+        grppo_reward = grppo_reward_full[first_idx]
+        grppo_advantage = grppo_adv_full[first_idx]
+
+        group = uniq_key[:, 0]
+        traj = uniq_key[:, 1]
+        turn = uniq_key[:, 2]
+        raw_groups = np.asarray(data.non_tensor_batch["group_idx"], dtype=object).reshape(-1)
+        group_labels = {int(group[row]): str(raw_groups[int(first_idx[row])]) for row in range(len(first_idx))}
+
+        group_turn_to_rewards: dict[tuple[int, int], list[tuple[int, float]]] = defaultdict(list)
+        for row, reward in enumerate(grppo_reward):
+            group_turn_to_rewards[(int(group[row]), int(turn[row]))].append((row, float(reward)))
+
+        adv_by_row = grppo_advantage.astype(np.float32, copy=False)
+
+        if _trace_grppo_enabled():
+            _trace_grppo_groups(
+                group_turn_to_rewards=group_turn_to_rewards,
+                adv_by_row=adv_by_row,
+                group_labels=group_labels,
+                traj=traj,
+                norm_by_std=norm_by_std,
+            )
+
+        advantages_u = torch.zeros_like(mask_u)
+        for row, adv in enumerate(adv_by_row.tolist()):
+            advantages_u[row] = float(adv) * mask_u[row]
+
+        reward_u = torch.as_tensor(grppo_reward, dtype=torch.float32, device=device).unsqueeze(-1) * mask_u
+        inverse_t = torch.as_tensor(inverse, dtype=torch.long, device=device)
+        advantages = advantages_u.index_select(0, inverse_t)
+        returns = reward_u.index_select(0, inverse_t)
+    return advantages, returns
+
+
 def _trace_grpo_enabled() -> bool:
     return env_flag(
         "STREAMWEAVE_TRACE_GRPO_GROUPS",
@@ -300,6 +623,41 @@ def _trace_grpo_groups(
         )
 
 
+def _trace_grppo_enabled() -> bool:
+    return env_flag(
+        "STREAMWEAVE_TRACE_GRPPO_GROUPS",
+        default=env_flag("STREAMWEAVE_TRACE_FIRST_ROLLOUT", default=False),
+    )
+
+
+def _trace_grppo_groups(
+    *,
+    group_turn_to_rewards: dict[tuple[int, int], list[tuple[int, float]]],
+    adv_by_row: np.ndarray,
+    group_labels: dict[int, str],
+    traj: np.ndarray,
+    norm_by_std: bool,
+) -> None:
+    for (group_id, turn_id) in sorted(
+        group_turn_to_rewards,
+        key=lambda item: (group_labels.get(int(item[0]), str(item[0])), int(item[1])),
+    ):
+        if not trace_group_allowed(group_labels.get(int(group_id), str(group_id))):
+            continue
+        items = sorted(group_turn_to_rewards[(group_id, turn_id)], key=lambda item: int(traj[item[0]]))
+        values = np.asarray([reward for _, reward in items], dtype=np.float32)
+        mean = float(values.mean()) if values.size else 0.0
+        std = float(values.std(ddof=1)) if values.size > 1 else 0.0
+        rewards = {int(traj[row]): round(float(reward), 4) for row, reward in items}
+        advantages = {int(traj[row]): round(float(adv_by_row[row]), 4) for row, _ in items}
+        trace_print(
+            "[SW-TRACE grppo-group] "
+            f"group={group_labels.get(int(group_id), str(group_id))} turn={int(turn_id)} "
+            f"norm_by_std={norm_by_std} rewards={rewards} mean={mean:.4f} std={std:.4f} "
+            f"advantages={advantages}"
+        )
+
+
 def _config_get_float(config: Any, key: str, default: float) -> float:
     if config is None:
         return float(default)
@@ -319,6 +677,25 @@ def _config_get_bool(config: Any, key: str, default: bool) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return bool(value)
+
+
+def _normalize_grppo_component(
+    values: np.ndarray,
+    *,
+    norm_by_std: bool,
+    min_std: float,
+    epsilon: float,
+) -> tuple[np.ndarray, bool]:
+    values = np.asarray(values, dtype=np.float32)
+    if values.size <= 1:
+        return np.zeros_like(values, dtype=np.float32), False
+    std = float(values.std(ddof=1))
+    if std <= float(min_std):
+        return np.zeros_like(values, dtype=np.float32), False
+    centered = values - float(values.mean())
+    if norm_by_std:
+        centered = centered / (std + float(epsilon))
+    return centered.astype(np.float32, copy=False), True
 
 
 def _config_get_sequence(config: Any, key: str, default: list[Any]) -> list[Any]:

@@ -51,6 +51,33 @@ class FakeBatch:
             # step_score and format_score are turn-level (each turn distinct).
             "step_score": np.array([0.2, 0.4, 0.6, 0.8], dtype=np.float32),
             "format_score": np.array([1.0, 0.0, 1.0, 1.0], dtype=np.float32),
+            "grppo_step_reward": np.array([0.2, 0.4, 0.8, 0.2], dtype=np.float32),
+            "grppo_answer_reward": np.array([0.0, 1.0, 0.0, 0.5], dtype=np.float32),
+        }
+
+
+class FakePrecomputedGRPPOBatch:
+    def __init__(self) -> None:
+        if np is None or torch is None:
+            raise RuntimeError(f"missing dependency {MISSING_NUMERIC_DEP!r}")
+        self.batch = {"response_mask": torch.ones(3, 1, dtype=torch.long)}
+        self.non_tensor_batch = {
+            "group_idx": np.array(["sample-a", "sample-a", "sample-a"], dtype=object),
+            "traj_idx": np.array([0, 0, 0], dtype=np.int64),
+            "turn_idx": np.array([0, 2, 3], dtype=np.int64),
+            "grppo_step_reward": np.array([0.0, 0.0, 0.0], dtype=np.float32),
+            "grppo_answer_reward": np.array([0.0, 0.0, 1.0], dtype=np.float32),
+            # These values come from the full trajectory turns [0, 1, 2, 3]
+            # with beta=0.5 and answer rewards [0, 1, 0, 1]. Turn 1 was
+            # filtered out, but its credit contribution must remain in turn 0.
+            "grppo_answer_credit": np.array([0.625, 0.5, 1.0], dtype=np.float32),
+            "grppo_reward": np.array([0.625, 0.5, 1.0], dtype=np.float32),
+            "grppo_step_advantage": np.array([0.0, 0.0, 0.0], dtype=np.float32),
+            "grppo_answer_advantage": np.array([7.0, 8.0, 9.0], dtype=np.float32),
+            "grppo_advantage": np.array([7.0, 8.0, 9.0], dtype=np.float32),
+            "grppo_step_signal_valid": np.array([0.0, 0.0, 0.0], dtype=np.float32),
+            "grppo_answer_signal_valid": np.array([1.0, 1.0, 1.0], dtype=np.float32),
+            "grppo_update_signal_valid": np.array([1.0, 1.0, 1.0], dtype=np.float32),
         }
 
 
@@ -59,25 +86,32 @@ def main() -> None:
         print(f"StreamWeave RL smoke test skipped: missing dependency {MISSING_NUMERIC_DEP!r}.")
         return
     try:
-        from streamweave_rl.agent_loop_stepwise import _finalize_aborted_outputs
+        from streamweave_rl.agent_loop_stepwise import _finalize_aborted_outputs, _grppo_extra_fields
         from streamweave_rl.advantage import (
             compute_streamweave_stepwise_bilevel_gae,
+            compute_streamweave_stepwise_grppo,
             compute_streamweave_stepwise_ppo_gae,
             compute_streamweave_stepwise_rlmlr,
             compute_streamweave_stepwise_traj_grpo,
+            compute_grppo_component_advantage_values,
+            compute_grppo_step_reward_values,
         )
+        from streamweave_rl.env import StreamWeaveRLEnv, _final_grppo_answer_reward, _normalize_query_annotations
         from streamweave_rl.dapo import compute_group_filter_result, select_reward_extra_infos
         from streamweave.schemas import ModelAction, ModelEvent, QualityReport
         from streamweave_rl.judge import (
             JudgeConfig,
             JudgeResult,
             StepJudge,
+            _build_grppo_judge_content,
+            _parse_grppo_judge_response,
             _parse_judge_response,
             get_judge_backend,
             reset_judge_backend_cache,
         )
         from streamweave_rl.rewards import (
             StreamWeaveRewardConfig,
+            compute_grppo_step_reward,
             compute_note_frequency_score,
             compute_step_reward,
             compute_success_score,
@@ -93,7 +127,10 @@ def main() -> None:
     assert cfg.w_success == 0.8
     assert cfg.note_frequency_weight == 1.0
     assert cfg.judge_weight == 1.0
+    assert cfg.grppo_process_weight == 1.0
+    assert cfg.grppo_format_weight == 0.1
     assert cfg.score_scale == 1.0
+    assert abs(compute_grppo_step_reward(process_score=0.5, format_score=1.0, cfg=cfg) - (0.6 / 1.1)) < 1e-6
     assert compute_success_score("cutting onion", "onion") == 1.0
     one_note = ModelAction(
         state="state",
@@ -214,7 +251,183 @@ def main() -> None:
     assert nested_judge.reasons["state_factuality"] == "speculative"
     assert "cap: contradiction cap" in nested_judge.issues
 
+    grppo_judge = _parse_grppo_judge_response(
+        """
+        {
+          "delta_groundedness": {"score": 0.8, "reason": "grounded delta"},
+          "anchor_keyframe": {"score": 0.6, "reason": "reasonable anchor"},
+          "semantic_alignment": {"score": 0.4, "reason": "partial alignment"},
+          "state_groundedness": {"score": 0.2, "reason": "weak state"},
+          "answer_reward": {"score": 1.0, "reason": "correct answer"},
+          "issues": []
+        }
+        """
+    )
+    assert grppo_judge.score == 0.5
+    assert grppo_judge.scores["answer_reward"] == 1.0
+    assert grppo_judge.reasons["delta_groundedness"] == "grounded delta"
+    grppo_process_content = _build_grppo_judge_content(
+        memory_before="",
+        qa_history="",
+        frames=[],
+        raw_output="<state>state</state><answer></answer>",
+        quality=QualityReport(valid=True, parser_ok=True, metrics={}),
+        query_label=None,
+        answer_reward_event=False,
+        answer_correctness=None,
+    )
+    grppo_process_prompt = "\n".join(item.text for item in grppo_process_content if item.type == "text")
+    assert "answer_reward" not in grppo_process_prompt
+    assert "note_keyframe" not in grppo_process_prompt
+    assert "previous_no_note_streak" not in grppo_process_prompt
+    assert "anchor_keyframe" in grppo_process_prompt
+    assert "previous_no_anchor_streak" not in grppo_process_prompt
+    assert "Prompt kind" not in grppo_process_prompt
+    assert "Return 4 scores" in grppo_process_prompt
+    grppo_answer_content = _build_grppo_judge_content(
+        memory_before="",
+        qa_history="",
+        frames=[],
+        raw_output="<state>state</state><answer></answer>",
+        quality=QualityReport(valid=True, parser_ok=True, metrics={}),
+        query_label={"event_type": "answer_target", "question": "What color?", "timestamp": 3.0, "ground_truth": "red"},
+        answer_reward_event=True,
+        answer_correctness=1.0,
+    )
+    grppo_answer_prompt = "\n".join(item.text for item in grppo_answer_content if item.type == "text")
+    assert "answer_reward" in grppo_answer_prompt
+    assert "Requirement: the model must answer now. Reference answer: red" in grppo_answer_prompt
+    assert "set answer_reward to that scalar exactly" not in grppo_answer_prompt
+    grppo_query_only_content = _build_grppo_judge_content(
+        memory_before="",
+        qa_history="",
+        frames=[],
+        raw_output="<state>state</state><answer></answer>",
+        quality=QualityReport(valid=True, parser_ok=True, metrics={}),
+        query_label={"event_type": "query", "content": "What ingredient is being added?", "timestamp": 3.0},
+        answer_reward_event=True,
+        answer_correctness=1.0,
+    )
+    grppo_query_only_prompt = "\n".join(item.text for item in grppo_query_only_content if item.type == "text")
+    assert "Current question: What ingredient is being added?" in grppo_query_only_prompt
+    assert "Requirement: the model should not answer now; <answer> should be empty." in grppo_query_only_prompt
+    assert "Reference answer: What ingredient is being added?" not in grppo_query_only_prompt
+
+    annotations = _normalize_query_annotations(
+        metadata={
+            "question": [{"content": "What ingredient is being added?", "time": "127"}],
+            "response": [
+                {"content": "C. bacon", "time": "180"},
+                {"content": "B. tomato", "time": "185"},
+                {"content": "E. lettuce", "time": "192"},
+            ],
+        },
+        question="",
+        query_timestamp=0.0,
+        ground_truth="",
+    )
+    assert [item["event_type"] for item in annotations] == ["query", "answer_target", "answer_target", "answer_target"]
+    assert [float(item["timestamp"]) for item in annotations] == [127.0, 180.0, 185.0, 192.0]
+    assert annotations[1]["ground_truth"] == "C. bacon"
+    same_step_env = object.__new__(StreamWeaveRLEnv)
+    same_step_env.step_idx = 0
+    same_step_env.groups = [[type("Frame", (), {"global_index": 0, "end_time": 1.0})()]]
+    same_step_env.query_by_frame = {}
+    same_step_env.query_annotations_by_frame = {
+        0: [
+            {"event_type": "query", "question": "What color?", "timestamp": 1.0},
+            {"event_type": "answer_target", "question": "What color?", "timestamp": 1.0, "ground_truth": "red"},
+        ]
+    }
+    same_step_env.sample = type("Sample", (), {"sample_id": "same-step"})()
+    same_step_env.env = type(
+        "Env",
+        (),
+        {
+            "add_question": lambda self, record: None,
+            "evict_memory": lambda self, t: None,
+            "memory_text": lambda self: "",
+            "build_prompt": lambda self, frames: ([], "", [], []),
+        },
+    )()
+    same_step_env._prompt_frames = lambda group: group
+    same_step_env.settings = type("Settings", (), {"runtime": type("Runtime", (), {"resolution": 0})()})()
+    obs = StreamWeaveRLEnv._prepare_current_turn(same_step_env)
+    assert obs["messages"] == [{"role": "user", "content": []}]
+    assert same_step_env.current_query_event["event_type"] == "query"
+    assert same_step_env.current_answer_target["event_type"] == "answer_target"
+    assert same_step_env.current_answer_label["ground_truth"] == "red"
+    assert same_step_env.current_step_query_count == 1
+    assert same_step_env.current_step_answer_target_count == 1
+    assert _final_grppo_answer_reward(raw_score=1.0, has_answer=True, label_status="query_without_target") == 0.0
+    assert _final_grppo_answer_reward(raw_score=0.0, has_answer=False, label_status="query_without_target") == 1.0
+    assert _final_grppo_answer_reward(raw_score=1.0, has_answer=True, label_status="missing_label") == 0.0
+
     data = FakeBatch()
+    grppo_values = compute_grppo_step_reward_values(data.non_tensor_batch, config={"grppo_answer_decay": 0.5})
+    assert np.allclose(grppo_values["grppo_answer_credit"], np.array([0.5, 1.0, 0.25, 0.5], dtype=np.float32))
+    assert np.allclose(grppo_values["grppo_reward"], np.array([0.7, 1.4, 1.05, 0.7], dtype=np.float32))
+    grppo_adv, grppo_returns = compute_streamweave_stepwise_grppo(
+        data,
+        config={"grppo_answer_decay": 0.5, "grppo_norm_by_std": False},
+    )
+    expected_grppo_adv = torch.tensor(
+        [
+            [-0.175, -0.175, 0.0],
+            [0.35, 0.0, 0.0],
+            [0.175, 0.175, 0.0],
+            [-0.35, 0.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+    expected_grppo_returns = torch.tensor(
+        [
+            [0.7, 0.7, 0.0],
+            [1.4, 0.0, 0.0],
+            [1.05, 1.05, 0.0],
+            [0.7, 0.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+    assert torch.allclose(grppo_adv, expected_grppo_adv, atol=1e-6), grppo_adv
+    assert torch.allclose(grppo_returns, expected_grppo_returns, atol=1e-6), grppo_returns
+    component_values = compute_grppo_component_advantage_values(
+        data.non_tensor_batch,
+        config={"grppo_answer_decay": 0.5, "grppo_norm_by_std": False, "grppo_min_std": 0.2},
+    )
+    assert np.allclose(
+        component_values["grppo_step_advantage"],
+        np.array([-0.3, 0.0, 0.3, 0.0], dtype=np.float32),
+    )
+    assert np.allclose(
+        component_values["grppo_answer_advantage"],
+        np.array([0.0, 0.25, 0.0, -0.25], dtype=np.float32),
+    )
+    assert np.allclose(
+        component_values["grppo_advantage"],
+        np.array([-0.3, 0.25, 0.3, -0.25], dtype=np.float32),
+    )
+    assert component_values["grppo_update_signal_valid"].tolist() == [1.0, 1.0, 1.0, 1.0]
+    precomputed_grppo = FakePrecomputedGRPPOBatch()
+    precomputed_adv, precomputed_returns = compute_streamweave_stepwise_grppo(
+        precomputed_grppo,
+        config={"grppo_answer_decay": 0.5, "grppo_norm_by_std": False, "grppo_min_std": 0.0},
+    )
+    assert torch.allclose(
+        precomputed_adv.squeeze(-1),
+        torch.tensor([7.0, 8.0, 9.0], dtype=torch.float32),
+        atol=1e-6,
+    ), precomputed_adv
+    assert torch.allclose(
+        precomputed_returns.squeeze(-1),
+        torch.tensor([0.625, 0.5, 1.0], dtype=torch.float32),
+        atol=1e-6,
+    ), precomputed_returns
+    assert np.allclose(
+        precomputed_grppo.non_tensor_batch["grppo_answer_credit"],
+        np.array([0.625, 0.5, 1.0], dtype=np.float32),
+    )
+
     grpo_adv, grpo_returns = compute_streamweave_stepwise_traj_grpo(data)
     assert grpo_adv.shape == data.batch["response_mask"].shape
     assert grpo_returns.shape == data.batch["response_mask"].shape
@@ -405,6 +618,30 @@ def main() -> None:
         "trajectory_score",
         "reward_info",
     } <= set(aborted.extra_fields["reward_extra_info"])
+    aborted_grppo = DummyOutput()
+    _finalize_aborted_outputs(
+        [aborted_grppo],
+        group_idx="sample-a",
+        traj_idx=0,
+        reason="unit-test",
+        grppo_enabled=True,
+    )
+    assert {
+        "grppo_step_reward",
+        "grppo_judge_step_reward",
+        "grppo_format_score",
+        "grppo_answer_reward",
+        "grppo_prompt_kind",
+        "grppo_label_status",
+    } <= set(aborted_grppo.extra_fields["reward_extra_info"])
+    assert _grppo_extra_fields(
+        {
+            "grppo_enabled": True,
+            "grppo_judge_step_reward": 0.5,
+            "grppo_format_score": 1.0,
+            "grppo_step_reward": 0.55,
+        }
+    )["grppo_step_reward"] == 0.55
     print("StreamWeave RL smoke test passed.")
 
 

@@ -50,6 +50,26 @@ _COMPACT_CONSOLE_METRIC_KEYS = (
     "streamweave/note_frequency_score/mean",
     "streamweave/judge_score/mean",
     "streamweave/turn_reward/mean",
+    "streamweave/grppo_judge_step_reward/mean",
+    "streamweave/grppo_format_score/mean",
+    "streamweave/grppo_step_reward/mean",
+    "streamweave/grppo_answer_reward/mean",
+    "streamweave/grppo_answer_credit/mean",
+    "streamweave/grppo_reward/mean",
+    "streamweave/grppo_step_advantage/mean",
+    "streamweave/grppo_answer_advantage/mean",
+    "streamweave/grppo_advantage/mean",
+    "streamweave/grppo_answer_event/mean",
+    "streamweave/grppo_has_answer/mean",
+    "streamweave/grppo_forced_answer_postprocess/mean",
+    "grppo/filter_enabled",
+    "grppo/filter_applied",
+    "grppo/filter_kept_row_ratio",
+    "grppo/valid_cohorts",
+    "grppo/invalid_cohorts",
+    "grppo/step_valid_cohorts",
+    "grppo/answer_valid_cohorts",
+    "grppo/forced_answer_cohorts",
     "actor/lr",
     "actor/entropy",
     "actor/pg_loss",
@@ -234,9 +254,9 @@ class Tracking:
             self.logger["file"] = FileLogger(project_name, experiment_name)
 
     def log(self, data, step, backend=None):
-        logger_data = _filter_console_metrics(data)
         for default_backend, logger_instance in self.logger.items():
             if backend is None or default_backend in backend:
+                logger_data = _filter_console_metrics(data) if default_backend == "console" else data
                 logger_instance.log(data=logger_data, step=step)
 
     def __del__(self):

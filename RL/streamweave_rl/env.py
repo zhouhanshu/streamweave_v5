@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -16,20 +17,23 @@ from streamweave.policies import make_policy
 from streamweave.rollout import (
     _group_frames,
     _query_events_by_frame,
+    _timestamp_to_frame_id,
     _truncate_frames_at_timestamp,
     required_frame_count_from_metadata,
 )
 from streamweave.schemas import BenchmarkSample, ContentItem, FrameRef, QARecord, QueryEvent
 
-from .judge import JudgeResult, StepJudge
+from .judge import GRPPO_JUDGE_PROMPT_VERSION, GRPPO_STEP_SCORE_KEYS, JudgeResult, StepJudge
 from .rewards import (
     StreamWeaveRewardConfig,
+    compute_grppo_step_reward,
     compute_note_frequency_score,
     compute_step_reward,
     compute_trajectory_reward,
     judge_blocked_by_note_frequency,
     reward_config_from_mapping,
 )
+from .scorers import score_answer
 from .schemas import StepRecord, StepRewardResult, TrajectoryRewardResult
 
 
@@ -62,26 +66,44 @@ class StreamWeaveRLEnv:
         metadata = dict(sample_metadata or {})
         metadata.setdefault("dataset", (config or {}).get("dataset_name", ""))
         metadata.setdefault("ground_truth", ground_truth)
+        self.query_annotations = _normalize_query_annotations(
+            metadata=metadata,
+            question=question,
+            query_timestamp=query_timestamp,
+            ground_truth=ground_truth,
+        )
+        query_events = [
+            QueryEvent(text=str(annotation.get("question") or ""), timestamp=float(annotation.get("timestamp", 0.0) or 0.0))
+            for annotation in self.query_annotations
+            if annotation.get("event_type") == "query" and str(annotation.get("question") or "").strip()
+        ]
         self.sample = BenchmarkSample(
             sample_id=sample_id,
             video_id=video_id,
             video_path=video_path,
-            query_events=[QueryEvent(text=question, timestamp=float(query_timestamp))] if question else [],
+            query_events=query_events,
             metadata=metadata,
         )
         self.ground_truth = ground_truth
         self.settings = _settings_from_mapping(config or {})
+        self.grppo_enabled = self.settings.rl_reward.judge.prompt_version == GRPPO_JUDGE_PROMPT_VERSION
         self.frame_store = FrameStore(self.settings.dataset)
         self.policy = make_policy(self.settings.policy)
         self.env: StreamWeaveEnv | None = None
         self.frames: list[FrameRef] = []
         self.groups: list[list[FrameRef]] = []
         self.query_by_frame: dict[int, list[QueryEvent]] = {}
+        self.query_annotations_by_frame: dict[int, list[dict[str, Any]]] = {}
         self.step_idx = 0
         self.current_frames: list[FrameRef] = []
         self.current_prompt_text = ""
         self.current_prompt_images: list[str] = []
         self.current_memory_before = ""
+        self.current_query_event: dict[str, Any] | None = None
+        self.current_answer_target: dict[str, Any] | None = None
+        self.current_answer_label: dict[str, Any] | None = None
+        self.current_step_query_count = 0
+        self.current_step_answer_target_count = 0
         self.step_rewards: list[StepRewardResult] = []
         self.records: list[StepRecord] = []
         self.trajectory_reward: TrajectoryRewardResult | None = None
@@ -129,6 +151,12 @@ class StreamWeaveRLEnv:
             sample_fps=runtime.sample_fps,
             frame_id_base=self.settings.dataset.frame_id_base,
         )
+        self.query_annotations_by_frame = _query_annotations_by_frame(
+            self.frames,
+            self.query_annotations,
+            sample_fps=runtime.sample_fps,
+            frame_id_base=self.settings.dataset.frame_id_base,
+        )
         if self.sample.query_events:
             retained_frame_ids = {frame.global_index for group in self.groups for frame in group}
             if not any(frame_id in retained_frame_ids for frame_id in self.query_by_frame):
@@ -149,6 +177,11 @@ class StreamWeaveRLEnv:
         self.records = []
         self.trajectory_reward = None
         self.no_note_streak = 0
+        self.current_query_event = None
+        self.current_answer_target = None
+        self.current_answer_label = None
+        self.current_step_query_count = 0
+        self.current_step_answer_target_count = 0
         obs = self._prepare_current_turn()
         return obs, {"sample_id": self.sample.sample_id, "video_id": self.sample.video_id}
 
@@ -162,16 +195,37 @@ class StreamWeaveRLEnv:
             reward_config=self.settings.reward_config,
             repair=True,
         )
+        grppo_has_answer = bool(raw_action.answer.strip())
+        grppo_has_query = bool(self.current_query_event is not None)
+        grppo_has_answer_target = bool(self.current_answer_target is not None)
+        grppo_answer_event = bool(
+            self.grppo_enabled and (grppo_has_query or grppo_has_answer_target or grppo_has_answer)
+        )
+        grppo_label = self.current_answer_label
+        if grppo_answer_event and not quality.parser_ok:
+            grppo_answer_correctness = 0.0
+            grppo_label_status = "parser_invalid"
+        elif grppo_answer_event:
+            grppo_answer_correctness, grppo_label_status = _score_current_step_answer(
+                answer=raw_action.answer,
+                label=grppo_label,
+                metadata=self.sample.metadata,
+                cfg=self.settings.rl_reward,
+            )
+        else:
+            grppo_answer_correctness = 0.0
+            grppo_label_status = "no_answer_event"
         note_frequency_result = compute_note_frequency_score(
             action=raw_action,
             previous_no_note_streak=self.no_note_streak,
             cfg=self.settings.rl_reward,
         )
         note_frequency_score, _next_no_note_streak, note_frequency_reasons = note_frequency_result
-        judge_allowed = not judge_blocked_by_note_frequency(
+        judge_blocked = judge_blocked_by_note_frequency(
             note_frequency_score=note_frequency_score,
             cfg=self.settings.rl_reward,
         )
+        judge_allowed = self.grppo_enabled or not judge_blocked
         if judge_allowed:
             qa_history_before = self.env.memory.build_qa_text()
             judge_result = await self.judge.score_step(
@@ -181,6 +235,11 @@ class StreamWeaveRLEnv:
                 raw_action=raw_action,
                 raw_output=action_str,
                 quality=quality,
+                query_label=grppo_label if self.grppo_enabled else None,
+                has_query=grppo_has_query,
+                has_answer=grppo_has_answer,
+                answer_reward_event=grppo_answer_event,
+                answer_correctness=grppo_answer_correctness if grppo_answer_event else None,
             )
         else:
             judge_result = JudgeResult(
@@ -218,7 +277,8 @@ class StreamWeaveRLEnv:
                 cfg=self.settings.rl_reward,
                 metadata=self.sample.metadata,
             )
-            turn_reward += self.settings.rl_reward.w_success * self.trajectory_reward.success_score
+            if not self.grppo_enabled:
+                turn_reward += self.settings.rl_reward.w_success * self.trajectory_reward.success_score
             reward_result.turn_reward = turn_reward
             trajectory_info = {
                 "trajectory_score": self.trajectory_reward.trajectory_score,
@@ -226,6 +286,45 @@ class StreamWeaveRLEnv:
                 "step_mean": self.trajectory_reward.step_mean,
                 "success_score": self.trajectory_reward.success_score,
                 "final_answer": final_answer,
+            }
+
+        grppo_info: dict[str, Any] = {}
+        if self.grppo_enabled:
+            judge_scores = judge_result.scores if isinstance(judge_result, JudgeResult) else {}
+            grppo_dims = {key: float(judge_scores.get(key, 0.0) or 0.0) for key in GRPPO_STEP_SCORE_KEYS}
+            grppo_judge_step_reward = sum(grppo_dims.values()) / max(len(grppo_dims), 1)
+            grppo_step_reward = compute_grppo_step_reward(
+                process_score=grppo_judge_step_reward,
+                format_score=reward_result.format_score,
+                cfg=self.settings.rl_reward,
+            )
+            grppo_answer_reward_raw = float(judge_scores.get("answer_reward", 0.0) or 0.0) if grppo_answer_event else 0.0
+            grppo_answer_reward_raw = min(max(grppo_answer_reward_raw, 0.0), 1.0)
+            grppo_answer_reward = _final_grppo_answer_reward(
+                raw_score=grppo_answer_reward_raw,
+                has_answer=grppo_has_answer,
+                label_status=grppo_label_status,
+            )
+            grppo_info = {
+                "grppo_enabled": True,
+                "grppo_delta_groundedness": grppo_dims["delta_groundedness"],
+                "grppo_anchor_keyframe": grppo_dims["anchor_keyframe"],
+                "grppo_semantic_alignment": grppo_dims["semantic_alignment"],
+                "grppo_state_groundedness": grppo_dims["state_groundedness"],
+                "grppo_judge_step_reward": grppo_judge_step_reward,
+                "grppo_format_score": reward_result.format_score,
+                "grppo_step_reward": grppo_step_reward,
+                "grppo_answer_reward": grppo_answer_reward,
+                "grppo_answer_reward_raw": grppo_answer_reward_raw,
+                "grppo_answer_event": float(grppo_answer_event),
+                "grppo_has_query": float(grppo_has_query),
+                "grppo_has_answer_target": float(grppo_has_answer_target),
+                "grppo_has_answer": float(grppo_has_answer),
+                "grppo_answer_correctness": float(grppo_answer_correctness),
+                "grppo_query_count": float(self.current_step_query_count),
+                "grppo_answer_target_count": float(self.current_step_answer_target_count),
+                "grppo_prompt_kind": "answer_aware" if grppo_answer_event else "process",
+                "grppo_label_status": grppo_label_status,
             }
 
         info = {
@@ -240,6 +339,7 @@ class StreamWeaveRLEnv:
             "parser_ok": quality.parser_ok,
             "issue_codes": [issue.code for issue in quality.issues],
             "reward_info": reward_result.info,
+            **grppo_info,
             **trajectory_info,
         }
         self.records.append(
@@ -266,9 +366,32 @@ class StreamWeaveRLEnv:
     def _prepare_current_turn(self) -> dict[str, Any]:
         assert self.env is not None
         group = self.groups[self.step_idx]
+        current_labels: list[dict[str, Any]] = []
         for frame in group:
             for query in self.query_by_frame.get(frame.global_index, []):
                 self.env.add_question(QARecord(timestamp=query.timestamp, text=query.text, role="q"))
+            current_labels.extend(self.query_annotations_by_frame.get(frame.global_index, []))
+        query_events = [item for item in current_labels if item.get("event_type") == "query"]
+        answer_targets = [item for item in current_labels if item.get("event_type") == "answer_target"]
+        self.current_step_query_count = len(query_events)
+        self.current_step_answer_target_count = len(answer_targets)
+        if len(query_events) > 1:
+            raise RuntimeError(
+                f"Sample {self.sample.sample_id!r} has {len(query_events)} query events in one step; "
+                "GRPPO expects at most one query per step."
+            )
+        if len(answer_targets) > 1:
+            raise RuntimeError(
+                f"Sample {self.sample.sample_id!r} has {len(answer_targets)} answer targets in one step; "
+                "filter the data so at most one answer target lands in each step."
+            )
+        self.current_query_event = query_events[0] if query_events else None
+        self.current_answer_target = answer_targets[0] if answer_targets else None
+        self.current_answer_label = (
+            self.current_answer_target
+            if self.current_answer_target is not None
+            else self.current_query_event
+        )
 
         prompt_frames = self._prompt_frames(group)
         self.env.evict_memory(group[-1].end_time)
@@ -294,6 +417,296 @@ class StreamWeaveRLEnv:
             if qa.role == "a" and qa.text.strip():
                 return qa.text.strip()
         return ""
+
+
+def _normalize_query_annotations(
+    *,
+    metadata: dict[str, Any],
+    question: Any,
+    query_timestamp: Any,
+    ground_truth: Any,
+) -> list[dict[str, Any]]:
+    if isinstance(metadata.get("query_events"), list):
+        return _normalize_structured_query_events(metadata["query_events"], metadata=metadata, ground_truth=ground_truth)
+    if isinstance(metadata.get("queries"), list):
+        return _normalize_structured_query_events(metadata["queries"], metadata=metadata, ground_truth=ground_truth)
+
+    question_value = metadata.get("raw_question", metadata.get("question", question))
+    response_value = metadata.get("response")
+    if isinstance(question_value, list):
+        annotations = _normalize_question_response_lists(
+            question_value,
+            response_value if isinstance(response_value, list) else [],
+            metadata=metadata,
+            ground_truth=ground_truth,
+        )
+        if annotations:
+            return annotations
+
+    text = str(question or question_value or "").strip()
+    if not text:
+        return []
+    annotation = _base_annotation(
+        event_type="query",
+        qid=str(metadata.get("qid") or "q0"),
+        timestamp=_coerce_float(metadata.get("query_timestamp", query_timestamp), default=0.0),
+        question=text,
+        source={**metadata, "ground_truth": ground_truth},
+    )
+    return [annotation]
+
+
+def _normalize_structured_query_events(
+    query_events: list[Any],
+    *,
+    metadata: dict[str, Any],
+    ground_truth: Any,
+) -> list[dict[str, Any]]:
+    annotations: list[dict[str, Any]] = []
+    for index, item in enumerate(query_events):
+        if not isinstance(item, Mapping):
+            continue
+        qid = str(item.get("qid") or item.get("id") or f"q{index}")
+        question_text = str(item.get("question") or item.get("query") or item.get("content") or item.get("text") or "").strip()
+        timestamp = _coerce_float(item.get("timestamp", item.get("time", item.get("query_timestamp", 0.0))), default=0.0)
+        merged = {**metadata, **dict(item), "ground_truth": item.get("ground_truth", item.get("gt", ground_truth))}
+        if question_text:
+            annotations.append(
+                _base_annotation(
+                    event_type="query",
+                    qid=qid,
+                    timestamp=timestamp,
+                    question=question_text,
+                    source=merged,
+                )
+            )
+        answer_events = item.get("answer_events", item.get("target_answers", []))
+        if isinstance(answer_events, list):
+            for answer_index, answer_item in enumerate(answer_events):
+                if not isinstance(answer_item, Mapping):
+                    continue
+                annotations.append(
+                    _answer_target_annotation(
+                        answer_item,
+                        qid=qid,
+                        question=question_text,
+                        default_timestamp=timestamp,
+                        default_id=f"{qid}:a{answer_index}",
+                        parent=merged,
+                    )
+                )
+    return sorted(annotations, key=_annotation_sort_key)
+
+
+def _normalize_question_response_lists(
+    questions: list[Any],
+    responses: list[Any],
+    *,
+    metadata: dict[str, Any],
+    ground_truth: Any,
+) -> list[dict[str, Any]]:
+    annotations: list[dict[str, Any]] = []
+    for index, item in enumerate(questions):
+        if isinstance(item, Mapping):
+            qid = str(item.get("qid") or item.get("id") or f"q{index}")
+            question_text = str(item.get("question") or item.get("query") or item.get("content") or item.get("text") or "").strip()
+            timestamp = _coerce_float(item.get("timestamp", item.get("time", 0.0)), default=0.0)
+            source = {**metadata, **dict(item), "ground_truth": item.get("ground_truth", item.get("gt", ground_truth))}
+        else:
+            qid = f"q{index}"
+            question_text = str(item or "").strip()
+            timestamp = _coerce_float(metadata.get("query_timestamp", 0.0), default=0.0)
+            source = {**metadata, "ground_truth": ground_truth}
+        if not question_text:
+            continue
+        annotations.append(
+            _base_annotation(
+                event_type="query",
+                qid=qid,
+                timestamp=timestamp,
+                question=question_text,
+                source=source,
+            )
+        )
+
+    # Compatibility for the draft shape:
+    # {"question": [{"content": "..."}], "response": [{"content": "C. ..."}]}
+    parent = annotations[0] if annotations else {"qid": "q0", "question": ""}
+    for index, item in enumerate(responses):
+        if not isinstance(item, Mapping):
+            continue
+        annotations.append(
+            _answer_target_annotation(
+                item,
+                qid=str(parent.get("qid") or "q0"),
+                question=str(parent.get("question") or ""),
+                default_timestamp=float(parent.get("timestamp", 0.0) or 0.0),
+                default_id=f"{parent.get('qid', 'q0')}:a{index}",
+                parent=metadata,
+            )
+        )
+    return sorted(annotations, key=_annotation_sort_key)
+
+
+def _base_annotation(
+    *,
+    event_type: str,
+    qid: str,
+    timestamp: float,
+    question: str,
+    source: Mapping[str, Any],
+) -> dict[str, Any]:
+    annotation = {
+        "event_type": event_type,
+        "qid": qid,
+        "timestamp": float(timestamp),
+        "question": question,
+        "content": question,
+    }
+    for key in (
+        "ground_truth",
+        "gt",
+        "answer",
+        "options",
+        "task",
+        "scorer",
+        "should_answer",
+        "answer_policy",
+        "dataset",
+        "benchmark",
+    ):
+        if key in source and source[key] is not None:
+            annotation[key] = source[key]
+    return annotation
+
+
+def _answer_target_annotation(
+    item: Mapping[str, Any],
+    *,
+    qid: str,
+    question: str,
+    default_timestamp: float,
+    default_id: str,
+    parent: Mapping[str, Any],
+) -> dict[str, Any]:
+    timestamp = _coerce_float(item.get("timestamp", item.get("time", default_timestamp)), default=default_timestamp)
+    content = str(item.get("content") or item.get("text") or item.get("answer") or "").strip()
+    annotation = _base_annotation(
+        event_type="answer_target",
+        qid=qid,
+        timestamp=timestamp,
+        question=question,
+        source={**dict(parent), **dict(item)},
+    )
+    annotation["answer_event_id"] = str(item.get("id") or default_id)
+    annotation["content"] = content
+    annotation["should_answer"] = item.get("should_answer", parent.get("should_answer", True))
+    if "ground_truth" not in annotation and "gt" not in annotation:
+        if item.get("gt") is not None:
+            annotation["gt"] = item.get("gt")
+        elif item.get("answer") is not None:
+            annotation["ground_truth"] = item.get("answer")
+        elif content:
+            annotation["ground_truth"] = content
+    return annotation
+
+
+def _query_annotations_by_frame(
+    frames: list[FrameRef],
+    annotations: list[dict[str, Any]],
+    *,
+    sample_fps: float,
+    frame_id_base: int,
+) -> dict[int, list[dict[str, Any]]]:
+    if not frames:
+        return {}
+    min_frame_id = min(frame.global_index for frame in frames)
+    max_frame_id = max(frame.global_index for frame in frames)
+    out: dict[int, list[dict[str, Any]]] = {}
+    for annotation in sorted(annotations, key=_annotation_sort_key):
+        frame_id = _timestamp_to_frame_id(
+            float(annotation.get("timestamp", 0.0) or 0.0),
+            sample_fps=sample_fps,
+            frame_id_base=frame_id_base,
+            min_frame_id=min_frame_id,
+            max_frame_id=max_frame_id,
+        )
+        out.setdefault(frame_id, []).append(annotation)
+    return out
+
+
+def _score_current_step_answer(
+    *,
+    answer: str,
+    label: dict[str, Any] | None,
+    metadata: dict[str, Any],
+    cfg: StreamWeaveRewardConfig,
+) -> tuple[float, str]:
+    answer_text = str(answer or "").strip()
+    if label is None:
+        return 0.0, "missing_label"
+
+    should_answer = label.get("should_answer")
+    if should_answer is not None and not _bool_from_value(should_answer):
+        return (1.0 if not answer_text else 0.0), "expected_silence"
+
+    ground_truth = _label_ground_truth(label)
+    if ground_truth is None:
+        if label.get("event_type") == "query":
+            return (1.0 if not answer_text else 0.0), "query_without_target"
+        return 0.0, "missing_ground_truth"
+
+    merged_metadata = {**metadata, **label, "ground_truth": ground_truth}
+    scorer = str(label.get("scorer") or cfg.success_scorer or "auto")
+    try:
+        score = score_answer(answer_text, ground_truth, scorer=scorer, metadata=merged_metadata)
+    except Exception as exc:
+        return 0.0, f"scorer_error:{type(exc).__name__}"
+    return min(max(float(score), 0.0), 1.0), "scored"
+
+
+def _final_grppo_answer_reward(*, raw_score: float, has_answer: bool, label_status: str) -> float:
+    """Use deterministic timing labels before trusting the LLM answer score."""
+    if str(label_status) in {"expected_silence", "query_without_target", "missing_label"}:
+        return 0.0 if has_answer else 1.0
+    return 1.0 if float(raw_score) >= 0.5 else 0.0
+
+
+def _label_ground_truth(label: Mapping[str, Any]) -> Any:
+    for key in ("ground_truth", "gt", "target", "target_answer"):
+        value = label.get(key)
+        if value is not None and str(value).strip():
+            return value
+    if label.get("event_type") == "answer_target":
+        for key in ("answer", "content"):
+            value = label.get(key)
+            if value is not None and str(value).strip():
+                return value
+    value = label.get("answer")
+    if value is not None and str(value).strip():
+        return value
+    return None
+
+
+def _coerce_float(value: Any, *, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _bool_from_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "y"}
+
+
+def _annotation_sort_key(annotation: Mapping[str, Any]) -> tuple[float, int]:
+    event_type = str(annotation.get("event_type") or "")
+    order = 0 if event_type == "query" else 1 if event_type == "answer_target" else 2
+    return float(annotation.get("timestamp", 0.0) or 0.0), order
 
 
 def _content_to_messages_and_images(
