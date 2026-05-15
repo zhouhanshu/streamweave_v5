@@ -96,7 +96,15 @@ def main() -> None:
             compute_grppo_component_advantage_values,
             compute_grppo_step_reward_values,
         )
-        from streamweave_rl.env import StreamWeaveRLEnv, _final_grppo_answer_reward, _normalize_query_annotations
+        from streamweave_rl.env import (
+            StreamWeaveRLEnv,
+            _answer_reward_scale,
+            _final_grppo_answer_reward,
+            _grppo_answer_event_enabled,
+            _timeline_grppo_answer_supervision,
+            _normalize_query_annotations,
+        )
+        from streamweave_rl.rewards import StreamWeaveRewardConfig
         from streamweave_rl.dapo import compute_group_filter_result, select_reward_extra_infos
         from streamweave.schemas import ModelAction, ModelEvent, QualityReport
         from streamweave_rl.judge import (
@@ -129,8 +137,22 @@ def main() -> None:
     assert cfg.judge_weight == 1.0
     assert cfg.grppo_process_weight == 1.0
     assert cfg.grppo_format_weight == 0.1
+    assert cfg.grppo_note_frequency_weight == 0.0
     assert cfg.score_scale == 1.0
     assert abs(compute_grppo_step_reward(process_score=0.5, format_score=1.0, cfg=cfg) - (0.6 / 1.1)) < 1e-6
+    grppo_anchor_cfg = StreamWeaveRewardConfig(grppo_note_frequency_weight=0.5)
+    assert (
+        abs(
+            compute_grppo_step_reward(
+                process_score=0.9,
+                format_score=1.0,
+                note_frequency_score=0.0,
+                cfg=grppo_anchor_cfg,
+            )
+            - ((0.9 + 0.1) / 1.6)
+        )
+        < 1e-6
+    )
     assert compute_success_score("cutting onion", "onion") == 1.0
     one_note = ModelAction(
         state="state",
@@ -290,13 +312,22 @@ def main() -> None:
         frames=[],
         raw_output="<state>state</state><answer></answer>",
         quality=QualityReport(valid=True, parser_ok=True, metrics={}),
-        query_label={"event_type": "answer_target", "question": "What color?", "timestamp": 3.0, "ground_truth": "red"},
+        query_label={
+            "event_type": "answer_target",
+            "question": "What color?",
+            "timestamp": 3.0,
+            "ground_truth": "C",
+            "answer": "red",
+            "options": ["blue", "green", "red"],
+        },
         answer_reward_event=True,
         answer_correctness=1.0,
     )
     grppo_answer_prompt = "\n".join(item.text for item in grppo_answer_content if item.type == "text")
     assert "answer_reward" in grppo_answer_prompt
+    assert "Options:\nA. blue\nB. green\nC. red" in grppo_answer_prompt
     assert "Requirement: the model must answer now. Reference answer: red" in grppo_answer_prompt
+    assert "Reference answer: C" not in grppo_answer_prompt
     assert "set answer_reward to that scalar exactly" not in grppo_answer_prompt
     grppo_query_only_content = _build_grppo_judge_content(
         memory_before="",
@@ -315,11 +346,19 @@ def main() -> None:
 
     annotations = _normalize_query_annotations(
         metadata={
-            "question": [{"content": "What ingredient is being added?", "time": "127"}],
-            "response": [
-                {"content": "C. bacon", "time": "180"},
-                {"content": "B. tomato", "time": "185"},
-                {"content": "E. lettuce", "time": "192"},
+            "query_events": [
+                {
+                    "qid": "q0",
+                    "time": 127.0,
+                    "content": "What ingredient is being added?",
+                    "answer_type": "mcq",
+                    "options": ["bacon", "tomato", "lettuce", "onion", "cheese"],
+                    "answer_events": [
+                        {"gt": "A", "answer": "bacon", "content": "A. bacon", "time": 180.0},
+                        {"gt": "B", "answer": "tomato", "content": "B. tomato", "time": 185.0},
+                        {"gt": "C", "answer": "lettuce", "content": "C. lettuce", "time": 192.0},
+                    ],
+                }
             ],
         },
         question="",
@@ -328,7 +367,8 @@ def main() -> None:
     )
     assert [item["event_type"] for item in annotations] == ["query", "answer_target", "answer_target", "answer_target"]
     assert [float(item["timestamp"]) for item in annotations] == [127.0, 180.0, 185.0, 192.0]
-    assert annotations[1]["ground_truth"] == "C. bacon"
+    assert annotations[1]["ground_truth"] == "A"
+    assert annotations[1]["answer"] == "bacon"
     same_step_env = object.__new__(StreamWeaveRLEnv)
     same_step_env.step_idx = 0
     same_step_env.groups = [[type("Frame", (), {"global_index": 0, "end_time": 1.0})()]]
@@ -340,6 +380,8 @@ def main() -> None:
         ]
     }
     same_step_env.sample = type("Sample", (), {"sample_id": "same-step"})()
+    same_step_env.grppo_enabled = True
+    same_step_env.latest_query_event = None
     same_step_env.env = type(
         "Env",
         (),
@@ -351,17 +393,111 @@ def main() -> None:
         },
     )()
     same_step_env._prompt_frames = lambda group: group
-    same_step_env.settings = type("Settings", (), {"runtime": type("Runtime", (), {"resolution": 0})()})()
+    same_step_env.settings = type(
+        "Settings",
+        (),
+        {
+            "runtime": type("Runtime", (), {"resolution": 0})(),
+            "rl_reward": StreamWeaveRewardConfig(grppo_answer_event_mode="timeline"),
+        },
+    )()
     obs = StreamWeaveRLEnv._prepare_current_turn(same_step_env)
     assert obs["messages"] == [{"role": "user", "content": []}]
     assert same_step_env.current_query_event["event_type"] == "query"
     assert same_step_env.current_answer_target["event_type"] == "answer_target"
     assert same_step_env.current_answer_label["ground_truth"] == "red"
+    assert same_step_env.current_answer_supervision.kind == "answer"
     assert same_step_env.current_step_query_count == 1
     assert same_step_env.current_step_answer_target_count == 1
-    assert _final_grppo_answer_reward(raw_score=1.0, has_answer=True, label_status="query_without_target") == 0.0
-    assert _final_grppo_answer_reward(raw_score=0.0, has_answer=False, label_status="query_without_target") == 1.0
-    assert _final_grppo_answer_reward(raw_score=1.0, has_answer=True, label_status="missing_label") == 0.0
+    assert (
+        _final_grppo_answer_reward(
+            raw_score=1.0,
+            supervision_kind="silence",
+            has_answer=True,
+            label_status="query_without_target",
+            use_llm_for_silence=False,
+        )
+        == 0.0
+    )
+    assert (
+        _final_grppo_answer_reward(
+            raw_score=0.0,
+            supervision_kind="silence",
+            has_answer=False,
+            label_status="query_without_target",
+            use_llm_for_silence=False,
+        )
+        == 1.0
+    )
+    assert (
+        _final_grppo_answer_reward(
+            raw_score=1.0,
+            supervision_kind="silence",
+            has_answer=False,
+            label_status="query_without_target",
+            use_llm_for_silence=True,
+            silence_reward_value=0.1,
+        )
+        == 0.1
+    )
+    assert (
+        _final_grppo_answer_reward(
+            raw_score=0.0,
+            supervision_kind="silence",
+            has_answer=False,
+            label_status="query_without_target",
+            use_llm_for_silence=True,
+            silence_reward_value=0.1,
+        )
+        == 0.0
+    )
+    assert _final_grppo_answer_reward(raw_score=1.0, supervision_kind="none", has_answer=True, label_status="missing_label") == 0.0
+    assert (
+        _final_grppo_answer_reward(
+            raw_score=1.0,
+            supervision_kind="silence",
+            has_answer=False,
+            label_status="query_without_target",
+            use_llm_for_silence=True,
+            silence_reward=False,
+        )
+        == 0.0
+    )
+    assert _answer_reward_scale("answer", silence_reward_value=0.1) == 1.0
+    assert _answer_reward_scale("silence", silence_reward_value=0.1) == 0.1
+    timeline_query = {"event_type": "query", "question": "What color?", "timestamp": 1.0}
+    timeline_silence = _timeline_grppo_answer_supervision(
+        grppo_enabled=True,
+        current_query_event=None,
+        current_answer_target=None,
+        latest_query_event=timeline_query,
+    )
+    assert timeline_silence.kind == "silence"
+    assert timeline_silence.label["event_type"] == "answer_silence"
+    assert timeline_silence.label["should_answer"] is False
+    timeline_answer = _timeline_grppo_answer_supervision(
+        grppo_enabled=True,
+        current_query_event=timeline_query,
+        current_answer_target={"event_type": "answer_target", "ground_truth": "red"},
+        latest_query_event=timeline_query,
+    )
+    assert timeline_answer.kind == "answer"
+    assert not _grppo_answer_event_enabled(
+        grppo_enabled=True,
+        cfg=StreamWeaveRewardConfig(grppo_answer_event_mode="required_only"),
+        label={"event_type": "query", "question": "What color?"},
+        has_query=True,
+        has_answer_target=False,
+        has_answer=True,
+    )
+    assert _grppo_answer_event_enabled(
+        grppo_enabled=True,
+        cfg=StreamWeaveRewardConfig(grppo_answer_event_mode="required_only"),
+        label={"event_type": "answer_target", "ground_truth": "C"},
+        has_query=False,
+        has_answer_target=True,
+        has_answer=False,
+    )
 
     data = FakeBatch()
     grppo_values = compute_grppo_step_reward_values(data.non_tensor_batch, config={"grppo_answer_decay": 0.5})

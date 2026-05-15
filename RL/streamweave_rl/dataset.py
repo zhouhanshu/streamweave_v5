@@ -15,14 +15,6 @@ from typing import Any
 import torch
 from torch.utils.data import Dataset
 
-from streamweave.ovo import (
-    FORWARD_TASKS,
-    MCQ_TASKS,
-    build_forward_query,
-    build_mcq_query,
-    option_letter_from_gt,
-)
-
 
 class StreamWeaveAgentDataset(Dataset):
     def __init__(
@@ -37,9 +29,9 @@ class StreamWeaveAgentDataset(Dataset):
         self.processor = processor
         self.config = _to_plain(config)
         self.streamweave_config = dict(self.config.get("streamweave", {}) or {})
-        self.rows = _expand_rows(_load_rows(data_files))
-        if _bool_config(self.streamweave_config.get("require_question", True)):
-            self.rows = [row for row in self.rows if _row_has_question(row)]
+        self.rows = _load_rows(data_files)
+        for idx, row in enumerate(self.rows):
+            _validate_canonical_query_events(row, row_index=idx)
         if max_samples and max_samples > 0:
             self.rows = self.rows[:max_samples]
 
@@ -50,8 +42,8 @@ class StreamWeaveAgentDataset(Dataset):
         row = dict(self.rows[idx])
         task = str(_first_present(row, ["task", "type", "question_type"], default="")).strip()
         question = _question_text(row)
-        query_timestamp = _query_timestamp(row, task)
-        ground_truth = _ground_truth(row, task)
+        query_timestamp = _query_timestamp(row)
+        ground_truth = _ground_truth(row)
         video_id = _video_id(row, idx)
         sample_id = _sample_id(row, video_id=video_id, task=task, idx=idx)
 
@@ -126,37 +118,6 @@ def _rows_from_json(value: Any) -> list[dict[str, Any]]:
     raise ValueError("JSON dataset must contain an object, a list of objects, or a data/annotations/samples list.")
 
 
-def _expand_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    expanded: list[dict[str, Any]] = []
-    for row in rows:
-        task = str(row.get("task") or "").strip()
-        if task in FORWARD_TASKS and isinstance(row.get("test_info"), list):
-            for index, info in enumerate(row["test_info"]):
-                if not isinstance(info, Mapping):
-                    continue
-                item = dict(row)
-                item.pop("test_info", None)
-                item["benchmark"] = item.get("benchmark") or "ovo"
-                item["dataset"] = item.get("dataset") or "ovo"
-                item["test_index"] = index
-                item["sample_id"] = f"{row.get('id')}_{index}"
-                item["video_id"] = item["sample_id"]
-                item["query_timestamp"] = float(row.get("ask_time", 0.0)) if task == "CRR" else 0.0
-                item["target_timestamp"] = float(info.get("realtime", 0.0))
-                item["ground_truth"] = info.get("count", 0) if task == "REC" else info.get("type", 0)
-                item["question"] = _ovo_forward_question(task, row, info)
-                expanded.append(item)
-            continue
-        if task in MCQ_TASKS:
-            item = dict(row)
-            item["benchmark"] = item.get("benchmark") or "ovo"
-            item["dataset"] = item.get("dataset") or "ovo"
-            expanded.append(item)
-            continue
-        expanded.append(row)
-    return expanded
-
-
 def _first_present(row: dict[str, Any], keys: list[str], default: Any = None) -> Any:
     for key in keys:
         if key in row and row[key] is not None:
@@ -164,103 +125,128 @@ def _first_present(row: dict[str, Any], keys: list[str], default: Any = None) ->
     return default
 
 
-def _row_has_question(row: dict[str, Any]) -> bool:
-    question_value = _first_present(row, ["question", "query", "query_text"], default="")
-    if isinstance(question_value, list):
-        return any(
-            isinstance(item, Mapping)
-            and str(_first_present(dict(item), ["content", "text", "question", "query"], default="")).strip()
-            for item in question_value
-        )
-    if str(question_value).strip():
-        return True
-    events = row.get("query_events")
-    if isinstance(events, list):
-        return any(
-            isinstance(item, Mapping)
-            and str(_first_present(dict(item), ["content", "text", "question", "query"], default="")).strip()
-            for item in events
-        )
-    return False
-
-
 def _question_text(row: dict[str, Any]) -> str:
+    event = _first_query_event(row)
+    return str(event.get("question") or event.get("content") or "").strip()
+
+
+def _query_timestamp(row: dict[str, Any]) -> float:
+    return float(_first_query_event(row)["time"])
+
+
+def _ground_truth(row: dict[str, Any]) -> Any:
+    target = _last_answer_event(row)
+    if target is None:
+        return ""
+    query = _query_for_answer_event(row, target)
+    if _answer_type(query) == "mcq":
+        return target.get("gt", target.get("answer", target.get("content", "")))
+    return target.get("answer", target.get("content", target.get("gt", "")))
+
+
+def _first_query_event(row: dict[str, Any]) -> Mapping[str, Any]:
+    return row["query_events"][0]
+
+
+def _last_answer_event(row: dict[str, Any]) -> Mapping[str, Any] | None:
+    for query in reversed(row["query_events"]):
+        answers = query.get("answer_events")
+        if isinstance(answers, list) and answers:
+            return answers[-1]
+    return None
+
+
+def _query_for_answer_event(row: dict[str, Any], target: Mapping[str, Any]) -> Mapping[str, Any]:
+    for query in row["query_events"]:
+        answers = query.get("answer_events")
+        if isinstance(answers, list) and any(answer is target for answer in answers):
+            return query
+    return _first_query_event(row)
+
+
+def _validate_canonical_query_events(row: dict[str, Any], *, row_index: int) -> None:
     events = row.get("query_events")
-    if isinstance(events, list) and events:
-        for item in events:
-            if not isinstance(item, Mapping):
-                continue
-            text = str(_first_present(dict(item), ["content", "text", "question", "query"], default="")).strip()
-            if text:
-                return text
-    raw_question = _first_present(row, ["question", "query", "query_text"], default="")
-    if isinstance(raw_question, list):
-        for item in raw_question:
-            if not isinstance(item, Mapping):
-                continue
-            text = str(_first_present(dict(item), ["content", "text", "question", "query"], default="")).strip()
-            if text:
-                return text
-        return ""
-    question = str(raw_question).strip()
-    if not question:
-        return ""
-    task = str(row.get("task") or "").strip()
-    if task in MCQ_TASKS and isinstance(row.get("options"), list):
-        return build_mcq_query(question, row["options"])
-    options = row.get("options")
-    if isinstance(options, list) and options:
-        option_lines = []
-        for idx, option in enumerate(options):
-            label = chr(ord("A") + idx)
-            text = str(option).strip()
-            option_lines.append(text if text[:2].upper() == f"{label}." else f"{label}. {text}")
-        return (
-            f"Question: {question}\n"
-            "Options:\n"
-            + "\n".join(option_lines)
-            + "\n\nRespond only with the letter corresponding to your chosen option."
+    if not isinstance(events, list) or not events:
+        raise ValueError(
+            f"RL row {row_index} must use the canonical query_events list; "
+            "legacy top-level question/query_timestamp/response fields are not accepted."
         )
-    return question
+    for query_index, query in enumerate(events):
+        if not isinstance(query, Mapping):
+            raise ValueError(f"RL row {row_index} query_events[{query_index}] must be an object")
+        _require_nonempty(query, "qid", row_index=row_index, query_index=query_index)
+        _require_float_time(query, "time", row_index=row_index, query_index=query_index)
+        _require_nonempty(query, "content", row_index=row_index, query_index=query_index)
+        answer_type = _answer_type(query)
+        if answer_type == "mcq" and not _normalize_options(query.get("options")):
+            raise ValueError(f"RL row {row_index} query_events[{query_index}] has answer_type=mcq but no options")
+        answers = query.get("answer_events")
+        if not isinstance(answers, list):
+            raise ValueError(f"RL row {row_index} query_events[{query_index}].answer_events must be a list")
+        for answer_index, answer in enumerate(answers):
+            if not isinstance(answer, Mapping):
+                raise ValueError(
+                    f"RL row {row_index} query_events[{query_index}].answer_events[{answer_index}] must be an object"
+                )
+            _require_float_time(answer, "time", row_index=row_index, query_index=query_index, answer_index=answer_index)
+            if answer_type == "mcq":
+                _require_nonempty(answer, "gt", row_index=row_index, query_index=query_index, answer_index=answer_index)
+                _require_nonempty(answer, "answer", row_index=row_index, query_index=query_index, answer_index=answer_index)
+            elif not any(str(answer.get(key) or "").strip() for key in ("answer", "content", "gt")):
+                raise ValueError(
+                    f"RL row {row_index} query_events[{query_index}].answer_events[{answer_index}] "
+                    "must contain answer/content/gt"
+                )
 
 
-def _query_timestamp(row: dict[str, Any], task: str) -> float:
-    events = row.get("query_events")
-    if isinstance(events, list) and events:
-        for item in events:
-            if not isinstance(item, Mapping):
-                continue
-            value = _first_present(dict(item), ["timestamp", "time", "query_time", "ask_time", "realtime"], default=None)
-            if value is not None:
-                return float(value)
-    question_value = row.get("question")
-    if isinstance(question_value, list):
-        for item in question_value:
-            if not isinstance(item, Mapping):
-                continue
-            value = _first_present(dict(item), ["timestamp", "time", "query_time", "ask_time", "realtime"], default=None)
-            if value is not None:
-                return float(value)
-    for key in ("query_timestamp", "query_time", "ask_time", "realtime", "timestamp"):
-        if key in row and row[key] is not None:
-            return float(row[key])
-    if task == "forward" and row.get("clue_time") is not None:
-        return max(float(row["clue_time"]) - 1.0, 0.0)
-    return 0.0
+def _answer_type(query: Mapping[str, Any]) -> str:
+    explicit = str(query.get("answer_type") or "").strip().lower()
+    if explicit in {"mcq", "multiple_choice", "multiple-choice"}:
+        return "mcq"
+    if explicit in {"text", "freeform", "natural_language", "natural-language"}:
+        return "text"
+    raise ValueError("query_events[].answer_type is required and must be 'mcq' or 'text'")
 
 
-def _ground_truth(row: dict[str, Any], task: str) -> Any:
-    for key in ("ground_truth", "target"):
-        if key in row and row[key] is not None:
-            return row[key]
-    if task in MCQ_TASKS and row.get("gt") is not None:
-        try:
-            return option_letter_from_gt(row["gt"])
-        except (TypeError, ValueError):
-            return row["gt"]
-    if row.get("gt") is not None:
-        return row["gt"]
-    return _first_present(row, ["answer"], default="")
+def _normalize_options(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _require_nonempty(
+    obj: Mapping[str, Any],
+    key: str,
+    *,
+    row_index: int,
+    query_index: int,
+    answer_index: int | None = None,
+) -> None:
+    if str(obj.get(key) or "").strip():
+        return
+    location = f"RL row {row_index} query_events[{query_index}]"
+    if answer_index is not None:
+        location += f".answer_events[{answer_index}]"
+    raise ValueError(f"{location} requires non-empty {key!r}")
+
+
+def _require_float_time(
+    obj: Mapping[str, Any],
+    key: str,
+    *,
+    row_index: int,
+    query_index: int,
+    answer_index: int | None = None,
+) -> None:
+    if key not in obj:
+        _require_nonempty(obj, key, row_index=row_index, query_index=query_index, answer_index=answer_index)
+    try:
+        float(obj[key])
+    except (TypeError, ValueError) as exc:
+        location = f"RL row {row_index} query_events[{query_index}]"
+        if answer_index is not None:
+            location += f".answer_events[{answer_index}]"
+        raise ValueError(f"{location}.{key} must be numeric") from exc
 
 
 def _video_id(row: dict[str, Any], idx: int) -> str:
@@ -282,10 +268,6 @@ def _sample_id(row: dict[str, Any], *, video_id: str, task: str, idx: int) -> st
     return f"{video_id}_{task or idx}"
 
 
-def _ovo_forward_question(task: str, row: dict[str, Any], info: Mapping[str, Any]) -> str:
-    return build_forward_query(task, row, dict(info))
-
-
 def _streamweave_config_from_row(row: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     dataset_name = str(row.get("dataset") or "").strip()
@@ -304,9 +286,6 @@ def _sample_metadata(row: dict[str, Any], *, task: str, question: str, ground_tr
     metadata = _to_plain_value(row)
     if not isinstance(metadata, dict):
         metadata = dict(row)
-    raw_question = metadata.get("question")
-    if isinstance(raw_question, (list, dict)):
-        metadata["raw_question"] = raw_question
     metadata["task"] = task
     metadata["question"] = question
     metadata["ground_truth"] = ground_truth

@@ -4,13 +4,14 @@
 
 - 实验：`StreamWeave`
 - 当前主线：`exp3/streamweave_v5/RL`
-- 当前阶段：RL0511 step60 已完成 OVO 1/8 回评，成为当前 Qwen/student 1/8 最强结果；第一次 GRPO 0509 full 仍是当前 V5/Qwen full 最强结果。
+- 当前阶段：RL0511 step60 已完成 OVO 1/8 和 full 回评；第一次 GRPO 0509 full 仍是当前 V5/Qwen full 最强结果。2026-05-14 新 SFT 已完成训练并导出，准备进入评测。
 - 当前唯一保留的 GRPO 入口：`RL/scripts/train_grpo_ovo_8gpu.sh`
 - PPO 入口：`RL/scripts/train_ppo.sh`
 - 当前训练数据运行路径：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset/ovo/ovo_rl_lt120s.json`
 - 当前初始化模型：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm`
 - 当前最优先事项：
   - 对 `models/exp1_rl0511_step60` 做 full 回评，确认 OVO 1/8 的正向收益能否迁移到 full。
+  - 对新 SFT 模型 `models/qwen_sft_0513` 做 OVO 回评，确认 dataset2 SFT 是否优于 base / answered-full SFT / GRPO0509。
   - 后续继续做 RL 时必须同时和 base instruct、answered-full SFT、GRPO0509 和 RL0511 step60 做同口径对照。
   - 复盘 judge-enabled GRPO 负结果，优先检查 reward 密度、judge 噪声、KL/entropy 约束和 trajectory-level credit assignment。
   - 后续新 run 必须继续记录 `note_frequency_score`、`judge_score`、`step_score`、`trajectory_score`，并在 SwanLab 中优先看 `traj/score/*` 而不是只看 `critic/score`。
@@ -41,6 +42,19 @@
 - 详细源码事实见 `10-source-code-current-state.md`。
 
 ## 关键里程碑
+
+### 2026-05-14 新 SFT 训练完成，准备评测
+
+- 训练配置：`SFT/LlamaFactory/configs/qwen3vl_8b_full_sft_streamweave_0511_note.yaml`
+- 训练输出目录：`SFT/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_0511_note`
+- 训练完成状态：`708/708` steps，`EXIT_STATUS=0`，最终 `epoch=1.0`。
+- 训练耗时：`7:35:31`；训练日志：`SFT/LlamaFactory/logs/resume_debug_20260514_144429/train.out`。
+- 最终训练指标：`train_loss=0.0542`，最终 eval：`eval_loss=0.1826`。
+- 当前保留 checkpoint：`checkpoint-400`、`checkpoint-500`、`checkpoint-600`、`checkpoint-700`、`checkpoint-708`；`save_total_limit=5` 已清掉更早 checkpoint。
+- 已按用户指定导出 `checkpoint-700` 到推理模型目录：`models/qwen_sft_0513`。
+- 导出方式：full fine-tune checkpoint 已包含完整 `model.safetensors`，仅拷贝推理必要文件，排除 optimizer、DeepSpeed、rng 和 trainer state。
+- 导出验证：`model_type=qwen3_vl`，`processor=Qwen3VLProcessor`，`padding_side=left`，`text_use_cache=True`，`model.safetensors` tensor 数 `750`。
+- 下一步：以 `models/qwen_sft_0513` 启动 OVO 评测，优先跑小规模/1-of-8，确认正向后再跑 full；结果写入 `note/实验跑分.md` 和 `note/06-evaluation.md`。
 
 ### 2026-05-13 RL0511 step60 OVO full 回评完成
 

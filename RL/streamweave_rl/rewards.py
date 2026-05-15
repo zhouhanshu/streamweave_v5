@@ -34,6 +34,12 @@ class StreamWeaveRewardConfig:
     note_frequency_penalty_score: float = 0.0
     grppo_process_weight: float = 1.0
     grppo_format_weight: float = 0.1
+    grppo_note_frequency_weight: float = 0.0
+    grppo_answer_event_mode: str = "legacy"
+    grppo_silence_reward: bool = True
+    grppo_silence_reward_value: float = 1.0
+    grppo_target_answer_weight: float = 1.0
+    grppo_target_format_weight: float = 1.0
     judge: JudgeConfig = field(default_factory=JudgeConfig)
 
 
@@ -169,21 +175,44 @@ def compute_grppo_step_reward(
     *,
     process_score: float,
     format_score: float,
+    note_frequency_score: float = 0.0,
     cfg: StreamWeaveRewardConfig,
 ) -> float:
-    """Combine GRPPO process judge and format rewards into a per-step scalar."""
+    """Combine GRPPO process, format, and deterministic anchor rewards."""
 
     process_weight = max(float(cfg.grppo_process_weight), 0.0)
     format_weight = max(float(cfg.grppo_format_weight), 0.0)
-    denominator = process_weight + format_weight
+    note_frequency_weight = max(float(cfg.grppo_note_frequency_weight), 0.0)
+    denominator = process_weight + format_weight + note_frequency_weight
     if denominator <= 0.0:
         return 0.0
     process_value = _clamp_score(float(process_score), cfg=cfg)
     format_value = _clamp_score(float(format_score), cfg=cfg)
+    note_frequency_value = _clamp_score(float(note_frequency_score), cfg=cfg)
     return _clamp_score(
-        (process_weight * process_value + format_weight * format_value) / denominator,
+        (
+            process_weight * process_value
+            + format_weight * format_value
+            + note_frequency_weight * note_frequency_value
+        )
+        / denominator,
         cfg=cfg,
     )
+
+
+def compute_grppo_target_trajectory_reward(
+    *,
+    answer_score: float,
+    format_score: float,
+    cfg: StreamWeaveRewardConfig,
+) -> float:
+    """Observation-only target reward for GRPPO validation/debug metrics."""
+
+    answer_weight = max(float(cfg.grppo_target_answer_weight), 0.0)
+    format_weight = max(float(cfg.grppo_target_format_weight), 0.0)
+    answer_value = _clamp_score(float(answer_score), cfg=cfg)
+    format_value = _clamp_score(float(format_score), cfg=cfg)
+    return answer_weight * answer_value + format_weight * format_value
 
 
 def compute_success_score(

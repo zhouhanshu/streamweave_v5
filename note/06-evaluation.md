@@ -6,15 +6,24 @@
 
 ## 当前必须比较的对象
 
-下一轮 V5 RL checkpoint 出来后，至少需要同口径比较：
+下一轮新 SFT / V5 RL checkpoint 出来后，至少需要同口径比较：
 
 | 模型/策略 | 用途 |
 | --- | --- |
 | `/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct` | base instruct 起点 |
 | `streamweave_sft_v2_3077` | 当前 SFT-init 起点 |
+| `models/qwen_sft_0513` | 2026-05-14 新 SFT，来自 `streamweave_sft_0511_note/checkpoint-700`，当前准备评测 |
 | V5 GRPO checkpoint | RL 后模型 |
 
 优先跑 OVO 小规模回评；确认正向后再跑 full。
+
+## 2026-05-14 待评测 SFT
+
+- 模型路径：`/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen_sft_0513`
+- 来源 checkpoint：`SFT/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_0511_note/checkpoint-700`
+- 训练状态：`708/708` steps 完成，最终 eval loss `0.1826`，训练正常退出。
+- 导出状态：已导出为 HF 推理目录，排除训练状态文件；`AutoProcessor` 可正常识别为 `Qwen3VLProcessor`。
+- 当前计划：先跑 OVO 1/8 或小规模回评，确认稳定和方向后再跑 full；结果必须写入 `note/实验跑分.md`。
 
 ## 评测原则
 

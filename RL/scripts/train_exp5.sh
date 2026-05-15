@@ -28,6 +28,7 @@ ADV_ESTIMATOR="streamweave_stepwise_grppo"
 TRAIN_BATCH_SIZE=16
 GEN_BATCH_SIZE=16
 VAL_BATCH_SIZE=16
+VAL_MAX_SAMPLES=200
 ROLLOUT_N=8
 MAX_STEPS=0
 TEST_FREQ=30
@@ -40,7 +41,7 @@ GRPPO_FORMAT_WEIGHT=0.1
 GRPPO_STEP_WEIGHT=1.0
 GRPPO_ANSWER_WEIGHT=0.7
 GRPPO_NORM_BY_STD=true
-GRPPO_MIN_STD=0.07
+GRPPO_MIN_STD=0.04
 GRPPO_FILTER_GROUPS_ENABLE=true
 GRPPO_FILTER_MIN_STD=0.04
 
@@ -140,7 +141,7 @@ echo "StreamWeave exp5 judge prompt_version=${JUDGE_PROMPT_VERSION}"
 echo "StreamWeave exp5 grppo reward process_weight=${GRPPO_PROCESS_WEIGHT} format_weight=${GRPPO_FORMAT_WEIGHT}"
 echo "StreamWeave exp5 grppo answer_decay=${GRPPO_ANSWER_DECAY} step_weight=${GRPPO_STEP_WEIGHT} answer_weight=${GRPPO_ANSWER_WEIGHT} norm_by_std=${GRPPO_NORM_BY_STD}"
 echo "StreamWeave exp5 grppo step_filter enable=${GRPPO_FILTER_GROUPS_ENABLE} min_std=${GRPPO_FILTER_MIN_STD}"
-echo "StreamWeave exp5 scale train_batch=${TRAIN_BATCH_SIZE} gen_batch=${GEN_BATCH_SIZE} rollout.n=${ROLLOUT_N} max_steps=${MAX_STEPS}"
+echo "StreamWeave exp5 scale train_batch=${TRAIN_BATCH_SIZE} gen_batch=${GEN_BATCH_SIZE} val_batch=${VAL_BATCH_SIZE} val_max_samples=${VAL_MAX_SAMPLES} rollout.n=${ROLLOUT_N} max_steps=${MAX_STEPS}"
 echo "StreamWeave judge enable=${JUDGE_ENABLE}"
 echo "StreamWeave base config=${RL_DIR}/configs/streamweave_stepwise.yaml"
 echo "StreamWeave trace first_rollout=${TRACE_FIRST_ROLLOUT} sample_every=${TRACE_SAMPLE_EVERY}"
@@ -155,6 +156,7 @@ DATA_ARGS=(
     data.train_batch_size="${TRAIN_BATCH_SIZE}"
     +data.gen_batch_size="${GEN_BATCH_SIZE}"
     data.val_batch_size="${VAL_BATCH_SIZE}"
+    data.val_max_samples="${VAL_MAX_SAMPLES}"
     data.max_prompt_length=6144
     data.max_response_length=2048
     data.streamweave.dataset_name="${DATASET_NAME}"

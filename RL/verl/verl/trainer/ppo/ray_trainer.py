@@ -218,9 +218,18 @@ def _compute_streamweave_stepwise_metrics(batch: DataProto) -> dict[str, Any]:
     traj_metric_aliases = {
         "trajectory_score": "traj/score",
         "success_score": "traj/success",
+        "grppo_target_trajectory_score": "traj/target_score",
+        "grppo_target_answer_reward": "traj/target_answer",
+        "grppo_target_format_reward": "traj/target_format",
     }
 
-    for key in ("trajectory_score", "success_score"):
+    for key in (
+        "trajectory_score",
+        "success_score",
+        "grppo_target_trajectory_score",
+        "grppo_target_answer_reward",
+        "grppo_target_format_reward",
+    ):
         if key not in non_tensor_batch:
             continue
         values = np.asarray(non_tensor_batch[key], dtype=object).reshape(-1)
@@ -243,6 +252,7 @@ def _compute_streamweave_stepwise_metrics(batch: DataProto) -> dict[str, Any]:
         "grppo_state_groundedness",
         "grppo_judge_step_reward",
         "grppo_format_score",
+        "grppo_note_frequency_score",
         GRPPO_STEP_REWARD_KEY,
         GRPPO_ANSWER_REWARD_KEY,
         GRPPO_ANSWER_CREDIT_KEY,
@@ -254,6 +264,8 @@ def _compute_streamweave_stepwise_metrics(batch: DataProto) -> dict[str, Any]:
         GRPPO_ANSWER_VALID_KEY,
         GRPPO_UPDATE_VALID_KEY,
         "grppo_answer_event",
+        "grppo_answer_supervision",
+        "grppo_answer_reward_scale",
         "grppo_has_query",
         "grppo_has_answer_target",
         "grppo_has_answer",
@@ -893,6 +905,8 @@ class RayPPOTrainer:
         batch: DataProto,
         reward_extra_infos_dict: dict[str, Any],
     ) -> dict[str, Any]:
+        enabled = _as_bool(self.config.algorithm.get("grppo_forced_answer_postprocess_enable", True))
+        silence_reward_value = float(self.config.algorithm.get("grppo_silence_reward_value", 1.0))
         non_tensor = batch.non_tensor_batch
         required = (
             "group_idx",
@@ -904,7 +918,11 @@ class RayPPOTrainer:
             "grppo_has_answer",
         )
         if any(key not in non_tensor for key in required):
-            return {"grppo/forced_answer_postprocess_available": 0.0}
+            return {
+                "grppo/forced_answer_postprocess_available": 0.0,
+                "grppo/forced_answer_postprocess_enabled": float(enabled),
+                "grppo/forced_silence_reward_value": silence_reward_value,
+            }
 
         groups = np.asarray(non_tensor["group_idx"], dtype=object).reshape(-1)
         turns = np.asarray(non_tensor["turn_idx"], dtype=object).reshape(-1)
@@ -924,6 +942,19 @@ class RayPPOTrainer:
         ):
             raise ValueError("GRPPO forced-answer postprocess fields must be row-aligned")
 
+        if not enabled:
+            forced_mask = np.zeros(len(answer_reward), dtype=np.float32)
+            non_tensor["grppo_forced_answer_postprocess"] = forced_mask
+            reward_extra_infos_dict["grppo_forced_answer_postprocess"] = [0.0 for _ in range(len(answer_reward))]
+            return {
+                "grppo/forced_answer_postprocess_available": 1.0,
+                "grppo/forced_answer_postprocess_enabled": 0.0,
+                "grppo/forced_silence_reward_value": silence_reward_value,
+                "grppo/forced_answer_cohorts": 0.0,
+                "grppo/forced_answer_rows": 0.0,
+                "grppo/forced_silent_rows": 0.0,
+            }
+
         cohort_to_rows: dict[tuple[str, str], list[int]] = defaultdict(list)
         for idx, (group, turn) in enumerate(zip(groups, turns, strict=True)):
             cohort_to_rows[(str(group), str(turn))].append(idx)
@@ -939,7 +970,7 @@ class RayPPOTrainer:
             forced_cohorts += 1
             forced_answer_rows += int(np.count_nonzero(has_answer[row_idx]))
             forced_silent_rows += int(row_idx.size - np.count_nonzero(has_answer[row_idx]))
-            answer_reward[row_idx] = np.where(has_answer[row_idx], 0.0, 1.0).astype(np.float32)
+            answer_reward[row_idx] = np.where(has_answer[row_idx], 0.0, silence_reward_value).astype(np.float32)
             answer_event[row_idx] = 1.0
             forced_mask[row_idx] = 1.0
 
@@ -950,6 +981,9 @@ class RayPPOTrainer:
         reward_extra_infos_dict["grppo_answer_event"] = [float(item) for item in answer_event.tolist()]
         reward_extra_infos_dict["grppo_forced_answer_postprocess"] = [float(item) for item in forced_mask.tolist()]
         return {
+            "grppo/forced_answer_postprocess_available": 1.0,
+            "grppo/forced_answer_postprocess_enabled": 1.0,
+            "grppo/forced_silence_reward_value": silence_reward_value,
             "grppo/forced_answer_cohorts": float(forced_cohorts),
             "grppo/forced_answer_rows": float(forced_answer_rows),
             "grppo/forced_silent_rows": float(forced_silent_rows),
@@ -1043,6 +1077,10 @@ class RayPPOTrainer:
             "turn_reward",
             "trajectory_score",
             "success_score",
+            "grppo_target_trajectory_score",
+            "grppo_target_answer_reward",
+            "grppo_target_format_reward",
+            "grppo_target_ground_truth",
             "final_answer",
             "judge_status",
             "judge_error",
@@ -1052,10 +1090,13 @@ class RayPPOTrainer:
             "grppo_state_groundedness",
             "grppo_judge_step_reward",
             "grppo_format_score",
+            "grppo_note_frequency_score",
             GRPPO_STEP_REWARD_KEY,
             GRPPO_ANSWER_REWARD_KEY,
             "grppo_answer_reward_raw",
             "grppo_answer_event",
+            "grppo_answer_supervision",
+            "grppo_answer_reward_scale",
             "grppo_has_query",
             "grppo_has_answer_target",
             "grppo_has_answer",
@@ -1129,16 +1170,15 @@ class RayPPOTrainer:
         turns = np.asarray(batch.non_tensor_batch.get("turn_idx", []), dtype=object).reshape(-1)
         step_rewards = np.asarray(batch.non_tensor_batch[GRPPO_STEP_REWARD_KEY], dtype=np.float32).reshape(-1)
         answer_credit = np.asarray(batch.non_tensor_batch[GRPPO_ANSWER_CREDIT_KEY], dtype=np.float32).reshape(-1)
-        step_valid_rows = np.asarray(batch.non_tensor_batch[GRPPO_STEP_VALID_KEY], dtype=np.float32).reshape(-1) > 0.5
-        answer_valid_rows = np.asarray(batch.non_tensor_batch[GRPPO_ANSWER_VALID_KEY], dtype=np.float32).reshape(-1) > 0.5
-        if not (len(groups) == len(turns) == len(step_rewards) == len(answer_credit) == len(step_valid_rows) == len(answer_valid_rows)):
-            raise ValueError("GRPPO filter requires row-aligned group_idx, turn_idx, and GRPPO component fields")
+        if not (len(groups) == len(turns) == len(step_rewards) == len(answer_credit)):
+            raise ValueError("GRPPO filter requires row-aligned group_idx, turn_idx, and GRPPO reward fields")
 
         filter_cfg = self.config.algorithm.get("grppo_filter_groups", None)
         enabled = _as_bool(filter_cfg.get("enable", False)) if filter_cfg is not None else False
         min_std = float(filter_cfg.get("min_std", self.config.algorithm.get("grppo_min_std", 0.03))) if filter_cfg is not None else float(
             self.config.algorithm.get("grppo_min_std", 0.03)
         )
+        advantage_min_std = float(self.config.algorithm.get("grppo_min_std", min_std))
 
         cohort_to_rows: dict[tuple[str, str], list[int]] = defaultdict(list)
         for idx, (group, turn) in enumerate(zip(groups, turns, strict=True)):
@@ -1166,8 +1206,8 @@ class RayPPOTrainer:
             step_cohort_stds.append(step_std)
             answer_cohort_means.append(answer_mean)
             answer_cohort_stds.append(answer_std)
-            step_ok = bool(np.any(step_valid_rows[row_idx]))
-            answer_ok = bool(np.any(answer_valid_rows[row_idx]))
+            step_ok = bool(step_values.size > 1 and step_std > min_std)
+            answer_ok = bool(answer_values.size > 1 and answer_std > min_std)
             if step_ok:
                 step_valid_cohorts += 1
             if answer_ok:
@@ -1187,6 +1227,7 @@ class RayPPOTrainer:
                 "grppo/filter_enabled": float(enabled),
                 "grppo/filter_applied": 0.0,
                 "grppo/filter_min_std": float(min_std),
+                "grppo/advantage_min_std": float(advantage_min_std),
                 "grppo/total_cohorts": float(total_cohorts),
                 "grppo/valid_cohorts": float(valid_cohorts),
                 "grppo/invalid_cohorts": float(total_cohorts - valid_cohorts),
@@ -1343,7 +1384,12 @@ class RayPPOTrainer:
             # evaluate using reward_function
             reward_tensor, reward_extra_info = extract_reward(test_batch)
 
-            if self._stepwise_rollout_enabled() and "trajectory_score" in test_batch.non_tensor_batch:
+            score_key = str(
+                self.config.algorithm.get("stepwise_validation_score_key", "trajectory_score") or "trajectory_score"
+            )
+            if self._stepwise_rollout_enabled() and score_key in test_batch.non_tensor_batch:
+                scores = [float(item) for item in test_batch.non_tensor_batch[score_key]]
+            elif self._stepwise_rollout_enabled() and "trajectory_score" in test_batch.non_tensor_batch:
                 scores = [float(item) for item in test_batch.non_tensor_batch["trajectory_score"]]
             else:
                 scores = reward_tensor.sum(-1).cpu().tolist()
@@ -1812,6 +1858,13 @@ class RayPPOTrainer:
             extra_divisor=dp_size * micro_batch_size_per_gpu,
         )
 
+    def _ref_policy_dispatch_role(self) -> str:
+        # Legacy FSDP/Megatron reference workers reuse ActorRolloutRefWorker, whose
+        # compute_ref_log_prob dispatch is registered on the actor mesh.
+        if self.use_legacy_worker_impl != "disable" and not self.ref_in_actor:
+            return "actor"
+        return "ref"
+
     @staticmethod
     def _mask_actor_padding_loss(batch: DataProto, pad_size: int) -> None:
         """Keep dispatch padding from contributing to the actor loss."""
@@ -1935,7 +1988,7 @@ class RayPPOTrainer:
             else:
                 micro_batch_size_per_gpu = self.config.actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu
                 padded_batch, pad_size = self._pad_batch_to_logprob_divisor(
-                    batch, self.ref_policy_wg, "ref", micro_batch_size_per_gpu
+                    batch, self.ref_policy_wg, self._ref_policy_dispatch_role(), micro_batch_size_per_gpu
                 )
             # step 1: convert dataproto to tensordict.
             batch_td = padded_batch.to_tensordict()
@@ -1969,7 +2022,7 @@ class RayPPOTrainer:
             else:
                 micro_batch_size_per_gpu = self.config.actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu
                 padded_batch, pad_size = self._pad_batch_to_logprob_divisor(
-                    batch, self.ref_policy_wg, "ref", micro_batch_size_per_gpu
+                    batch, self.ref_policy_wg, self._ref_policy_dispatch_role(), micro_batch_size_per_gpu
                 )
                 ref_log_prob = self.ref_policy_wg.compute_ref_log_prob(padded_batch)
             ref_log_prob = unpad_dataproto(ref_log_prob, pad_size)

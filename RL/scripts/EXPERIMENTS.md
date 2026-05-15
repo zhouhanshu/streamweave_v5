@@ -17,9 +17,14 @@ Before starting a new run:
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 2026-05-12 | running-old-config | 3927597 | Experiment 1: `grpo_rl0511_8gpu_judge` | `RL/scripts/train_grpo.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_0511.jsonl` | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | `streamweave_stepwise_traj_grpo`; `rollout.n=16`; DAPO filter enabled; `gen_batch_size=16` in the live command | Gemini judge enabled | `RL/outputs/runs/grpo_rl0511_8gpu_judge` | Demo experiment. Existing process uses an old config. Curves: <https://swanlab.cn/@zhs/streamweave_rl/runs/gmtjhm9u05m58326zmpe6/chart>. Do not stop or reuse this run name for new experiments. |
 | 2026-05-12 | ready | TBD | Experiment 2: `exp2_rlmlr` | `RL/scripts/train_exp2_rlmlr.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_0512_train.jsonl`; val `dataset2/rl_0512_val.jsonl` | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | `streamweave_stepwise_rlmlr`; `train_batch_size=16`; `gen_batch_size=16`; `rollout.n=8`; `outcome=success_score`; `state=1.0*step_score+0.2*format_score`; DAPO filter disabled; validation every 20 steps | Gemini judge enabled | `RL/outputs/runs/exp2_rlmlr` | Uses `rl_0512` deterministic video-level split: train 1420 rows, val 80 rows. Fixed output dir; do not start the same script concurrently on multiple machines sharing this disk. |
-| 2026-05-14 | stopped-after-step20 | manual stop | Experiment 3: `exp3` | `RL/scripts/train_exp3.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_exp3.jsonl`; val same file | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | `streamweave_stepwise_grppo`; `train_batch_size=16`; `gen_batch_size=16`; `rollout.n=8`; `answer_decay=0.4`; final advantage `1.0*step_adv + 0.3*answer_adv`; `grppo_min_std=0.07`; step filter enabled with `filter_min_std=0.04`; `process_weight=1.0`; `format_weight=0.1`; validation every 30 steps | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp3` | Stopped manually after `global_step_20`; checkpoint available. Curves were close to exp4/exp5, so no immediate evaluation. |
+| 2026-05-14 | stopped-after-step20 | manual stop | Experiment 3: `exp3` | `RL/scripts/train_exp3.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_exp3.jsonl`; val same file | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | `streamweave_stepwise_grppo`; `train_batch_size=16`; `gen_batch_size=16`; `rollout.n=8`; `answer_decay=0.4`; final advantage `1.0*step_adv + 0.3*answer_adv`; `grppo_min_std=0.04`; step filter enabled with `filter_min_std=0.04`; `process_weight=1.0`; `format_weight=0.1`; validation every 30 steps | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp3` | Stopped manually after `global_step_20`; checkpoint available. Curves were close to exp4/exp5, so no immediate evaluation. |
 | 2026-05-14 | stopped-evaluating-step20 | manual stop | Experiment 4: `exp4` | `RL/scripts/train_exp4.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_exp3.jsonl`; val same file | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | Same as exp3 except final advantage `1.0*step_adv + 0.5*answer_adv`; `filter_min_std=0.04` | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp4` | Stopped manually after `global_step_20`; exported to `models/exp4_grppo_aw05_step20`; OVO 1/8 evaluation directory created at `outputs/ovo_exp4_grppo_aw05_step20_1of8`. |
-| 2026-05-14 | running | TBD | Experiment 5: `exp5` | `RL/scripts/train_exp5.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_exp3.jsonl`; val same file | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | Same as exp3/4 except final advantage `1.0*step_adv + 0.7*answer_adv`; `filter_min_std=0.04` | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp5` | Continue running while exp4 step20 is evaluated; latest checkpoint observed at `global_step_20`. |
+| 2026-05-14 | stopped-in-validation-step30 | manual/external stop | Experiment 5: `exp5` | `RL/scripts/train_exp5.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_exp3.jsonl`; val same file, capped by `data.val_max_samples=200` for future resumes | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | Same as exp3/4 except final advantage `1.0*step_adv + 0.7*answer_adv`; `filter_min_std=0.04` | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp5` | Reached step 29, then entered step-30 validation over the previous full 2000-row validation set and did not finish cleanly; latest checkpoint observed at `global_step_20`. Script now caps future validation to 200 rows. |
+| 2026-05-14 | ready | TBD | Experiment 6: `exp6` | `RL/scripts/train_exp6.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_exp3.jsonl`; val same file, capped by `data.val_max_samples=200` | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | Exp5 follow-up: final advantage `1.0*step_adv + 0.5*answer_adv`; `answer_decay=0.7`; no std division; GRPPO step reward uses `0.7*judge + 0.25*format + 0.25*note_frequency`; timeline answer supervision; silence scalar `0.1`; actor KL loss enabled with coef `0.001`; validation score key `grppo_target_trajectory_score` | Gemini judge enabled, `streamweave_grppo_judge_v1`; answer label uses natural-language answer text and includes MCQ options | `RL/outputs/runs/exp6` | Prepared to test LLM-judged answer/silence supervision without trainer rule overwrite. Validation is capped to 200 rows to avoid step-30 full-set stalls. |
+| 2026-05-15 | prepared | TBD | Experiment 7: `exp7` | `RL/scripts/train_exp7.sh` | `RL/configs/streamweave_stepwise.yaml` | train `dataset2/rl_0515_train.jsonl`; val `dataset2/rl_0515_val.jsonl`, capped by `data.val_max_samples=200` | `models/qwen_sft_0513` | Initial copy of exp6 for the next parameter experiment, with source model switched to `qwen_sft_0513`: timeline answer supervision, final advantage `1.0*step_adv + 0.5*answer_adv`, `answer_decay=0.7`, no std division, GRPPO step reward `0.7*judge + 0.25*format + 0.25*note_frequency`, silence scalar `0.2`, actor KL loss coef `0.001`, both `grppo_min_std` and `grppo_filter_groups.min_std` set to `0.05` | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp7` | Dedicated script/output directory so exp6 remains reproducible. Uses the 2026-05-15 canonical train/val split. |
+| 2026-05-15 | prepared | TBD | Experiment 7 smoke: `exp7_smoke` | `RL/scripts/train_exp7_smoke.sh` | `RL/configs/streamweave_stepwise.yaml` | train `dataset2/rl_0515_train.jsonl`; val `dataset2/rl_0515_val.jsonl`, capped by `data.val_max_samples=16` | `models/qwen_sft_0513` | Two-step debug run for exp7: `train_batch_size=2`, `gen_batch_size=2`, `rollout.n=4`, real batch `8`, `total_training_steps=2`; same reward/advantage settings as exp7, including silence scalar `0.2` and both std thresholds `0.05`; GRPPO debug dumps enabled for 2 groups x 4 trajectories | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp7_smoke` | Use this before full exp7 to inspect reward scale, cohort stds, kept ratio, and per-turn advantages. Console-only logger, no checkpoint save, no validation during training. |
+| 2026-05-15 | prepared | TBD | Experiment 8: `exp8` | `RL/scripts/train_exp8.sh` | `RL/configs/streamweave_stepwise.yaml` | train `dataset2/rl_0515_train.jsonl`; val `dataset2/rl_0515_val.jsonl`, capped by `data.val_max_samples=200` | `models/qwen_sft_0513` | Exp7 algorithm on a 2-node Ray cluster: `trainer.nnodes=2`, `trainer.n_gpus_per_node=8`, `train/gen/val_batch_size=16`, `rollout.n=8`, real batch `128`, `agent.num_workers=64`, actor KL enabled, timeline answer supervision, silence scalar `0.2`, both std thresholds `0.05` | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp8` | Multi-node script with explicit `head`, `worker`, and `driver` modes. Driver connects to the existing Ray cluster and does not stop Ray before launch. |
+| 2026-05-14 | prepared | TBD | Experiment 9: `exp9_localjudge` | `RL/scripts/train_exp9_localjudge.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_exp3.jsonl`; val same file, capped by `data.val_max_samples=200` | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | Same single-node algorithm as exp7, but judge backend defaults to local OpenAI-compatible/vLLM endpoint: `JUDGE_BACKEND=vllm`, `JUDGE_BASE_URL=http://127.0.0.1:9000/v1`, `JUDGE_MODEL=qwen3vl-32b-judge` | Local Qwen3VL-32B judge assumed already deployed; `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp9_localjudge` | Use this to switch scoring from Gemini to a local judge without changing exp6/exp7/exp8 scripts. |
 | 2026-05-12 | planned | TBD | `TBD` | `RL/scripts/TBD.sh` | `RL/configs/streamweave_stepwise.yaml` | `TBD` | `TBD` | `TBD` | `TBD` | `RL/outputs/runs/TBD` | Fill this row when the next launch script is created. |
 
 ## Experiment 3-5: GRPPO Answer-Weight Sweep
@@ -45,6 +50,8 @@ Data and runtime overrides:
 - Validation file: `data.val_files=dataset2/rl_exp3.jsonl`.
 - Batch sizes: `data.train_batch_size=16`, `+data.gen_batch_size=16`,
   `data.val_batch_size=16`.
+- Validation subset: exp5 future resumes use `data.val_max_samples=200`; exp3/exp4 ran with
+  the full validation file.
 - Lengths: `data.max_prompt_length=6144`, `data.max_response_length=2048`.
 - Stream runtime override: `data.streamweave.runtime.max_steps=0`; other stream runtime settings
   come from `RL/configs/streamweave_stepwise.yaml`.
@@ -85,7 +92,7 @@ GRPPO, reward, and judge:
 - Final advantage weights: exp3 uses `+algorithm.grppo_answer_weight=0.3`, exp4 uses `0.5`,
   exp5 uses `0.7`; all use `+algorithm.grppo_step_weight=1.0`.
 - Component normalization: `+algorithm.grppo_norm_by_std=true`,
-  `+algorithm.grppo_min_std=0.07`.
+  `+algorithm.grppo_min_std=0.04`.
 - Step-level GRPPO filter: `+algorithm.grppo_filter_groups.enable=true`,
   `+algorithm.grppo_filter_groups.min_std=0.04`.
 - GRPPO step reward mix: `+data.streamweave.reward.grppo_process_weight=1.0`,
@@ -125,11 +132,230 @@ Script environment and artifacts:
 - On exit, each script records `exit_code.txt`, `git_status.txt`, `python_version.txt`,
   `pip_list.txt`, and Ray logs under the run directory when available.
 
+## Experiment 6: Exp5 Follow-Up With Timeline Answer Supervision
+
+`exp6` keeps the exp5 GRPPO training chain and changes only the answer supervision policy and weights:
+
+- Launch script: `RL/scripts/train_exp6.sh`.
+- Run name: `exp6`; output dir: `RL/outputs/runs/exp6`.
+- Dataset: train and validation both use `dataset2/rl_exp3.jsonl`; validation is capped with
+  `data.val_max_samples=200`.
+- Batch/runtime/model settings: same as exp5 (`train_batch_size=16`, `gen_batch_size=16`,
+  `val_batch_size=16`, `val_max_samples=200`, `rollout.n=8`, `max_steps=0`, same source model).
+- GRPPO estimator: `algorithm.adv_estimator=streamweave_stepwise_grppo`.
+- Final advantage: `1.0*grppo_step_advantage + 0.5*grppo_answer_advantage`.
+- Answer credit decay: `+algorithm.grppo_answer_decay=0.7`.
+- Component normalization: `+algorithm.grppo_norm_by_std=false`, `+algorithm.grppo_min_std=0.03`.
+- Step-level GRPPO filter: enabled with `+algorithm.grppo_filter_groups.min_std=0.03`.
+- Step reward mix: `+data.streamweave.reward.grppo_process_weight=0.7`,
+  `+data.streamweave.reward.grppo_format_weight=0.25`,
+  `+data.streamweave.reward.grppo_note_frequency_weight=0.25`.
+- Answer trigger policy: `+data.streamweave.reward.grppo_answer_event_mode=timeline`.
+  The env derives `none/silence/answer` from the query/answer-target timeline before judging the
+  step. `silence` and `answer` both use the answer-aware LLM judge prompt.
+- Silence reward: `+data.streamweave.reward.grppo_silence_reward=true`,
+  `+data.streamweave.reward.grppo_silence_reward_value=0.1`. In timeline mode the final silence
+  scalar is `0.1 * binarize(LLM answer_reward)`.
+- Forced-answer/silence cohort postprocess: `+algorithm.grppo_forced_answer_postprocess_enable=false`;
+  exp6 does not overwrite LLM answer rewards in the trainer.
+- Target trajectory metric: `grppo_target_trajectory_score =
+  1.0*grppo_target_answer_reward + 0.0*grppo_target_format_reward`; this is for validation/debug
+  observation only and does not enter GRPPO training advantages.
+- Validation score key: `+algorithm.stepwise_validation_score_key=grppo_target_trajectory_score`.
+- KL: actor-side KL loss is enabled with
+  `actor_rollout_ref.actor.use_kl_loss=true`,
+  `actor_rollout_ref.actor.kl_loss_coef=0.001`,
+  `actor_rollout_ref.actor.kl_loss_type=low_var_kl`.
+  `algorithm.use_kl_in_reward` remains false because the GRPPO estimator uses its own step/answer
+  advantages rather than token-level reward sums.
+- Judge label fix: answer-target labels prefer natural-language `answer`/`content` over MCQ
+  letter-only `gt`, and MCQ options are rendered in the answer label section. For example,
+  `gt="C", answer="blue sponge"` becomes `Reference answer: blue sponge` plus the A/B/C
+  option list.
+- Runtime compatibility fix: legacy async FSDP/Megatron ref workers dispatch `compute_ref_log_prob`
+  on the actor mesh, so KL-enabled runs use the actor dispatch role for ref logprob padding.
+
+### 2026-05-14 Bug Fix Notes
+
+**Bug A: `grppo_filter_groups.min_std` was a dead knob.**
+
+- Symptom: the trainer logged `grppo/filter_min_std`, but keep/drop actually used
+  `grppo_step_signal_valid` and `grppo_answer_signal_valid`, which were computed earlier from
+  `algorithm.grppo_min_std`.
+- Impact: changing only `algorithm.grppo_filter_groups.min_std` did not change step-level GRPPO
+  filtering. The exp3/exp4/exp5 scripts had `GRPPO_MIN_STD=0.07` and
+  `GRPPO_FILTER_MIN_STD=0.04`, so the effective threshold was still `0.07`.
+- Fix: `_maybe_apply_streamweave_grppo_filter` now computes cohort std directly from
+  `grppo_step_reward` and `grppo_answer_credit`, then compares those std values with
+  `algorithm.grppo_filter_groups.min_std`. It also logs `grppo/advantage_min_std` separately so
+  the advantage-zeroing threshold and filter threshold are visible independently.
+- Script alignment: exp3/exp4/exp5 now set both `GRPPO_MIN_STD=0.04` and
+  `GRPPO_FILTER_MIN_STD=0.04`. Exp6 already sets both to `0.03`.
+- Verification after fix: `py_compile` for `ray_trainer.py`, `bash -n` for exp3/exp4/exp5/exp6
+  scripts, and `RL/streamweave_rl/smoke_test.py` all pass.
+
+## Experiment 7: Parameter-Tuning Fork From Exp6
+
+`exp7` is a separate launch script/output directory forked from exp6 so the next parameter changes do
+not affect exp6 reproducibility.
+
+- Launch script: `RL/scripts/train_exp7.sh`.
+- Run name: `exp7`; output dir: `RL/outputs/runs/exp7`; Ray temp dir: `/tmp/swray_exp7_$$`.
+- Current initial config is identical to exp6:
+  `train_batch_size=16`, `gen_batch_size=16`, `val_batch_size=16`, `val_max_samples=200`,
+  `rollout.n=8`, `answer_decay=0.7`, `answer_weight=0.5`, `norm_by_std=false`,
+  `grppo_min_std=0.03`, `grppo_filter_groups.min_std=0.03`, timeline answer supervision,
+  `silence_reward_value=0.1`, forced answer postprocess disabled, target validation score
+  `grppo_target_trajectory_score`, and actor KL loss enabled with coef `0.001`.
+- Pending: record the actual parameter deltas before launch.
+
+## Experiment 8: 2-Node Multi-Node GRPPO
+
+`exp8` is the two-node version of the current exp7 GRPPO chain. It follows the VERL
+multi-node launch pattern: start a Ray head, attach worker nodes, confirm the cluster with
+`ray status`, then run `verl.trainer.main_ppo` from the driver with `trainer.nnodes` and
+`trainer.n_gpus_per_node` set to the actual cluster size.
+
+- Launch script: `RL/scripts/train_exp8.sh`.
+- Run name: `exp8`; output dir: `RL/outputs/runs/exp8`; Ray temp dir: `/tmp/swray_exp8_$$`.
+- Script modes:
+  - `EXP8_RAY_ROLE=head`: starts the Ray head and exits.
+  - `EXP8_RAY_ROLE=worker`: starts a Ray worker connected to `RAY_HEAD_IP:RAY_PORT` and exits.
+  - `EXP8_RAY_ROLE=driver`: connects to the existing Ray cluster and launches training.
+- Default cluster shape: `NNODES=2`, `N_GPUS_PER_NODE=8`, so `trainer.nnodes=2` and
+  `trainer.n_gpus_per_node=8`.
+- Batch sizes stay at exp7 `16`: with `rollout.n=8`, the real train batch is `16*8=128`,
+  which is divisible by the 16 total GPUs.
+- Agent rollout workers are raised from single-node exp7 `32` to `64`.
+- Ray object store memory for head/worker startup defaults to `28000000000` bytes to avoid the
+  40 GB `/dev/shm` mismatch seen on some pods; override with `RAY_OBJECT_STORE_MEMORY=...` if the
+  target node has more shared memory.
+- Driver mode passes `+ray_kwargs.ray_init.address=${RAY_HEAD_IP}:${RAY_PORT}` or `$RAY_ADDRESS`.
+  It intentionally does not pass `num_cpus`, `object_store_memory`, or `_temp_dir` into
+  `ray.init(address=...)` because those resources belong to the already-started Ray cluster.
+- Driver mode also does not run `ray stop --force`; head/worker modes stop only their local Ray
+  process before starting the requested role.
+- Head/worker Ray daemons are started with the same critical environment as the driver
+  (`PYTHONPATH`, `STREAMWEAVE_RL_DIR`, `GOOGLE_APPLICATION_CREDENTIALS`, trace settings, and Ray
+  log/runtime flags). This matters because multi-node Ray is started before the VERL driver, so the
+  worker-side Python processes cannot rely on inheriting the driver's shell environment.
+- Algorithm parameters currently match exp7 except for multi-node scale:
+  `answer_decay=0.7`, `answer_weight=0.5`, `norm_by_std=false`, `grppo_min_std=0.05`,
+  `grppo_filter_groups.min_std=0.05`, timeline answer supervision, silence scalar `0.2`,
+  forced answer postprocess disabled, target validation score `grppo_target_trajectory_score`,
+  and actor KL loss coef `0.001`.
+
+Launch commands:
+
+Current 2-node assignment for the planned exp8 run:
+
+- Head node: `aiplatform-wlf2-ge42-28`, `RAY_HEAD_IP=10.82.121.78`.
+- Worker node: `aiplatform-wlf2-ge26-34`, local IP `10.82.122.215`.
+- Always pass the head IP, `10.82.121.78`, as `RAY_HEAD_IP` on both machines and in the
+  driver command.
+
+Execution order:
+
+1. Use `aiplatform-wlf2-ge42-28` as the Ray head.
+2. Run the head command on that machine.
+3. Run the worker command on `aiplatform-wlf2-ge26-34`.
+4. Check `ray status --address=10.82.121.78:6379` from the head machine until it shows
+   two nodes and 16 GPUs.
+5. Run the driver command on the head machine. Only this final driver command launches VERL
+   training; the head/worker commands only start the Ray cluster.
+
+Head machine:
+
+```bash
+cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
+RAY_HEAD_IP=10.82.121.78 EXP8_RAY_ROLE=head bash RL/scripts/train_exp8.sh
+```
+
+Worker machine:
+
+```bash
+cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
+RAY_HEAD_IP=10.82.121.78 EXP8_RAY_ROLE=worker bash RL/scripts/train_exp8.sh
+```
+
+Check cluster status on the head machine:
+
+```bash
+/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/ray status --address=10.82.121.78:6379
+```
+
+After the status output shows two nodes and 16 GPUs, launch the driver on the head machine:
+
+```bash
+cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
+RAY_HEAD_IP=10.82.121.78 EXP8_RAY_ROLE=driver bash RL/scripts/train_exp8.sh
+```
+
+The script assumes both machines can see the same repo, dataset, frames, source model, and
+output directory paths under `/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5`.
+
+## Experiment 9: Local Qwen3VL Judge
+
+`exp9_localjudge` is the single-node exp7/exp6 training chain with the LLM judge switched from
+Gemini to a local OpenAI-compatible endpoint, intended for a deployed Qwen3VL-32B judge service.
+It does not modify the old Gemini scripts.
+
+- Launch script: `RL/scripts/train_exp9_localjudge.sh`.
+- Run name: default `exp9_localjudge`; override with `RUN_NAME=...` if needed.
+- Default judge backend: `JUDGE_BACKEND=vllm`.
+- Default judge model id: `JUDGE_MODEL=qwen3vl-32b-judge`. This must match the served model name
+  exposed by the local vLLM/OpenAI-compatible server.
+- Default judge endpoint: `JUDGE_BASE_URL=http://127.0.0.1:9000/v1`.
+- Default judge API key: `JUDGE_API_KEY=EMPTY`.
+- Endpoint readiness check: enabled by default through `CHECK_JUDGE_ENDPOINT=1`; it checks
+  `${JUDGE_BASE_URL}/models` before starting training.
+- Judge timeout: `JUDGE_TIMEOUT_SECONDS=300`; max response tokens: `JUDGE_MAX_TOKENS=2048`;
+  judge image side: `JUDGE_MAX_IMAGE_SIDE=512`.
+- Training parameters otherwise match exp7: `train_batch_size=16`, `gen_batch_size=16`,
+  `val_batch_size=16`, `val_max_samples=200`, `rollout.n=8`, timeline answer supervision,
+  `answer_decay=0.7`, `answer_weight=0.5`, no std division, actor KL coef `0.001`.
+
+Assuming the local judge service is already running:
+
+```bash
+cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
+JUDGE_BASE_URL=http://127.0.0.1:9000/v1 \
+JUDGE_MODEL=qwen3vl-32b-judge \
+bash RL/scripts/train_exp9_localjudge.sh
+```
+
+If the served model name is the model path instead of `qwen3vl-32b-judge`, pass that exact value:
+
+```bash
+JUDGE_MODEL=/path/to/Qwen3-VL-32B-Instruct \
+JUDGE_BASE_URL=http://127.0.0.1:9000/v1 \
+bash RL/scripts/train_exp9_localjudge.sh
+```
+
+For a judge service deployed on another machine:
+
+```bash
+JUDGE_BASE_URL=http://<judge_host>:9000/v1 \
+JUDGE_MODEL=qwen3vl-32b-judge \
+bash RL/scripts/train_exp9_localjudge.sh
+```
+
+If the endpoint does not implement `/models` but `/v1/chat/completions` works, bypass only the
+startup readiness check:
+
+```bash
+CHECK_JUDGE_ENDPOINT=0 \
+JUDGE_BASE_URL=http://<judge_host>:9000/v1 \
+JUDGE_MODEL=qwen3vl-32b-judge \
+bash RL/scripts/train_exp9_localjudge.sh
+```
+
 ### 2026-05-14 Evaluation Decision
 
-Initial SwanLab curves showed exp3, exp4, and exp5 are close. exp3 and exp4 were stopped manually;
-exp5 remains running. Start evaluation from exp4 because it is the middle answer-weight setting
-(`answer_weight=0.5`) and already has checkpoint `global_step_20`.
+Initial SwanLab curves showed exp3, exp4, and exp5 are close. exp3 and exp4 were stopped manually.
+Exp5 later reached step 29, entered the step-30 full-set validation, and did not finish cleanly.
+Start evaluation from exp4 because it is the middle answer-weight setting (`answer_weight=0.5`)
+and already has checkpoint `global_step_20`.
 
 Progress snapshot:
 
@@ -137,8 +363,8 @@ Progress snapshot:
   `RL/outputs/runs/exp3/checkpoints/global_step_20/actor`.
 - `exp4`: manually stopped after `global_step_20`; checkpoint exists at
   `RL/outputs/runs/exp4/checkpoints/global_step_20/actor`.
-- `exp5`: continues running; latest observed checkpoint is
-  `RL/outputs/runs/exp5/checkpoints/global_step_20/actor`.
+- `exp5`: stopped during the previous full 2000-row step-30 validation; latest observed
+  checkpoint is `RL/outputs/runs/exp5/checkpoints/global_step_20/actor`.
 - Exp4 step20 export completed: `models/exp4_grppo_aw05_step20` contains sharded safetensors.
 - Exp4 OVO 1/8 evaluation directory exists at `outputs/ovo_exp4_grppo_aw05_step20_1of8`;
   `results.jsonl` had not been observed yet when this note was written.
@@ -628,9 +854,14 @@ memory 里同时存在多个语义接近的候选动作，state 选了符合 que
 | --- | --- | --- | --- |
 | `RL/scripts/train_grpo.sh` | GRPO-style stepwise trajectory training | `grpo_rl0511_8gpu_judge` | This script matches the currently running old-config process. Copy it before changing major experiment settings. |
 | `RL/scripts/train_exp2_rlmlr.sh` | Experiment 2 RLMLR training on `rl_0512` split | `exp2_rlmlr` | Uses `train_batch_size=16`, `gen_batch_size=16`, `rollout.n=8`, validation every 20 steps. |
-| `RL/scripts/train_exp3.sh` | Experiment 3 GRPPO baseline on `rl_exp3` | `exp3` | Final advantage `1.0*step_adv + 0.3*answer_adv`; step filter min std `0.04`. |
-| `RL/scripts/train_exp4.sh` | Experiment 4 GRPPO answer-weight sweep | `exp4` | Same as exp3, but final answer-advantage weight is `0.5`. |
-| `RL/scripts/train_exp5.sh` | Experiment 5 GRPPO answer-weight sweep | `exp5` | Same as exp3, but final answer-advantage weight is `0.7`. |
+| `RL/scripts/train_exp3.sh` | Experiment 3 GRPPO baseline on `rl_exp3` | `exp3` | Final advantage `1.0*step_adv + 0.3*answer_adv`; advantage/filter min std both `0.04`. |
+| `RL/scripts/train_exp4.sh` | Experiment 4 GRPPO answer-weight sweep | `exp4` | Same as exp3, but final answer-advantage weight is `0.5`; advantage/filter min std both `0.04`. |
+| `RL/scripts/train_exp5.sh` | Experiment 5 GRPPO answer-weight sweep | `exp5` | Same as exp3, but final answer-advantage weight is `0.7`; advantage/filter min std both `0.04`. |
+| `RL/scripts/train_exp6.sh` | Experiment 6 GRPPO timeline answer supervision | `exp6` | Timeline `none/silence/answer`, no std division, answer decay `0.7`, answer weight `0.5`, silence scalar `0.1`, actor KL enabled. |
+| `RL/scripts/train_exp7.sh` | Experiment 7 parameter-tuning fork from exp6 | `exp7` | Initially identical to exp6; use this script for the next parameter changes without touching exp6. |
+| `RL/scripts/train_exp7_smoke.sh` | Experiment 7 two-step debug smoke | `exp7_smoke` | Uses exp7 data/model/reward settings with `train/gen batch=2`, `rollout.n=4`, `total_training_steps=2`, and GRPPO debug dumps enabled. |
+| `RL/scripts/train_exp8.sh` | Experiment 8 multi-node GRPPO | `exp8` | Two-node Ray launch helper; default `nnodes=2`, `n_gpus_per_node=8`, `train/gen/val_batch_size=16`, `agent.num_workers=64`. |
+| `RL/scripts/train_exp9_localjudge.sh` | Experiment 9 local judge GRPPO | `exp9_localjudge` | Single-node exp7 config with local OpenAI-compatible/vLLM judge; defaults to `JUDGE_BASE_URL=http://127.0.0.1:9000/v1`, `JUDGE_MODEL=qwen3vl-32b-judge`. |
 | `RL/scripts/train_ppo.sh` | PPO/GAE with critic enabled | `ppo_test4rl_8gpu` | Uses `streamweave_stepwise_ppo_gae`, `rollout.n=1`, critic enabled, and judge weight forced to `0.0` by default. |
 | `RL/scripts/train_rlmlr.sh` | RLMLR stepwise/outcome mixed advantage | `rlmlr_rl0511_8gpu` | Uses `streamweave_stepwise_rlmlr`; DAPO filter is off by default in the script. |
 | `RL/scripts/run_smoke.sh` | Smoke test | N/A | Use for quick integration checks before long runs. |

@@ -83,6 +83,9 @@ class StreamWeaveAgentLoop(AgentLoopBase):
                     "judge_score": float(info.get("judge_score", 0.0)),
                     "success_score": float(info.get("success_score", 0.0)),
                     "trajectory_score": float(info.get("trajectory_score", 0.0)),
+                    "grppo_target_trajectory_score": float(info.get("grppo_target_trajectory_score", 0.0)),
+                    "grppo_target_answer_reward": float(info.get("grppo_target_answer_reward", 0.0)),
+                    "grppo_target_format_reward": float(info.get("grppo_target_format_reward", 0.0)),
                     "judge_status": str(reward_info_dict.get("judge_status", "disabled")),
                     "judge_error": str(reward_info_dict.get("judge_error", "") or ""),
                     "reward_info": reward_info_dict,
@@ -101,6 +104,10 @@ class StreamWeaveAgentLoop(AgentLoopBase):
                         "judge_score": float(info.get("judge_score", 0.0)),
                         "success_score": float(info.get("success_score", 0.0)),
                         "trajectory_score": float(info.get("trajectory_score", 0.0)),
+                        "grppo_target_trajectory_score": float(info.get("grppo_target_trajectory_score", 0.0)),
+                        "grppo_target_answer_reward": float(info.get("grppo_target_answer_reward", 0.0)),
+                        "grppo_target_format_reward": float(info.get("grppo_target_format_reward", 0.0)),
+                        "grppo_target_ground_truth": str(info.get("grppo_target_ground_truth", "") or ""),
                         "turn_reward": float(info.get("turn_reward", reward)),
                         "final_answer": info.get("final_answer", ""),
                         "reward_extra_info": reward_extra_info,
@@ -123,13 +130,24 @@ class StreamWeaveAgentLoop(AgentLoopBase):
                 if done:
                     trajectory_score = float(info.get("trajectory_score", 0.0))
                     success_score = float(info.get("success_score", 0.0))
+                    target_trajectory_score = float(info.get("grppo_target_trajectory_score", 0.0))
+                    target_answer_reward = float(info.get("grppo_target_answer_reward", 0.0))
+                    target_format_reward = float(info.get("grppo_target_format_reward", 0.0))
+                    target_ground_truth = str(info.get("grppo_target_ground_truth", "") or "")
                     final_answer = info.get("final_answer", "")
                     for item in outputs:
                         item.extra_fields["trajectory_score"] = trajectory_score
                         item.extra_fields["success_score"] = success_score
+                        item.extra_fields["grppo_target_trajectory_score"] = target_trajectory_score
+                        item.extra_fields["grppo_target_answer_reward"] = target_answer_reward
+                        item.extra_fields["grppo_target_format_reward"] = target_format_reward
+                        item.extra_fields["grppo_target_ground_truth"] = target_ground_truth
                         item.extra_fields["final_answer"] = final_answer
                         item.extra_fields["reward_extra_info"]["trajectory_score"] = trajectory_score
                         item.extra_fields["reward_extra_info"]["success_score"] = success_score
+                        item.extra_fields["reward_extra_info"]["grppo_target_trajectory_score"] = target_trajectory_score
+                        item.extra_fields["reward_extra_info"]["grppo_target_answer_reward"] = target_answer_reward
+                        item.extra_fields["reward_extra_info"]["grppo_target_format_reward"] = target_format_reward
                     if trace_rollout:
                         _trace_traj_done(
                             group_idx=group_idx,
@@ -357,10 +375,13 @@ def _grppo_extra_fields(info: dict[str, Any]) -> dict[str, Any]:
         "grppo_state_groundedness": float(info.get("grppo_state_groundedness", 0.0)),
         "grppo_judge_step_reward": float(info.get("grppo_judge_step_reward", 0.0)),
         "grppo_format_score": float(info.get("grppo_format_score", 0.0)),
+        "grppo_note_frequency_score": float(info.get("grppo_note_frequency_score", 0.0)),
         "grppo_step_reward": float(info.get("grppo_step_reward", 0.0)),
         "grppo_answer_reward": float(info.get("grppo_answer_reward", 0.0)),
         "grppo_answer_reward_raw": float(info.get("grppo_answer_reward_raw", 0.0)),
         "grppo_answer_event": float(info.get("grppo_answer_event", 0.0)),
+        "grppo_answer_supervision": float(info.get("grppo_answer_supervision", 0.0)),
+        "grppo_answer_reward_scale": float(info.get("grppo_answer_reward_scale", 0.0)),
         "grppo_has_query": float(info.get("grppo_has_query", 0.0)),
         "grppo_has_answer_target": float(info.get("grppo_has_answer_target", 0.0)),
         "grppo_has_answer": float(info.get("grppo_has_answer", 0.0)),
@@ -391,6 +412,8 @@ def _trace_traj_done(
         f"group={group_idx} traj={traj_idx} sample={sample_id} video={video_id} steps={len(outputs)} "
         f"format_mean={fmt(info.get('format_mean'))} step_mean={fmt(info.get('step_mean'))} "
         f"success={fmt(info.get('success_score'))} trajectory={fmt(info.get('trajectory_score'))} "
+        f"target_answer={fmt(info.get('grppo_target_answer_reward'))} "
+        f"target_trajectory={fmt(info.get('grppo_target_trajectory_score'))} "
         f"turn_rewards={turn_rewards} step_scores={step_scores} "
         f"note_freq_scores={note_scores} judge_scores={judge_scores} "
         f"final_answer={shorten(final_answer)}"
@@ -455,6 +478,9 @@ def _finalize_aborted_outputs(
             "judge_score": 0.0,
             "success_score": 0.0,
             "trajectory_score": 0.0,
+            "grppo_target_trajectory_score": 0.0,
+            "grppo_target_answer_reward": 0.0,
+            "grppo_target_format_reward": 0.0,
             # Keep these keys aligned with the non-abort branch so
             # _postprocess produces a stable non_tensor_batch schema.
             "judge_status": "aborted",
@@ -475,6 +501,10 @@ def _finalize_aborted_outputs(
                 "judge_score": 0.0,
                 "success_score": 0.0,
                 "trajectory_score": 0.0,
+                "grppo_target_trajectory_score": 0.0,
+                "grppo_target_answer_reward": 0.0,
+                "grppo_target_format_reward": 0.0,
+                "grppo_target_ground_truth": "",
                 "turn_reward": 0.0,
                 "final_answer": "",
                 "rollout_error": reason,
@@ -492,10 +522,13 @@ def _grppo_aborted_fields() -> dict[str, Any]:
         "grppo_state_groundedness": 0.0,
         "grppo_judge_step_reward": 0.0,
         "grppo_format_score": 0.0,
+        "grppo_note_frequency_score": 0.0,
         "grppo_step_reward": 0.0,
         "grppo_answer_reward": 0.0,
         "grppo_answer_reward_raw": 0.0,
         "grppo_answer_event": 0.0,
+        "grppo_answer_supervision": 0.0,
+        "grppo_answer_reward_scale": 0.0,
         "grppo_has_query": 0.0,
         "grppo_has_answer_target": 0.0,
         "grppo_has_answer": 0.0,

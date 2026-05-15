@@ -1,0 +1,309 @@
+"""Single-sample StreamText rollout loop."""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
+
+from backend.base import BaseBackend
+from streamweave.config import MemoryConfig, PostprocessConfig, RewardConfig, RuntimeConfig, TraceConfig
+from streamweave.frame_store import FrameStore
+from streamweave.schemas import AppliedAction, AttemptRecord, BackendResult, BenchmarkSample, FrameRef, ModelAction, QARecord, QualityReport, QueryEvent, RolloutTrace, Transition
+from streamweave.trace_io import TraceWriter
+
+from .env import StreamTextEnv
+
+
+@dataclass(slots=True)
+class StepRunResult:
+    prompt_text: str
+    prompt_images: list[str]
+    current_frames: list[FrameRef]
+    backend_result: BackendResult
+    raw_action: ModelAction
+    quality: QualityReport
+    applied: AppliedAction
+    base_prompt_text: str
+    base_prompt_images: list[str]
+    attempt_prompt_text: str
+    attempt_prompt_images: list[str]
+    attempts: list[AttemptRecord]
+    accepted_attempt_index: int
+    target_raw_output: str
+
+
+class StreamTextRunner:
+    def __init__(
+        self,
+        *,
+        backend: BaseBackend,
+        frame_store: FrameStore,
+        runtime: RuntimeConfig,
+        trace_config: TraceConfig,
+        dataset_name: str,
+        prompt_profile: str,
+        postprocess_config: PostprocessConfig | None = None,
+        reward_config: RewardConfig | None = None,
+        memory_config: MemoryConfig | None = None,
+    ) -> None:
+        self.backend = backend
+        self.frame_store = frame_store
+        self.runtime = runtime
+        self.trace_config = trace_config
+        self.dataset_name = dataset_name
+        self.prompt_profile = prompt_profile
+        self.postprocess_config = postprocess_config or PostprocessConfig()
+        self.reward_config = reward_config or RewardConfig()
+        self.memory_config = memory_config or MemoryConfig()
+
+    def run_sample(
+        self,
+        sample: BenchmarkSample,
+        *,
+        step_start_callback: Callable[[int, list[FrameRef]], None] | None = None,
+        step_done_callback: Callable[[Transition], None] | None = None,
+    ) -> RolloutTrace:
+        dataset_name = str(sample.metadata.get("frame_dataset_name") or self.dataset_name)
+        declared_count = read_declared_frame_count(sample.metadata, sample.sample_id)
+        frames = self.frame_store.ensure_frames(
+            dataset_name=dataset_name,
+            video_id=sample.video_id,
+            video_path=sample.video_path,
+            sample_fps=self.runtime.sample_fps,
+            max_frames=self.runtime.max_frames,
+        )
+        if declared_count is not None:
+            if len(frames) < declared_count:
+                raise RuntimeError(
+                    f"Sample {sample.sample_id!r} declared frame_count={declared_count} "
+                    f"but only {len(frames)} frame(s) are available on disk."
+                )
+            frames = frames[:declared_count]
+        frames = _truncate_frames_at_timestamp(
+            frames,
+            sample.metadata.get("target_timestamp"),
+            sample_fps=self.runtime.sample_fps,
+            frame_id_base=self.frame_store.config.frame_id_base,
+        )
+        env = StreamTextEnv(
+            prompt_profile=self.prompt_profile,
+            memory_window=self.memory_config.window_seconds,
+            extra_context=str(sample.metadata.get("teacher_context", "")),
+        )
+        trace_dir = self._trace_dir_for_sample(sample)
+        writer = TraceWriter(trace_dir, write_jsonl=self.trace_config.write_jsonl)
+        transitions: list[Transition] = []
+        query_by_frame = _query_events_by_frame(
+            frames,
+            sample.query_events,
+            sample_fps=self.runtime.sample_fps,
+            frame_id_base=self.frame_store.config.frame_id_base,
+        )
+        groups = _group_frames(frames, self.runtime.frames_per_step)
+        if self.runtime.max_steps:
+            groups = groups[: self.runtime.max_steps]
+
+        for step_index, group in enumerate(groups):
+            if not group:
+                continue
+            for frame in group:
+                for query in query_by_frame.get(frame.global_index, []):
+                    env.add_question(QARecord(timestamp=query.timestamp, text=query.text, role="q"))
+
+            step_end = group[-1].end_time
+            env.evict_memory(step_end)
+            memory_before = env.memory_text()
+            if step_start_callback is not None:
+                step_start_callback(step_index, group)
+            result = self._run_model_step(
+                env=env,
+                writer=writer,
+                step_index=step_index,
+                prompt_frames=group,
+                memory_before=memory_before,
+            )
+            memory_after = env.memory_text()
+            writer.write_env_done(step_index=step_index, quality=result.quality, applied=result.applied, memory_after=memory_after)
+            transition = Transition(
+                sample_id=sample.sample_id,
+                video_id=sample.video_id,
+                step_index=step_index,
+                step_start=group[0].start_time,
+                step_end=group[-1].end_time,
+                prompt_text=result.prompt_text,
+                prompt_images=result.prompt_images,
+                current_frames=result.current_frames,
+                raw_action=result.raw_action,
+                quality=result.quality,
+                applied=result.applied,
+                backend_result=result.backend_result,
+                memory_before=memory_before,
+                memory_after=memory_after,
+                base_prompt_text=result.base_prompt_text,
+                base_prompt_images=result.base_prompt_images,
+                attempt_prompt_text=result.attempt_prompt_text,
+                attempt_prompt_images=result.attempt_prompt_images,
+                attempts=result.attempts,
+                accepted_attempt_index=result.accepted_attempt_index,
+                target_raw_output=result.target_raw_output,
+            )
+            writer.write_transition(transition)
+            transitions.append(transition)
+            if step_done_callback is not None:
+                step_done_callback(transition)
+        return RolloutTrace(sample=sample, transitions=transitions)
+
+    def _run_model_step(
+        self,
+        *,
+        env: StreamTextEnv,
+        writer: TraceWriter,
+        step_index: int,
+        prompt_frames: list[FrameRef],
+        memory_before: str,
+    ) -> StepRunResult:
+        mode = self.postprocess_config.mode
+        if mode not in {"eval_repair", "rollout_repair"}:
+            raise ValueError(f"StreamText currently supports eval_repair/rollout_repair only, got: {mode}")
+        content, prompt_text, prompt_images, local_frames = env.build_prompt(prompt_frames)
+        writer.write_step_start(
+            step_index=step_index,
+            prompt_text=prompt_text,
+            prompt_images=prompt_images,
+            memory_before=memory_before,
+            current_frames=local_frames,
+        )
+        backend_result = self.backend.generate(content)
+        writer.write_backend_done(step_index=step_index, backend_result=backend_result)
+        raw_action, quality, applied = env.evaluate_attempt(
+            backend_result.text,
+            frames=local_frames,
+            reward_config=self.reward_config,
+            repair=True,
+        )
+        env.commit(applied)
+        attempt = AttemptRecord(
+            attempt_index=1,
+            raw_output=backend_result.text,
+            quality=quality,
+            backend_result=backend_result,
+            prompt_text=prompt_text,
+            prompt_images=prompt_images,
+            accepted=True,
+        )
+        return StepRunResult(
+            prompt_text=prompt_text,
+            prompt_images=prompt_images,
+            current_frames=local_frames,
+            backend_result=backend_result,
+            raw_action=raw_action,
+            quality=quality,
+            applied=applied,
+            base_prompt_text=prompt_text,
+            base_prompt_images=prompt_images,
+            attempt_prompt_text=prompt_text,
+            attempt_prompt_images=prompt_images,
+            attempts=[attempt],
+            accepted_attempt_index=1,
+            target_raw_output=backend_result.text,
+        )
+
+    def _trace_dir_for_sample(self, sample: BenchmarkSample) -> Path:
+        trace_dir = Path(self.trace_config.output_root) / self.trace_config.experiment_name / sample.video_id
+        if sample.sample_id != sample.video_id:
+            trace_dir = trace_dir / sample.sample_id
+        return trace_dir
+
+
+def _group_frames(frames: list[FrameRef], size: int) -> list[list[FrameRef]]:
+    size = max(1, int(size))
+    return [frames[idx : idx + size] for idx in range(0, len(frames), size)]
+
+
+def read_declared_frame_count(metadata: dict, sample_id: str) -> int | None:
+    raw = None
+    if metadata:
+        raw = metadata.get("frame_count")
+        if raw is None:
+            raw = metadata.get("sampled_frames")
+    if raw is None:
+        return None
+    try:
+        count = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Sample {sample_id!r} has invalid frame_count {raw!r}; expected a positive integer."
+        ) from exc
+    if count <= 0:
+        raise ValueError(
+            f"Sample {sample_id!r} has non-positive frame_count {count}; expected a positive integer."
+        )
+    return count
+
+
+def _truncate_frames_at_timestamp(
+    frames: list[FrameRef],
+    timestamp: object,
+    *,
+    sample_fps: float,
+    frame_id_base: int,
+) -> list[FrameRef]:
+    if timestamp is None or not frames:
+        return frames
+    try:
+        target_timestamp = float(timestamp)
+    except (TypeError, ValueError):
+        return frames
+    min_frame_id = min(frame.global_index for frame in frames)
+    max_frame_id = max(frame.global_index for frame in frames)
+    target_frame_id = _timestamp_to_frame_id(
+        target_timestamp,
+        sample_fps=sample_fps,
+        frame_id_base=frame_id_base,
+        min_frame_id=min_frame_id,
+        max_frame_id=max_frame_id,
+    )
+    return [frame for frame in frames if frame.global_index <= target_frame_id]
+
+
+def _query_events_by_frame(
+    frames: list[FrameRef],
+    query_events: list[QueryEvent],
+    *,
+    sample_fps: float,
+    frame_id_base: int,
+) -> dict[int, list[QueryEvent]]:
+    if not frames:
+        return {}
+    min_frame_id = min(frame.global_index for frame in frames)
+    max_frame_id = max(frame.global_index for frame in frames)
+    out: dict[int, list[QueryEvent]] = {}
+    for event in sorted(query_events, key=lambda item: item.timestamp):
+        frame_id = _timestamp_to_frame_id(
+            event.timestamp,
+            sample_fps=sample_fps,
+            frame_id_base=frame_id_base,
+            min_frame_id=min_frame_id,
+            max_frame_id=max_frame_id,
+        )
+        out.setdefault(frame_id, []).append(event)
+    return out
+
+
+def _timestamp_to_frame_id(
+    timestamp: float,
+    *,
+    sample_fps: float,
+    frame_id_base: int,
+    min_frame_id: int,
+    max_frame_id: int,
+) -> int:
+    seconds_per_frame = 1.0 / max(sample_fps, 1e-6)
+    if timestamp <= 0:
+        frame_id = frame_id_base
+    else:
+        frame_offset = max(0, math.ceil((float(timestamp) - 1e-9) / seconds_per_frame) - 1)
+        frame_id = frame_id_base + frame_offset
+    return min(max(frame_id, min_frame_id), max_frame_id)

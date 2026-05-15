@@ -5,10 +5,10 @@ RL_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 V5_DIR="$(cd -- "${RL_DIR}/.." && pwd)"
 PYTHON_BIN="/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/python"
 
-RUN_NAME="exp3"
+RUN_NAME="exp6"
 RUN_DIR="${RL_DIR}/outputs/runs/${RUN_NAME}"
 LOG_FILE="${RUN_DIR}/train.log"
-RAY_TMPDIR="/tmp/swray_$$"
+RAY_TMPDIR="/tmp/swray_exp6_$$"
 
 DATASET_ROOT="${V5_DIR}/dataset2"
 DATASET_NAME="mixed_rl_exp3"
@@ -28,21 +28,33 @@ ADV_ESTIMATOR="streamweave_stepwise_grppo"
 TRAIN_BATCH_SIZE=16
 GEN_BATCH_SIZE=16
 VAL_BATCH_SIZE=16
+VAL_MAX_SAMPLES=200
 ROLLOUT_N=8
 MAX_STEPS=0
 TEST_FREQ=30
 SAVE_FREQ=20
 TOTAL_EPOCHS=2
 
-GRPPO_ANSWER_DECAY=0.4
-GRPPO_PROCESS_WEIGHT=1.0
-GRPPO_FORMAT_WEIGHT=0.1
+GRPPO_ANSWER_DECAY=0.7
+GRPPO_PROCESS_WEIGHT=0.7
+GRPPO_FORMAT_WEIGHT=0.25
+GRPPO_NOTE_FREQUENCY_WEIGHT=0.25
 GRPPO_STEP_WEIGHT=1.0
-GRPPO_ANSWER_WEIGHT=0.3
-GRPPO_NORM_BY_STD=true
-GRPPO_MIN_STD=0.04
+GRPPO_ANSWER_WEIGHT=0.5
+GRPPO_NORM_BY_STD=false
+GRPPO_MIN_STD=0.03
 GRPPO_FILTER_GROUPS_ENABLE=true
-GRPPO_FILTER_MIN_STD=0.04
+GRPPO_FILTER_MIN_STD=0.03
+GRPPO_ANSWER_EVENT_MODE="timeline"
+GRPPO_SILENCE_REWARD=true
+GRPPO_SILENCE_REWARD_VALUE=0.1
+GRPPO_FORCED_ANSWER_POSTPROCESS_ENABLE=false
+GRPPO_TARGET_ANSWER_WEIGHT=1.0
+GRPPO_TARGET_FORMAT_WEIGHT=0.0
+STEPWISE_VALIDATION_SCORE_KEY="grppo_target_trajectory_score"
+ACTOR_USE_KL_LOSS=true
+ACTOR_KL_LOSS_COEF=0.001
+ACTOR_KL_LOSS_TYPE="low_var_kl"
 
 if [[ "${STREAMWEAVE_ALLOW_EXISTING_RL:-0}" != "1" ]] && pgrep -f "verl.trainer.main_ppo" >/dev/null 2>&1; then
     echo "Another verl.trainer.main_ppo process is already running." >&2
@@ -94,7 +106,7 @@ fi
 ulimit -n 65535
 
 if [[ ! -f "${TRAIN_FILE}" || ! -f "${VAL_FILE}" ]]; then
-    echo "Missing exp3 data file:" >&2
+    echo "Missing exp6 data file:" >&2
     echo "  train=${TRAIN_FILE}" >&2
     echo "  val=${VAL_FILE}" >&2
     exit 2
@@ -135,12 +147,15 @@ echo "StreamWeave model source=${SOURCE_MODEL_PATH}"
 echo "StreamWeave model path=${MODEL_PATH}"
 echo "StreamWeave train file=${TRAIN_FILE}"
 echo "StreamWeave validation file=${VAL_FILE}"
-echo "StreamWeave exp3 adv_estimator=${ADV_ESTIMATOR}"
-echo "StreamWeave exp3 judge prompt_version=${JUDGE_PROMPT_VERSION}"
-echo "StreamWeave exp3 grppo reward process_weight=${GRPPO_PROCESS_WEIGHT} format_weight=${GRPPO_FORMAT_WEIGHT}"
-echo "StreamWeave exp3 grppo answer_decay=${GRPPO_ANSWER_DECAY} step_weight=${GRPPO_STEP_WEIGHT} answer_weight=${GRPPO_ANSWER_WEIGHT} norm_by_std=${GRPPO_NORM_BY_STD}"
-echo "StreamWeave exp3 grppo step_filter enable=${GRPPO_FILTER_GROUPS_ENABLE} min_std=${GRPPO_FILTER_MIN_STD}"
-echo "StreamWeave exp3 scale train_batch=${TRAIN_BATCH_SIZE} gen_batch=${GEN_BATCH_SIZE} rollout.n=${ROLLOUT_N} max_steps=${MAX_STEPS}"
+echo "StreamWeave exp6 adv_estimator=${ADV_ESTIMATOR}"
+echo "StreamWeave exp6 judge prompt_version=${JUDGE_PROMPT_VERSION}"
+echo "StreamWeave exp6 grppo reward process_weight=${GRPPO_PROCESS_WEIGHT} format_weight=${GRPPO_FORMAT_WEIGHT} note_frequency_weight=${GRPPO_NOTE_FREQUENCY_WEIGHT}"
+echo "StreamWeave exp6 grppo answer_decay=${GRPPO_ANSWER_DECAY} step_weight=${GRPPO_STEP_WEIGHT} answer_weight=${GRPPO_ANSWER_WEIGHT} norm_by_std=${GRPPO_NORM_BY_STD}"
+echo "StreamWeave exp6 grppo answer_event_mode=${GRPPO_ANSWER_EVENT_MODE} silence_reward=${GRPPO_SILENCE_REWARD} silence_reward_value=${GRPPO_SILENCE_REWARD_VALUE} forced_postprocess=${GRPPO_FORCED_ANSWER_POSTPROCESS_ENABLE}"
+echo "StreamWeave exp6 grppo target_reward answer_weight=${GRPPO_TARGET_ANSWER_WEIGHT} format_weight=${GRPPO_TARGET_FORMAT_WEIGHT} validation_score_key=${STEPWISE_VALIDATION_SCORE_KEY}"
+echo "StreamWeave exp6 actor_kl use=${ACTOR_USE_KL_LOSS} coef=${ACTOR_KL_LOSS_COEF} type=${ACTOR_KL_LOSS_TYPE}"
+echo "StreamWeave exp6 grppo step_filter enable=${GRPPO_FILTER_GROUPS_ENABLE} min_std=${GRPPO_FILTER_MIN_STD}"
+echo "StreamWeave exp6 scale train_batch=${TRAIN_BATCH_SIZE} gen_batch=${GEN_BATCH_SIZE} val_batch=${VAL_BATCH_SIZE} val_max_samples=${VAL_MAX_SAMPLES} rollout.n=${ROLLOUT_N} max_steps=${MAX_STEPS}"
 echo "StreamWeave judge enable=${JUDGE_ENABLE}"
 echo "StreamWeave base config=${RL_DIR}/configs/streamweave_stepwise.yaml"
 echo "StreamWeave trace first_rollout=${TRACE_FIRST_ROLLOUT} sample_every=${TRACE_SAMPLE_EVERY}"
@@ -155,6 +170,7 @@ DATA_ARGS=(
     data.train_batch_size="${TRAIN_BATCH_SIZE}"
     +data.gen_batch_size="${GEN_BATCH_SIZE}"
     data.val_batch_size="${VAL_BATCH_SIZE}"
+    data.val_max_samples="${VAL_MAX_SAMPLES}"
     data.max_prompt_length=6144
     data.max_response_length=2048
     data.streamweave.dataset_name="${DATASET_NAME}"
@@ -174,6 +190,9 @@ ACTOR_ARGS=(
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=32768
     actor_rollout_ref.actor.clip_ratio_low=0.2
     actor_rollout_ref.actor.clip_ratio_high=0.28
+    actor_rollout_ref.actor.use_kl_loss="${ACTOR_USE_KL_LOSS}"
+    actor_rollout_ref.actor.kl_loss_coef="${ACTOR_KL_LOSS_COEF}"
+    actor_rollout_ref.actor.kl_loss_type="${ACTOR_KL_LOSS_TYPE}"
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8
     actor_rollout_ref.ref.log_prob_max_token_len_per_gpu=32768
 )
@@ -200,6 +219,12 @@ ALGO_ARGS=(
     +data.streamweave.reward.judge.prompt_version="${JUDGE_PROMPT_VERSION}"
     +data.streamweave.reward.grppo_process_weight="${GRPPO_PROCESS_WEIGHT}"
     +data.streamweave.reward.grppo_format_weight="${GRPPO_FORMAT_WEIGHT}"
+    +data.streamweave.reward.grppo_note_frequency_weight="${GRPPO_NOTE_FREQUENCY_WEIGHT}"
+    +data.streamweave.reward.grppo_answer_event_mode="${GRPPO_ANSWER_EVENT_MODE}"
+    +data.streamweave.reward.grppo_silence_reward="${GRPPO_SILENCE_REWARD}"
+    +data.streamweave.reward.grppo_silence_reward_value="${GRPPO_SILENCE_REWARD_VALUE}"
+    +data.streamweave.reward.grppo_target_answer_weight="${GRPPO_TARGET_ANSWER_WEIGHT}"
+    +data.streamweave.reward.grppo_target_format_weight="${GRPPO_TARGET_FORMAT_WEIGHT}"
     algorithm.adv_estimator="${ADV_ESTIMATOR}"
     algorithm.use_kl_in_reward=false
     algorithm.filter_groups.enable=false
@@ -210,6 +235,9 @@ ALGO_ARGS=(
     +algorithm.grppo_min_std="${GRPPO_MIN_STD}"
     +algorithm.grppo_filter_groups.enable="${GRPPO_FILTER_GROUPS_ENABLE}"
     +algorithm.grppo_filter_groups.min_std="${GRPPO_FILTER_MIN_STD}"
+    +algorithm.grppo_silence_reward_value="${GRPPO_SILENCE_REWARD_VALUE}"
+    +algorithm.grppo_forced_answer_postprocess_enable="${GRPPO_FORCED_ANSWER_POSTPROCESS_ENABLE}"
+    +algorithm.stepwise_validation_score_key="${STEPWISE_VALIDATION_SCORE_KEY}"
     critic.enable=false
 )
 

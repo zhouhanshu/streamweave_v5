@@ -33,8 +33,10 @@ def score_answer(
         return float(_load_custom_scorer(name)(answer, ground_truth, meta))
     if name == "auto":
         name = _infer_scorer(meta)
-    if name in {"default", "exact", "contains", "exact_or_contains"}:
+    if name in {"default", "text", "freeform", "exact", "contains", "exact_or_contains"}:
         mode = fallback_mode if name == "default" else name
+        if name in {"text", "freeform"}:
+            mode = "exact_or_contains"
         return _score_default(answer, ground_truth, mode=mode)
     if name in {"streamweave", "streamweave_mcq", "mcq"}:
         return _score_streamweave_mcq(answer, ground_truth, meta)
@@ -48,6 +50,10 @@ def _infer_scorer(metadata: Mapping[str, Any]) -> str:
     task = str(metadata.get("task") or "").strip()
     if dataset == "ovo" or task in OVO_TASKS:
         return "ovo"
+    if str(metadata.get("answer_type") or "").strip().lower() == "mcq":
+        return "streamweave_mcq"
+    if str(metadata.get("answer_type") or "").strip().lower() in {"text", "freeform"}:
+        return "text"
     if metadata.get("options") is not None or metadata.get("gt") is not None:
         return "streamweave_mcq"
     return "default"

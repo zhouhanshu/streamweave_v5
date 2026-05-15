@@ -36,8 +36,8 @@ advantage normalization.
 They are normalized separately within the same sample group and same turn index:
 
 ```text
-step_advantage_t = normalize(step_reward_t within (group_idx, turn_idx))
-answer_advantage_t = normalize(answer_credit_t within (group_idx, turn_idx))
+step_advantage_t = center(step_reward_t within (group_idx, turn_idx))
+answer_advantage_t = center(answer_credit_t within (group_idx, turn_idx))
 advantage_t = step_weight * step_advantage_t + answer_weight * answer_advantage_t
 ```
 
@@ -93,18 +93,33 @@ The GRPPO step reward also includes format reward:
 
 ```text
 step_reward_t =
-  (grppo_process_weight * judge_step_reward_t + grppo_format_weight * format_score_t)
-  / (grppo_process_weight + grppo_format_weight)
+  (
+    grppo_process_weight * judge_step_reward_t
+    + grppo_format_weight * format_score_t
+    + grppo_note_frequency_weight * note_frequency_score_t
+  )
+  / (grppo_process_weight + grppo_format_weight + grppo_note_frequency_weight)
 ```
 
 ### Answer-Aware Prompt
 
-Used when the current step triggers answer reward: the step has a user query, an answer target, or
-the model outputs a non-empty answer.
+Default/legacy behavior is kept only for reproducibility of earlier GRPPO runs: a step can trigger
+answer reward because it has a user query, an answer target, or a non-empty model answer.
 
-The prompt receives the current step's annotations. At a single training step, there is at most one
-query and at most one answer target, but a query and its answer target may legitimately fall into the
-same step.
+Exp6 uses timeline answer supervision. The env derives one supervision state before judging each step:
+
+```text
+none    : no query has appeared yet, so no answer reward is requested
+silence : a query is active, but this step is not an answer target
+answer  : this step has an answer target with a target answer
+```
+
+When supervision is `silence` or `answer`, the step uses the answer-aware LLM judge prompt. The trainer
+does not overwrite the answer reward with a rule-only forced-answer postprocess in exp6.
+
+The prompt receives the rendered answer supervision label. At a single training step, there is at most
+one query and at most one answer target, but a query and its answer target may legitimately fall into
+the same step.
 
 The judge returns the same five scalar values:
 
@@ -127,7 +142,7 @@ The answer-aware prompt receives only a rendered, case-specific answer label sec
 receive raw annotation JSON or internal step flags. For example, a silence case is rendered as:
 
 ```text
-Event type: user query.
+Event type: answer supervision checkpoint.
 Current question: ...
 Annotation time: ...s
 Requirement: the model should not answer now; <answer> should be empty.
@@ -138,35 +153,37 @@ An answer-target case is rendered as:
 ```text
 Event type: answer checkpoint.
 Current question: ...
+Options:
+A. ...
+B. ...
+C. ...
 Annotation time: ...s
 Requirement: the model must answer now. Reference answer: ...
 ```
 
-`answer_reward` is judged by the LLM from this label section, the model state, and the model answer,
-then binarized. It should be binary:
+`answer_reward` is judged primarily from this label section, then binarized. The answer label's
+current requirement and reference answer are authoritative. The model state is checked only for
+grounding and consistency with the answer; it must not override or reinterpret the reference answer.
+It should be binary:
 
 ```text
 1.0 = the answer behavior satisfies the label
-0.0 = wrong answer, missed required answer, answered when silence was required, or contradicted state
+0.0 = wrong answer, missed required answer, answered when silence was required, contradicted state,
+      or used ungrounded state reasoning to support the answer
 ```
 
 Rule answer correctness is passed only as a reference/metric. It must not directly overwrite
-normal answer-correctness decisions. For deterministic timing labels where the current step explicitly
-requires silence (`expected_silence`, `query_without_target`, or no current label), final
-`grppo_answer_reward` is forced by whether `<answer>` is empty, because LLM judges can otherwise
-mistakenly reward a premature answer.
+normal answer-correctness decisions in timeline mode.
 
-`answer_reward` is not tied to the number of queries. It is emitted for every step that has a new
-query, an answer target, or a non-empty model answer. This covers:
+`answer_reward` is not tied to the number of queries. In timeline mode it is emitted whenever the
+derived supervision is `silence` or `answer`. This covers:
 
-- query only, no answer: rewards correct silence or penalizes missed answer when evidence is sufficient;
+- query active, no answer target: judges whether the model correctly stays silent;
 - answer target only: checks whether the model answers when the annotation says the current step
   needs an answer;
-- answer only, no new query: penalizes the answered rollout and rewards silent rollouts in the same
-  cohort by postprocessing;
 - query, answer target, and/or model answer in the same step: rewards/penalizes the immediate answer
   decision without dropping the query event;
-- no query and no answer: no answer reward event.
+- before the first query: no answer reward event.
 
 If a cohort has no current query and no answer target, but at least one rollout emits a non-empty
 answer, the trainer performs a cheap postprocess before answer-credit computation:
@@ -178,52 +195,70 @@ silent rows:   grppo_answer_reward = 1
 
 This catches forced-answer behavior without trusting an extra LLM answer score.
 
+This postprocess is a legacy compatibility path. Exp6 disables it with
+`grppo_forced_answer_postprocess_enable=false`; answer reward comes from the answer-aware LLM judge.
+For silence supervision, the final scalar is `grppo_silence_reward_value * binarize(answer_reward)`.
+
 ## Query Annotation Format
 
-The implementation should normalize input rows into a canonical list of query events. The current
-single-query format remains valid.
+RL now accepts one canonical annotation format only. Legacy top-level
+`question/query_timestamp/ground_truth`, `queries`, `target_answers`, and draft `question + response`
+formats are not accepted by the RL dataset/env path.
 
-Preferred canonical format for one-question-one-answer data:
+Each row must contain a non-empty `query_events` list. Each query explicitly declares one answer type:
+
+```text
+answer_type = "mcq"  |  "text"
+```
+
+For MCQ, `options` is required and `answer_events[].gt` is the option letter. For natural-language
+answers, omit `options` and set `answer_type` to `"text"`.
+
+Canonical one-question-one-answer MCQ row:
 
 ```json
 {
   "query_events": [
     {
-      "timestamp": 12.0,
-      "question": "...",
-      "answer": "...",
-      "ground_truth": "B",
-      "options": ["A. ...", "B. ..."]
-    }
-  ]
-}
-```
-
-Compatible aliases can be supported:
-
-```json
-{
-  "queries": [
-    {
+      "qid": "q0",
       "time": 12.0,
-      "query": "...",
-      "gt": "B",
-      "answer": "...",
-      "options": ["..."]
+      "content": "What object is on the table?\nOptions:\nA. cup\nB. book",
+      "answer_type": "mcq",
+      "options": ["cup", "book"],
+      "answer_policy": "answer_when_asked",
+      "answer_events": [
+        {
+          "time": 18.0,
+          "gt": "A",
+          "answer": "cup",
+          "content": "A. cup"
+        }
+      ]
     }
   ]
 }
 ```
 
-Existing single-query rows should normalize to a one-item list:
+Canonical natural-language row:
 
 ```json
 {
-  "question": "...",
-  "query_timestamp": 12.0,
-  "ground_truth": "B",
-  "answer": "...",
-  "options": ["..."]
+  "query_events": [
+    {
+      "qid": "q0",
+      "time": 12.0,
+      "content": "What is the person doing?",
+      "answer_type": "text",
+      "answer_policy": "answer_when_asked",
+      "answer_events": [
+        {
+          "time": 18.0,
+          "answer": "The person is cutting vegetables.",
+          "content": "The person is cutting vegetables."
+        }
+      ]
+    }
+  ]
 }
 ```
 
@@ -248,6 +283,8 @@ Recommended annotation:
       "qid": "q0",
       "time": 127.0,
       "content": "What ingredient is being added...? Update your answer if it becomes different...",
+      "answer_type": "mcq",
+      "options": ["bacon", "tomato", "lettuce"],
       "answer_policy": "update_when_changed",
       "answer_events": [
         {
@@ -278,10 +315,12 @@ Rules:
 
 - `time` should be numeric, not a string.
 - `qid` is required in the canonical representation even if the current dataset has one query.
-- Use `answer_events` or `target_answers`, not `response`, because `response` is easily confused with
-  model generations.
-- `gt` stores the normalized answer, `content` stores the full display answer, and `answer` may store
-  a plain-text answer.
+- Use `answer_events`, not `target_answers` or `response`.
+- `content` is the exact question text shown to the model and may include MCQ options.
+- `answer_type` is required. Do not infer MCQ from the presence of options in downstream data.
+- For MCQ, `options` stores option text without letters, `gt` stores the option letter, `answer`
+  stores the plain option text, and `content` stores the display answer.
+- For text QA, `answer` stores the canonical natural-language answer. `content` may duplicate it.
 - Every item in `answer_events` becomes its own answer reward event. In the example above, there are
   three answer reward events for the same query.
 - For rollout/reward code, the nested format can be expanded into a time-ordered event stream:
@@ -295,28 +334,13 @@ Rules:
 ]
 ```
 
-The implementation may accept the user's draft input shape for compatibility:
-
-```json
-{
-  "question": [{"content": "...", "time": "127"}],
-  "response": [
-    {"content": "C. bacon", "time": "180"},
-    {"content": "B. tomato", "time": "185"},
-    {"content": "E. lettuce", "time": "192"}
-  ]
-}
-```
-
-but it should normalize this into the canonical `query_events[].answer_events[]` representation before
-reward computation.
-
 ## Answer Credit Assignment
 
 After a full trajectory is rolled out, compute answer credit by walking backward over the trajectory.
 
-Let `answer_reward_t` be the answer-aware judge score for step `t`, the forced-answer postprocess
-score for no-query/no-target cohorts, or `0.0` if there is no reward event at that step.
+Let `answer_reward_t` be the answer-aware judge score for step `t`, the legacy forced-answer
+postprocess score for older runs that explicitly enable it, or `0.0` if there is no reward event
+at that step.
 
 ```text
 answer_credit_t = answer_reward_t + beta * answer_credit_{t+1}
@@ -335,11 +359,11 @@ There is no fixed finite window. The effective window is controlled by `beta`.
 Recommended configurable overrides:
 
 ```text
-+algorithm.grppo_answer_decay=0.4
++algorithm.grppo_answer_decay=0.7
 +algorithm.grppo_step_weight=1.0
-+algorithm.grppo_answer_weight=0.3
-+algorithm.grppo_norm_by_std=true
-+algorithm.grppo_min_std=0.07
++algorithm.grppo_answer_weight=0.5
++algorithm.grppo_norm_by_std=false
++algorithm.grppo_min_std=0.03
 ```
 
 These are the initial experiment defaults. They must be passed from the experiment-3 shell script,
@@ -362,8 +386,8 @@ Then group rows by:
 Normalize step and answer signals separately inside that cohort:
 
 ```text
-step_advantage_t = (step_reward_t - mean(step_reward within cohort)) / (std + eps)
-answer_advantage_t = (answer_credit_t - mean(answer_credit within cohort)) / (std + eps)
+step_advantage_t = step_reward_t - mean(step_reward within cohort)
+answer_advantage_t = answer_credit_t - mean(answer_credit within cohort)
 advantage_t = step_weight * step_advantage_t + answer_weight * answer_advantage_t
 ```
 
@@ -445,6 +469,8 @@ grppo_answer_reward
 grppo_answer_reward_raw
 grppo_answer_correctness
 grppo_answer_event
+grppo_answer_supervision
+grppo_answer_reward_scale
 grppo_has_query
 grppo_has_answer_target
 grppo_has_answer
@@ -452,6 +478,9 @@ grppo_query_count
 grppo_answer_target_count
 grppo_forced_answer_postprocess
 grppo_prompt_kind
+grppo_target_trajectory_score
+grppo_target_answer_reward
+grppo_target_format_reward
 ```
 
 Existing `trajectory_score`, `success_score`, and `turn_reward` may remain for old code paths, but
@@ -477,12 +506,12 @@ Implementation outline:
 
 1. Use `_unique_turn_rows(data)` to deduplicate turn rows.
 2. Read `grppo_step_reward` and `grppo_answer_reward`.
-3. In the trainer hook before component computation, apply forced-answer cohort postprocessing for
-   cohorts with no query/answer target but at least one non-empty model answer.
+3. Legacy-only: if an older run enables forced-answer postprocessing, apply it before component
+   computation. Timeline supervision does not use this trainer overwrite.
 4. For each `(group_idx, traj_idx)` trajectory, sort by `turn_idx`.
 5. Compute backward answer credit with `grppo_answer_decay` on the full rollout batch.
-6. For each `(group_idx, turn_idx)` cohort, standardize `grppo_step_reward`.
-7. For the same cohort, standardize `grppo_answer_credit`.
+6. For each `(group_idx, turn_idx)` cohort, compute the centered `grppo_step_reward` advantage.
+7. For the same cohort, compute the centered `grppo_answer_credit` advantage.
 8. Zero a component advantage when that component's cohort variance is below `grppo_min_std`.
 9. Compute the final policy advantage as
    `grppo_step_weight * step_advantage + grppo_answer_weight * answer_advantage`.
@@ -499,15 +528,18 @@ Do not edit YAML. Use the experiment-3 shell script to pass all overrides:
 
 ```text
 algorithm.adv_estimator=streamweave_stepwise_grppo
-+algorithm.grppo_answer_decay=0.4
++algorithm.grppo_answer_decay=0.7
 +algorithm.grppo_step_weight=1.0
-+algorithm.grppo_answer_weight=0.3
-+algorithm.grppo_norm_by_std=true
-+algorithm.grppo_min_std=0.07
++algorithm.grppo_answer_weight=0.5
++algorithm.grppo_norm_by_std=false
++algorithm.grppo_min_std=0.03
 +algorithm.grppo_filter_groups.enable=true
-+algorithm.grppo_filter_groups.min_std=0.07
-+data.streamweave.reward.grppo_process_weight=1.0
-+data.streamweave.reward.grppo_format_weight=0.1
++algorithm.grppo_filter_groups.min_std=0.03
++data.streamweave.reward.grppo_process_weight=0.7
++data.streamweave.reward.grppo_format_weight=0.25
++data.streamweave.reward.grppo_note_frequency_weight=0.25
++data.streamweave.reward.grppo_answer_event_mode=timeline
++data.streamweave.reward.grppo_silence_reward_value=0.1
 +data.streamweave.reward.judge.prompt_version=streamweave_grppo_judge_v1
 ```
 
@@ -515,13 +547,13 @@ If needed, create a new `train_exp3_grppo.sh` instead of changing older scripts.
 
 ## Current Decisions
 
-1. Query-only, answer-target, and model-answer steps use the answer-aware prompt.
+1. Timeline `silence` and `answer` steps use the answer-aware prompt.
 2. Process-only steps use the four-score process prompt and do not mention answer reward.
-3. `grppo_answer_reward` is the LLM judge answer score for real answer-correctness labels. Rule
-   correctness is only an auxiliary metric.
-4. Explicit silence labels and no-current-label answer events use deterministic silence postprocessing:
-   empty answer gets 1, non-empty answer gets 0.
-5. Forced answers in no-query/no-target cohorts are handled by trainer postprocessing, not by trusting
-   extra LLM answer scores.
-6. `grppo_step_reward` is the weighted combination of `grppo_judge_step_reward` and
-   `grppo_format_score`; the raw judge mean remains logged as `grppo_judge_step_reward`.
+3. `grppo_answer_reward` is derived from the LLM judge `answer_reward` for both answer and silence
+   labels. Rule correctness is only an auxiliary metric.
+4. In timeline mode, silence labels use `grppo_silence_reward_value * binarize(answer_reward)`.
+5. Forced answers in no-query/no-target cohorts are a legacy trainer postprocess path and are disabled
+   for exp6.
+6. `grppo_step_reward` is the weighted combination of `grppo_judge_step_reward`,
+   `grppo_format_score`, and `grppo_note_frequency_score`; the raw judge mean remains logged as
+   `grppo_judge_step_reward`.

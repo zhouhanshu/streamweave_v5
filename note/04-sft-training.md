@@ -117,7 +117,20 @@ bash scripts/run_dataset2_sft_distill_sequential.sh
 
 ## 当前状态
 
-SFT 数据合成链路已经打通，但第一次 SFT 回评是负面结果。当前不再把“继续扩大同口径 SFT 数据”作为主阻塞项，主线已经切到 V5 GRPO。
+SFT 数据合成链路已经打通。第一次 SFT 回评是负面结果；2026-05-14 基于 dataset2 / `streamweave_sft_0511_note` 的新一轮 SFT 已完成训练并导出，当前下一步是对新 SFT 模型做 OVO 回评。
+
+2026-05-14 更新：`qwen3vl-8b-full-streamweave-sft-0511-note` 训练完成：
+
+- 训练配置：`SFT/LlamaFactory/configs/qwen3vl_8b_full_sft_streamweave_0511_note.yaml`
+- 训练输出：`SFT/LlamaFactory/saves/qwen3-vl-8b/full/streamweave_sft_0511_note`
+- 训练日志：`SFT/LlamaFactory/logs/resume_debug_20260514_144429/train.out`
+- 断点恢复起点：最终成功从 `checkpoint-500` 恢复并训练到 `708/708`。
+- 关键 checkpoint：`checkpoint-600`、`checkpoint-700`、`checkpoint-708`；当前保留 `checkpoint-400` 到 `checkpoint-708` 共 5 个 checkpoint。
+- 训练完成：`EXIT_STATUS=0`，`epoch=1.0`，总耗时 `7:35:31`。
+- 指标：`train_loss=0.0542`，最终 `eval_loss=0.1826`。
+- 已按评测准备导出 `checkpoint-700` 到 `models/qwen_sft_0513`；该目录为推理用 HF 目录，只包含模型、tokenizer、processor/config 等必要文件。
+- 导出验证：`model_type=qwen3_vl`，`processor=Qwen3VLProcessor`，`padding_side=left`，`text_use_cache=True`，`tensor_count=750`。
+- 下一步：启动 OVO 评测；先跑小规模/1-of-8，若正向再跑 full，并和 base instruct、answered-full SFT、GRPO0509、RL0511 step60 同口径比较。
 
 2026-05-08 更新：新一轮 `answered-full` SFT 训练已完成，使用当前 V5 协议：
 
