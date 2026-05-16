@@ -33,6 +33,7 @@ class FrameRef:
 class QueryEvent:
     text: str
     timestamp: float
+    role: QARole = "q"
 
 
 @dataclass(slots=True)

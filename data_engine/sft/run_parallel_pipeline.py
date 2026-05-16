@@ -75,7 +75,7 @@ def main() -> None:
         f"[queue] total={total} input={source_input_path(make_source_config(args))} output_dir={args.output_dir}",
         flush=True,
     )
-    run_workers(args=args, db_path=db_path)
+    run_workers(args=args, db_path=db_path, samples=samples)
     summary = finalize_from_jobs(args=args, db_path=db_path)
     if args.sharegpt:
         share_args = argparse.Namespace(**vars(args))
@@ -192,9 +192,10 @@ def reset_crashed_jobs(db_path: Path) -> int:
         conn.close()
 
 
-def run_workers(*, args: argparse.Namespace, db_path: Path) -> None:
+def run_workers(*, args: argparse.Namespace, db_path: Path, samples: list[Any]) -> None:
+    ctx = mp.get_context("fork")
     workers = [
-        mp.Process(target=worker_loop, args=(worker_id, vars(args), str(db_path)), daemon=False)
+        ctx.Process(target=worker_loop, args=(worker_id, vars(args), str(db_path), samples), daemon=False)
         for worker_id in range(args.num_workers)
     ]
     started = time.time()
@@ -224,12 +225,11 @@ def run_workers(*, args: argparse.Namespace, db_path: Path) -> None:
         raise SystemExit(f"Queue did not finish cleanly: {counts}")
 
 
-def worker_loop(worker_id: int, args_data: dict[str, Any], db_path_text: str) -> None:
+def worker_loop(worker_id: int, args_data: dict[str, Any], db_path_text: str, samples: list[Any]) -> None:
     args = argparse.Namespace(**args_data)
     db_path = Path(db_path_text)
     conn = connect_db(db_path)
     try:
-        samples = load_sample_source(make_source_config(args))
         backend = make_backend(args)
         source_config = make_source_config(args)
         config = make_synthesis_config(args, source_config)

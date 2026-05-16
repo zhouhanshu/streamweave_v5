@@ -93,8 +93,10 @@ def main() -> None:
             compute_streamweave_stepwise_ppo_gae,
             compute_streamweave_stepwise_rlmlr,
             compute_streamweave_stepwise_traj_grpo,
+            compute_streamweave_stepwise_trajsum_grpo,
             compute_grppo_component_advantage_values,
             compute_grppo_step_reward_values,
+            compute_trajsum_grpo_values,
         )
         from streamweave_rl.env import (
             StreamWeaveRLEnv,
@@ -111,6 +113,7 @@ def main() -> None:
             JudgeConfig,
             JudgeResult,
             StepJudge,
+            _build_grppo_answer_judge_content,
             _build_grppo_judge_content,
             _parse_grppo_judge_response,
             _parse_judge_response,
@@ -139,7 +142,8 @@ def main() -> None:
     assert cfg.grppo_format_weight == 0.1
     assert cfg.grppo_note_frequency_weight == 0.0
     assert cfg.score_scale == 1.0
-    assert abs(compute_grppo_step_reward(process_score=0.5, format_score=1.0, cfg=cfg) - (0.6 / 1.1)) < 1e-6
+    assert abs(compute_grppo_step_reward(process_score=0.5, format_score=1.0, cfg=cfg) - 0.6) < 1e-6
+    assert abs(compute_grppo_step_reward(process_score=2.0, format_score=1.0, cfg=cfg) - 2.1) < 1e-6
     grppo_anchor_cfg = StreamWeaveRewardConfig(grppo_note_frequency_weight=0.5)
     assert (
         abs(
@@ -149,7 +153,7 @@ def main() -> None:
                 note_frequency_score=0.0,
                 cfg=grppo_anchor_cfg,
             )
-            - ((0.9 + 0.1) / 1.6)
+            - (0.9 + 0.1)
         )
         < 1e-6
     )
@@ -253,6 +257,70 @@ def main() -> None:
         judge_module._build_backend = original_build
         reset_judge_backend_cache()
 
+    import asyncio
+    class _FakeGenerateResult:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    class _AnswerErrorBackend:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate(self, content, generate_kwargs=None):  # noqa: ANN001
+            del content, generate_kwargs
+            self.calls += 1
+            if self.calls == 1:
+                return _FakeGenerateResult(
+                    """
+                    {
+                      "delta_groundedness": {"score": 0.8, "reason": "process ok"},
+                      "anchor_keyframe": {"score": 0.6, "reason": "process ok"},
+                      "semantic_alignment": {"score": 0.4, "reason": "process ok"},
+                      "state_groundedness": {"score": 0.2, "reason": "process ok"},
+                      "issues": []
+                    }
+                    """
+                )
+            return _FakeGenerateResult("not json")
+
+    original_build = judge_module._build_backend
+    original_to_thread = judge_module.asyncio.to_thread
+    fake_backend = _AnswerErrorBackend()
+    judge_module._build_backend = lambda cfg: fake_backend
+    async def _inline_to_thread(func, /, *args, **kwargs):  # noqa: ANN001
+        return func(*args, **kwargs)
+    judge_module.asyncio.to_thread = _inline_to_thread
+    try:
+        split_judge = StepJudge(
+            JudgeConfig(
+                enable=True,
+                backend="answer_error_fake",
+                prompt_version="streamweave_grppo_judge_v1",
+                max_retries=1,
+                retry_backoff_seconds=0.0,
+            )
+        )
+        split_result = asyncio.run(
+            split_judge.score_step(
+                memory_before="",
+                qa_history="<qa>q</qa>",
+                frames=[],
+                raw_action=ModelAction(state="state", answer="", events=[]),
+                raw_output="<state>state</state><answer></answer>",
+                quality=QualityReport(valid=True, parser_ok=True, metrics={}),
+                query_label={"event_type": "answer_target", "question": "Q?", "answer": "A", "timestamp": 1.0},
+                answer_reward_event=True,
+            )
+        )
+        assert fake_backend.calls == 3
+        assert split_result.status == "error"
+        assert "answer_judge judge JSON parse failed" in split_result.error
+        assert "answer_judge_attempt_2" in split_result.raw_response
+    finally:
+        judge_module._build_backend = original_build
+        judge_module.asyncio.to_thread = original_to_thread
+        reset_judge_backend_cache()
+
     nested_judge = _parse_judge_response(
         """
         {
@@ -285,9 +353,86 @@ def main() -> None:
         }
         """
     )
-    assert grppo_judge.score == 0.5
+    assert grppo_judge.score == 1.0
     assert grppo_judge.scores["answer_reward"] == 1.0
     assert grppo_judge.reasons["delta_groundedness"] == "grounded delta"
+    grppo_checklist_judge = _parse_grppo_judge_response(
+        """
+        {
+          "delta_groundedness": {
+            "score": 1.0,
+              "checks": {
+                "delta_captures_action_progress": 1,
+                "delta_captures_state_or_location_changes": 0,
+                "delta_preserves_query_relevant_details": 0.5,
+                "delta_no_visual_hallucination": 1,
+                "delta_not_polluted_by_qa": 1
+              },
+            "reason": "checklist overrides score"
+          },
+          "anchor_keyframe": {
+            "score": 0.0,
+              "checks": {
+                "anchor_count_valid": 1,
+                "anchor_time_and_body_valid": 0.5,
+                "anchor_representative_if_present": 0.5,
+                "first_window_rule_followed": 1
+              },
+            "reason": "one applicable anchor check passes"
+          },
+          "note_keyframe": {"score": 1.0, "reason": "legacy field should not override explicit anchor"},
+          "semantic_alignment": {
+            "score": 0.4,
+            "checks": {
+              "semantic_output_coherent": 1,
+              "semantic_text_anchor_express_current_frames": 0,
+              "semantic_no_cross_step_contradiction": 1
+            },
+            "reason": "partial alignment"
+          },
+          "state_groundedness": {
+            "score": 0.2,
+            "checks": {
+              "state_uses_available_evidence": 1,
+              "state_identifies_question_scope": 0,
+              "state_decision_is_grounded": 1,
+              "state_no_visual_hallucination": 1,
+              "state_consistent_with_answer": 0,
+              "state_no_unreasonable_hallucination": 1
+            },
+            "reason": "weak state"
+          },
+          "answer_reward": {"score": 1.0, "reason": "correct answer"},
+          "issues": []
+        }
+        """
+    )
+    assert grppo_checklist_judge.scores["delta_groundedness"] == 3.5 / 5
+    assert grppo_checklist_judge.scores["anchor_keyframe"] == 3 / 4
+    assert abs(grppo_checklist_judge.score - (2.0 * 12.5 / 18)) < 1e-8
+    grppo_missing_checklists = _parse_grppo_judge_response(
+        """
+        {
+          "delta_groundedness": {
+            "checks": {
+              "delta_captures_action_progress": 1,
+              "delta_captures_state_or_location_changes": 1,
+              "delta_preserves_query_relevant_details": 1,
+              "delta_no_visual_hallucination": 1,
+              "delta_not_polluted_by_qa": 1
+            }
+          },
+          "anchor_keyframe": {"score": 1.0},
+          "semantic_alignment": {"score": 1.0},
+          "state_groundedness": {"score": 1.0},
+          "issues": []
+        }
+        """
+    )
+    assert abs(grppo_missing_checklists.score - (2.0 * 5 / 18)) < 1e-8
+    assert grppo_missing_checklists.scores["anchor_keyframe"] == 0.0
+    assert grppo_missing_checklists.scores["semantic_alignment"] == 0.0
+    assert grppo_missing_checklists.scores["state_groundedness"] == 0.0
     grppo_process_content = _build_grppo_judge_content(
         memory_before="",
         qa_history="",
@@ -326,9 +471,29 @@ def main() -> None:
     grppo_answer_prompt = "\n".join(item.text for item in grppo_answer_content if item.type == "text")
     assert "answer_reward" in grppo_answer_prompt
     assert "Options:\nA. blue\nB. green\nC. red" in grppo_answer_prompt
-    assert "Requirement: the model must answer now. Reference answer: red" in grppo_answer_prompt
-    assert "Reference answer: C" not in grppo_answer_prompt
+    assert "Requirement: the model must answer now. Reference answer: C. red" in grppo_answer_prompt
+    assert "Reference answer: red" not in grppo_answer_prompt
+    assert "rule_answer_correctness" not in grppo_answer_prompt
+    assert "Rule Correctness Reference" not in grppo_answer_prompt
     assert "set answer_reward to that scalar exactly" not in grppo_answer_prompt
+    grppo_answer_only_content = _build_grppo_answer_judge_content(
+        raw_output="<state>no coated pieces yet</state><answer></answer>",
+        quality=QualityReport(valid=True, parser_ok=True, metrics={}),
+        query_label={
+            "event_type": "answer_target",
+            "question": "How many?",
+            "timestamp": 68.0,
+            "gt": "C",
+            "answer": "0",
+            "content": "0",
+            "options": ["6", "8", "0", "3"],
+        },
+    )
+    grppo_answer_only_prompt = "\n".join(item.text for item in grppo_answer_only_content if item.type == "text")
+    assert "Memory Before This Step" not in grppo_answer_only_prompt
+    assert "Current Video Frames" not in grppo_answer_only_prompt
+    assert "Requirement: the model must answer now. Reference answer: C. 0" in grppo_answer_only_prompt
+    assert "staying silent is incorrect" in grppo_answer_only_prompt
     grppo_query_only_content = _build_grppo_judge_content(
         memory_before="",
         qa_history="",
@@ -421,6 +586,17 @@ def main() -> None:
     )
     assert (
         _final_grppo_answer_reward(
+            raw_score=1.0,
+            supervision_kind="silence",
+            has_answer=True,
+            label_status="query_without_target",
+            use_llm_for_silence=True,
+            silence_reward_value=0.1,
+        )
+        == 0.0
+    )
+    assert (
+        _final_grppo_answer_reward(
             raw_score=0.0,
             supervision_kind="silence",
             has_answer=False,
@@ -452,6 +628,18 @@ def main() -> None:
         == 0.0
     )
     assert _final_grppo_answer_reward(raw_score=1.0, supervision_kind="none", has_answer=True, label_status="missing_label") == 0.0
+    assert _final_grppo_answer_reward(raw_score=1.0, supervision_kind="answer", has_answer=True, label_status="parser_invalid") == 0.0
+    assert (
+        _final_grppo_answer_reward(
+            raw_score=1.0,
+            supervision_kind="silence",
+            has_answer=False,
+            label_status="parser_invalid",
+            use_llm_for_silence=True,
+            silence_reward_value=0.2,
+        )
+        == 0.0
+    )
     assert (
         _final_grppo_answer_reward(
             raw_score=1.0,
@@ -463,23 +651,44 @@ def main() -> None:
         )
         == 0.0
     )
+    assert _final_grppo_answer_reward(raw_score=1.0, supervision_kind="answer", has_answer=False, label_status="scored") == 0.0
+    assert _final_grppo_answer_reward(raw_score=1.0, supervision_kind="answer", has_answer=True, label_status="scored") == 1.0
     assert _answer_reward_scale("answer", silence_reward_value=0.1) == 1.0
     assert _answer_reward_scale("silence", silence_reward_value=0.1) == 0.1
     timeline_query = {"event_type": "query", "question": "What color?", "timestamp": 1.0}
+    timeline_no_event = _timeline_grppo_answer_supervision(
+        grppo_enabled=True,
+        current_query_event=None,
+        current_answer_target=None,
+        latest_query_event=timeline_query,
+        has_answer=False,
+    )
+    assert timeline_no_event.kind == "none"
     timeline_silence = _timeline_grppo_answer_supervision(
         grppo_enabled=True,
         current_query_event=None,
         current_answer_target=None,
         latest_query_event=timeline_query,
+        has_answer=True,
     )
     assert timeline_silence.kind == "silence"
     assert timeline_silence.label["event_type"] == "answer_silence"
     assert timeline_silence.label["should_answer"] is False
+    timeline_current_query = _timeline_grppo_answer_supervision(
+        grppo_enabled=True,
+        current_query_event=timeline_query,
+        current_answer_target=None,
+        latest_query_event=timeline_query,
+        has_answer=False,
+    )
+    assert timeline_current_query.kind == "silence"
+    assert timeline_current_query.status == "query_silence"
     timeline_answer = _timeline_grppo_answer_supervision(
         grppo_enabled=True,
         current_query_event=timeline_query,
         current_answer_target={"event_type": "answer_target", "ground_truth": "red"},
         latest_query_event=timeline_query,
+        has_answer=False,
     )
     assert timeline_answer.kind == "answer"
     assert not _grppo_answer_event_enabled(
@@ -503,6 +712,21 @@ def main() -> None:
     grppo_values = compute_grppo_step_reward_values(data.non_tensor_batch, config={"grppo_answer_decay": 0.5})
     assert np.allclose(grppo_values["grppo_answer_credit"], np.array([0.5, 1.0, 0.25, 0.5], dtype=np.float32))
     assert np.allclose(grppo_values["grppo_reward"], np.array([0.7, 1.4, 1.05, 0.7], dtype=np.float32))
+    fallback_non_tensor = dict(data.non_tensor_batch)
+    fallback_non_tensor.pop("grppo_step_reward")
+    fallback_non_tensor.update(
+        {
+            "grppo_delta_groundedness": np.array([1.0, 1.0, 0.0, 0.0], dtype=np.float32),
+            "grppo_anchor_keyframe": np.array([1.0, 0.0, 1.0, 0.0], dtype=np.float32),
+            "grppo_semantic_alignment": np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float32),
+            "grppo_state_groundedness": np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+        }
+    )
+    fallback_values = compute_grppo_step_reward_values(fallback_non_tensor, config={"grppo_answer_decay": 0.5})
+    assert np.allclose(
+        fallback_values["grppo_step_reward"],
+        np.array([1.5, 1.5, 1.5, 0.5], dtype=np.float32),
+    )
     grppo_adv, grppo_returns = compute_streamweave_stepwise_grppo(
         data,
         config={"grppo_answer_decay": 0.5, "grppo_norm_by_std": False},
@@ -544,6 +768,25 @@ def main() -> None:
         np.array([-0.3, 0.25, 0.3, -0.25], dtype=np.float32),
     )
     assert component_values["grppo_update_signal_valid"].tolist() == [1.0, 1.0, 1.0, 1.0]
+    judge_error_non_tensor = dict(data.non_tensor_batch)
+    judge_error_non_tensor["judge_status"] = np.array(["ok", "error", "ok", "ok"], dtype=object)
+    judge_error_values = compute_grppo_component_advantage_values(
+        judge_error_non_tensor,
+        config={"grppo_answer_decay": 0.5, "grppo_norm_by_std": False, "grppo_min_std": 0.2},
+    )
+    assert np.allclose(
+        judge_error_values["grppo_step_advantage"],
+        np.array([-0.3, 0.0, 0.3, 0.0], dtype=np.float32),
+    )
+    assert np.allclose(
+        judge_error_values["grppo_answer_advantage"],
+        np.zeros(4, dtype=np.float32),
+    )
+    assert np.allclose(
+        judge_error_values["grppo_answer_credit"],
+        np.array([0.0, 0.0, 0.25, 0.5], dtype=np.float32),
+    )
+    assert judge_error_values["grppo_update_signal_valid"].tolist() == [1.0, 0.0, 1.0, 0.0]
     precomputed_grppo = FakePrecomputedGRPPOBatch()
     precomputed_adv, precomputed_returns = compute_streamweave_stepwise_grppo(
         precomputed_grppo,
@@ -569,6 +812,56 @@ def main() -> None:
     assert grpo_returns.shape == data.batch["response_mask"].shape
     assert torch.isfinite(grpo_adv).all()
     assert torch.isfinite(grpo_returns).all()
+
+    trajsum_values = compute_trajsum_grpo_values(
+        data.non_tensor_batch,
+        config={"trajsum_answer_weight": 0.5, "trajsum_norm_by_std": True},
+    )
+    assert np.allclose(
+        trajsum_values["grpo_trajsum_turn_reward"],
+        np.array([0.2, 0.9, 0.8, 0.45], dtype=np.float32),
+    )
+    assert np.allclose(
+        trajsum_values["grpo_trajsum_score"],
+        np.array([1.1, 1.1, 1.25, 1.25], dtype=np.float32),
+    )
+    trajsum_filtered_values = compute_trajsum_grpo_values(
+        data.non_tensor_batch,
+        config={
+            "trajsum_answer_weight": 0.5,
+            "trajsum_norm_by_std": True,
+            "filter_groups": {"min_std": 0.2},
+        },
+    )
+    assert np.allclose(
+        trajsum_filtered_values["grpo_trajsum_advantage"],
+        np.zeros(4, dtype=np.float32),
+    )
+    assert trajsum_filtered_values["grpo_trajsum_signal_valid"].tolist() == [0.0, 0.0, 0.0, 0.0]
+    trajsum_adv, trajsum_returns = compute_streamweave_stepwise_trajsum_grpo(
+        data,
+        config={"trajsum_answer_weight": 0.5, "trajsum_norm_by_std": True},
+    )
+    expected_trajsum_adv = torch.tensor(
+        [
+            [-0.7071, -0.7071, 0.0],
+            [-0.7071, 0.0, 0.0],
+            [0.7071, 0.7071, 0.0],
+            [0.7071, 0.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+    expected_trajsum_returns = torch.tensor(
+        [
+            [1.1, 1.1, 0.0],
+            [1.1, 0.0, 0.0],
+            [1.25, 1.25, 0.0],
+            [1.25, 0.0, 0.0],
+        ],
+        dtype=torch.float32,
+    )
+    assert torch.allclose(trajsum_adv, expected_trajsum_adv, atol=1e-3), trajsum_adv
+    assert torch.allclose(trajsum_returns, expected_trajsum_returns, atol=1e-6), trajsum_returns
 
     dapo_result = compute_group_filter_result(
         {

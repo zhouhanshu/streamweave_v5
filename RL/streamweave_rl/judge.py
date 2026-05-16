@@ -16,8 +16,10 @@ from streamweave.config import BackendConfig, RuntimeConfig
 from streamweave.schemas import ContentItem, FrameRef, ModelAction, QualityReport
 
 from .judge_prompts import (
+    GrppoAnswerJudgePromptContext,
     GrppoJudgePromptContext,
     LegacyJudgePromptContext,
+    build_grppo_answer_judge_content,
     build_grppo_judge_content,
     build_legacy_judge_content,
 )
@@ -33,6 +35,35 @@ GRPPO_STEP_SCORE_KEYS = (
     "state_groundedness",
 )
 GRPPO_SCORE_KEYS = (*GRPPO_STEP_SCORE_KEYS, "answer_reward")
+GRPPO_PROCESS_SCORE_SCALE = 2.0
+GRPPO_CHECK_KEYS = {
+    "delta_groundedness": (
+        "delta_captures_action_progress",
+        "delta_captures_state_or_location_changes",
+        "delta_preserves_query_relevant_details",
+        "delta_no_visual_hallucination",
+        "delta_not_polluted_by_qa",
+    ),
+    "anchor_keyframe": (
+        "anchor_count_valid",
+        "anchor_time_and_body_valid",
+        "anchor_representative_if_present",
+        "first_window_rule_followed",
+    ),
+    "semantic_alignment": (
+        "semantic_output_coherent",
+        "semantic_text_anchor_express_current_frames",
+        "semantic_no_cross_step_contradiction",
+    ),
+    "state_groundedness": (
+        "state_uses_available_evidence",
+        "state_identifies_question_scope",
+        "state_decision_is_grounded",
+        "state_no_visual_hallucination",
+        "state_consistent_with_answer",
+        "state_no_unreasonable_hallucination",
+    ),
+}
 
 
 # Backends are expensive to instantiate (GeminiBackend builds a google-genai
@@ -138,6 +169,17 @@ class JudgeResult:
     error: str = ""
 
 
+class JudgeParseRetryError(RuntimeError):
+    """Raised when the judge backend returns text that cannot be parsed."""
+
+    def __init__(self, *, label: str, errors: list[str], raw_responses: list[str]) -> None:
+        self.label = label
+        self.errors = list(errors)
+        self.raw_response = "\n".join(raw_responses)
+        joined = "; ".join(errors[-3:])
+        super().__init__(f"{label} judge JSON parse failed after {len(errors)} attempt(s): {joined}")
+
+
 class StepJudge:
     def __init__(self, config: JudgeConfig) -> None:
         self.config = config
@@ -176,17 +218,15 @@ class StepJudge:
 
         started = time.time()
         if grppo_prompt:
-            content = build_grppo_judge_content(
-                GrppoJudgePromptContext(
-                    memory_before=memory_before,
-                    qa_history=qa_history,
-                    frames=frames,
-                    raw_output=raw_output,
-                    quality=quality,
-                    query_label=query_label,
-                    answer_reward_event=answer_reward_event,
-                    answer_correctness=answer_correctness,
-                )
+            return await self._score_grppo_step(
+                started=started,
+                memory_before=memory_before,
+                qa_history=qa_history,
+                frames=frames,
+                raw_output=raw_output,
+                quality=quality,
+                query_label=query_label,
+                answer_reward_event=answer_reward_event,
             )
         else:
             content = build_legacy_judge_content(
@@ -225,6 +265,122 @@ class StepJudge:
 
     def _ensure_backend(self):
         return get_judge_backend(self.config)
+
+    async def _generate_and_parse_json(
+        self,
+        *,
+        backend: BaseBackend,
+        content: list[Any],
+        parser,
+        label: str,
+    ) -> tuple[JudgeResult, str]:
+        attempts = max(0, int(self.config.max_retries)) + 1
+        errors: list[str] = []
+        raw_responses: list[str] = []
+        for attempt in range(1, attempts + 1):
+            result = await asyncio.to_thread(
+                backend.generate,
+                content,
+                generate_kwargs={
+                    "temperature": self.config.temperature,
+                    "top_p": self.config.top_p,
+                    "max_output_tokens": self.config.max_tokens,
+                    "response_mime_type": "application/json",
+                },
+            )
+            raw = result.text
+            raw_responses.append(f"=== {label}_attempt_{attempt} ===\n{raw}")
+            try:
+                parsed = parser(raw)
+                if errors:
+                    parsed.issues.append(f"{label} JSON parse succeeded after {attempt} attempts")
+                return parsed, raw
+            except (json.JSONDecodeError, ValueError) as exc:
+                errors.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")
+                if attempt >= attempts:
+                    raise JudgeParseRetryError(label=label, errors=errors, raw_responses=raw_responses) from exc
+                sleep_seconds = max(0.0, float(self.config.retry_backoff_seconds)) * (
+                    max(1.0, float(self.config.retry_backoff_multiplier)) ** (attempt - 1)
+                )
+                if sleep_seconds:
+                    await asyncio.sleep(sleep_seconds)
+        raise RuntimeError("unreachable judge parse retry state")
+
+    async def _score_grppo_step(
+        self,
+        *,
+        started: float,
+        memory_before: str,
+        qa_history: str,
+        frames: list[FrameRef],
+        raw_output: str,
+        quality: QualityReport,
+        query_label: dict[str, Any] | None,
+        answer_reward_event: bool,
+    ) -> JudgeResult:
+        try:
+            backend = self._ensure_backend()
+            process_content = build_grppo_judge_content(
+                GrppoJudgePromptContext(
+                    memory_before=memory_before,
+                    qa_history=qa_history,
+                    frames=frames,
+                    raw_output=raw_output,
+                    quality=quality,
+                    query_label=None,
+                    answer_reward_event=False,
+                    answer_correctness=None,
+                )
+            )
+            parsed, process_raw = await self._generate_and_parse_json(
+                backend=backend,
+                content=process_content,
+                parser=_parse_grppo_judge_response,
+                label="process_judge",
+            )
+            raw_parts = ["=== process_judge ===", process_raw]
+
+            if answer_reward_event:
+                answer_content = build_grppo_answer_judge_content(
+                    GrppoAnswerJudgePromptContext(
+                        raw_output=raw_output,
+                        quality=quality,
+                        query_label=query_label,
+                    )
+                )
+                answer_parsed, answer_raw = await self._generate_and_parse_json(
+                    backend=backend,
+                    content=answer_content,
+                    parser=_parse_grppo_answer_judge_response,
+                    label="answer_judge",
+                )
+                parsed.scores["answer_reward"] = answer_parsed.scores.get("answer_reward", 0.0)
+                parsed.reasons["answer_reward"] = answer_parsed.reasons.get("answer_reward", "")
+                parsed.issues.extend(answer_parsed.issues)
+                raw_parts.extend(["=== answer_judge ===", answer_raw])
+            else:
+                parsed.scores["answer_reward"] = 0.0
+                parsed.reasons["answer_reward"] = ""
+
+            parsed.latency_seconds = time.time() - started
+            parsed.raw_response = "\n".join(raw_parts)
+            return parsed
+        except JudgeParseRetryError as exc:
+            return JudgeResult(
+                score=float(self.config.failure_score),
+                status="error",
+                raw_response=exc.raw_response,
+                issues=list(exc.errors),
+                latency_seconds=time.time() - started,
+                error=str(exc),
+            )
+        except Exception as exc:
+            return JudgeResult(
+                score=float(self.config.failure_score),
+                status="error",
+                latency_seconds=time.time() - started,
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
 
 def judge_config_from_mapping(data: Any) -> JudgeConfig:
@@ -281,6 +437,22 @@ def _build_grppo_judge_content(
     )
 
 
+def _build_grppo_answer_judge_content(
+    *,
+    raw_output: str,
+    quality: QualityReport,
+    query_label: dict[str, Any] | None,
+) -> list[ContentItem]:
+    """Compatibility wrapper for tests and old internal imports."""
+    return build_grppo_answer_judge_content(
+        GrppoAnswerJudgePromptContext(
+            raw_output=raw_output,
+            quality=quality,
+            query_label=query_label,
+        )
+    )
+
+
 def _parse_judge_response(raw: str) -> JudgeResult:
     try:
         parsed = json.loads(raw)
@@ -316,21 +488,51 @@ def _parse_grppo_judge_response(raw: str) -> JudgeResult:
     if not isinstance(parsed, dict):
         raise ValueError("GRPPO judge response must be a JSON object")
 
-    scores = {key: _extract_score(parsed.get(key, 0.0)) for key in GRPPO_SCORE_KEYS}
-    if "anchor_keyframe" in scores and scores["anchor_keyframe"] == 0.0 and "note_keyframe" in parsed:
+    has_process_checklists = _has_any_grppo_process_checklist(parsed)
+    scores = {
+        key: _extract_grppo_score_from_response(key, parsed.get(key, 0.0), has_process_checklists=has_process_checklists)
+        for key in GRPPO_SCORE_KEYS
+    }
+    if not has_process_checklists and "anchor_keyframe" not in parsed and "note_keyframe" in parsed:
         scores["anchor_keyframe"] = _extract_score(parsed.get("note_keyframe", 0.0))
-    if "overall" in parsed:
-        overall = _extract_score(parsed["overall"])
-    else:
-        overall = sum(scores[key] for key in GRPPO_STEP_SCORE_KEYS) / max(len(GRPPO_STEP_SCORE_KEYS), 1)
+    overall = _extract_flat_grppo_process_score(parsed)
+    if overall is None:
+        overall = _clamp_process_total_score(
+            GRPPO_PROCESS_SCORE_SCALE
+            * sum(scores[key] for key in GRPPO_STEP_SCORE_KEYS)
+            / max(len(GRPPO_STEP_SCORE_KEYS), 1)
+        )
     issues = _string_list(parsed.get("issues", []))
     caps = _string_list(parsed.get("caps_applied", []))
     if caps:
         issues.extend(f"cap: {item}" for item in caps)
     reasons = {key: _extract_reason(parsed.get(key, {})) for key in GRPPO_SCORE_KEYS}
-    if "anchor_keyframe" in reasons and not reasons["anchor_keyframe"] and "note_keyframe" in parsed:
+    if "anchor_keyframe" not in parsed and "note_keyframe" in parsed:
         reasons["anchor_keyframe"] = _extract_reason(parsed.get("note_keyframe", {}))
     return JudgeResult(score=overall, status="ok", scores=scores, reasons=reasons, issues=issues)
+
+
+def _parse_grppo_answer_judge_response(raw: str) -> JudgeResult:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+        if not match:
+            raise
+        parsed = json.loads(match.group(0))
+    if not isinstance(parsed, dict):
+        raise ValueError("GRPPO answer judge response must be a JSON object")
+    answer_value = parsed.get("answer_reward", 0.0)
+    score = _extract_score(answer_value)
+    reason = _extract_reason(answer_value)
+    issues = _string_list(parsed.get("issues", []))
+    return JudgeResult(
+        score=score,
+        status="ok",
+        scores={"answer_reward": score},
+        reasons={"answer_reward": reason},
+        issues=issues,
+    )
 
 
 def _mock_judge_result(action: ModelAction, quality: QualityReport) -> JudgeResult:
@@ -385,7 +587,11 @@ def _mock_grppo_judge_result(
         "answer_reward": answer_reward,
     }
     return JudgeResult(
-        score=sum(scores[key] for key in GRPPO_STEP_SCORE_KEYS) / len(GRPPO_STEP_SCORE_KEYS),
+        score=_clamp_process_total_score(
+            GRPPO_PROCESS_SCORE_SCALE
+            * sum(scores[key] for key in GRPPO_STEP_SCORE_KEYS)
+            / max(len(GRPPO_STEP_SCORE_KEYS), 1)
+        ),
         status="mock",
         scores=scores,
         reasons={
@@ -407,6 +613,97 @@ def _extract_score(value: Any) -> float:
     return _clamp_score(value)
 
 
+def _extract_grppo_score(key: str, value: Any) -> float:
+    if key in GRPPO_STEP_SCORE_KEYS:
+        checklist_score = _extract_checklist_score(key, value)
+        if checklist_score is not None:
+            return checklist_score
+    return _extract_score(value)
+
+
+def _extract_grppo_score_from_response(key: str, value: Any, *, has_process_checklists: bool) -> float:
+    if key not in GRPPO_STEP_SCORE_KEYS or not has_process_checklists:
+        return _extract_grppo_score(key, value)
+    checklist_score = _extract_checklist_score(key, value)
+    return 0.0 if checklist_score is None else checklist_score
+
+
+def _extract_checklist_score(key: str, value: Any) -> float | None:
+    if not isinstance(value, dict) or not isinstance(value.get("checks"), dict):
+        return None
+    checks = value["checks"]
+    expected_keys = GRPPO_CHECK_KEYS.get(key, ())
+    if expected_keys:
+        raw_scores = [
+            0.0 if check_key not in checks else _extract_check_value(checks[check_key])
+            for check_key in expected_keys
+        ]
+    else:
+        raw_scores = [_extract_check_value(item) for item in checks.values()]
+    scores = [check_score for check_score in raw_scores if check_score is not None]
+    if not scores:
+        return None
+    return _clamp_score(sum(scores) / len(scores))
+
+
+def _extract_flat_grppo_process_score(parsed: dict[str, Any]) -> float | None:
+    raw_scores: list[float | None] = []
+    if not _has_any_grppo_process_checklist(parsed):
+        return None
+    for key in GRPPO_STEP_SCORE_KEYS:
+        value = parsed.get(key)
+        expected_keys = GRPPO_CHECK_KEYS.get(key, ())
+        if not isinstance(value, dict) or not isinstance(value.get("checks"), dict):
+            raw_scores.extend(0.0 for _ in expected_keys)
+            continue
+        checks = value["checks"]
+        if expected_keys:
+            raw_scores.extend(
+                0.0 if check_key not in checks else _extract_check_value(checks[check_key])
+                for check_key in expected_keys
+            )
+        else:
+            raw_scores.extend(_extract_check_value(item) for item in checks.values())
+    scores = [score for score in raw_scores if score is not None]
+    if not scores:
+        return None
+    return _clamp_process_total_score(GRPPO_PROCESS_SCORE_SCALE * sum(scores) / len(scores))
+
+
+def _has_any_grppo_process_checklist(parsed: dict[str, Any]) -> bool:
+    return any(
+        isinstance(parsed.get(key), dict) and isinstance(parsed.get(key, {}).get("checks"), dict)
+        for key in GRPPO_STEP_SCORE_KEYS
+    )
+
+
+def _extract_check_value(value: Any) -> float | None:
+    if isinstance(value, dict):
+        for key in ("pass", "passed", "score", "value"):
+            if key in value:
+                return _extract_check_value(value[key])
+        return 0.0
+    if value is None:
+        return 0.0
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return _clamp_score(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "null", "none", "na", "n/a", "not_applicable", "not applicable"}:
+            return 0.0
+        if normalized in {"1", "true", "yes", "y", "pass", "passed"}:
+            return 1.0
+        if normalized in {"0", "false", "no", "n", "fail", "failed"}:
+            return 0.0
+        try:
+            return _clamp_score(float(normalized))
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
 def _extract_reason(value: Any) -> str:
     if isinstance(value, dict):
         return str(value.get("reason", "") or "").strip()
@@ -419,6 +716,14 @@ def _clamp_score(value: Any) -> float:
     except (TypeError, ValueError):
         return 0.0
     return min(max(score, 0.0), 1.0)
+
+
+def _clamp_process_total_score(value: Any) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return min(max(score, 0.0), GRPPO_PROCESS_SCORE_SCALE)
 
 
 def _string_list(value: Any) -> list[str]:

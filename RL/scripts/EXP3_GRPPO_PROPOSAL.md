@@ -86,19 +86,16 @@ The dimensions mean:
 The judge process score is:
 
 ```text
-judge_step_reward_t = mean(delta_groundedness, anchor_keyframe, semantic_alignment, state_groundedness)
+judge_step_reward_t = 2.0 * mean(all process checklist values)
 ```
 
 The GRPPO step reward also includes format reward:
 
 ```text
 step_reward_t =
-  (
-    grppo_process_weight * judge_step_reward_t
-    + grppo_format_weight * format_score_t
-    + grppo_note_frequency_weight * note_frequency_score_t
-  )
-  / (grppo_process_weight + grppo_format_weight + grppo_note_frequency_weight)
+  grppo_process_weight * judge_step_reward_t
+  + grppo_format_weight * format_score_t
+  + grppo_note_frequency_weight * note_frequency_score_t
 ```
 
 ### Answer-Aware Prompt
@@ -536,8 +533,8 @@ algorithm.adv_estimator=streamweave_stepwise_grppo
 +algorithm.grppo_filter_groups.enable=true
 +algorithm.grppo_filter_groups.min_std=0.03
 +data.streamweave.reward.grppo_process_weight=0.7
-+data.streamweave.reward.grppo_format_weight=0.25
-+data.streamweave.reward.grppo_note_frequency_weight=0.25
++data.streamweave.reward.grppo_format_weight=0.15
++data.streamweave.reward.grppo_note_frequency_weight=0.15
 +data.streamweave.reward.grppo_answer_event_mode=timeline
 +data.streamweave.reward.grppo_silence_reward_value=0.1
 +data.streamweave.reward.judge.prompt_version=streamweave_grppo_judge_v1
@@ -554,6 +551,6 @@ If needed, create a new `train_exp3_grppo.sh` instead of changing older scripts.
 4. In timeline mode, silence labels use `grppo_silence_reward_value * binarize(answer_reward)`.
 5. Forced answers in no-query/no-target cohorts are a legacy trainer postprocess path and are disabled
    for exp6.
-6. `grppo_step_reward` is the weighted combination of `grppo_judge_step_reward`,
-   `grppo_format_score`, and `grppo_note_frequency_score`; the raw judge mean remains logged as
-   `grppo_judge_step_reward`.
+6. `grppo_step_reward` is the unnormalized weighted sum of `grppo_judge_step_reward`,
+   `grppo_format_score`, and `grppo_note_frequency_score`; `grppo_judge_step_reward` is a
+   process checklist score on a 0-2 scale.

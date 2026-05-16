@@ -79,10 +79,17 @@ try:
         GRPPO_STEP_REWARD_KEY,
         GRPPO_STEP_VALID_KEY,
         GRPPO_UPDATE_VALID_KEY,
+        GRPO_TRAJSUM_ADVANTAGE_KEY,
+        GRPO_TRAJSUM_JUDGE_VALID_KEY,
+        GRPO_TRAJSUM_SCORE_KEY,
+        GRPO_TRAJSUM_TURN_REWARD_KEY,
+        GRPO_TRAJSUM_VALID_KEY,
         compute_grppo_component_advantage_values,
+        compute_trajsum_grpo_values,
     )
 except Exception:
     compute_grppo_component_advantage_values = None
+    compute_trajsum_grpo_values = None
     GRPPO_STEP_REWARD_KEY = "grppo_step_reward"
     GRPPO_ANSWER_REWARD_KEY = "grppo_answer_reward"
     GRPPO_ANSWER_CREDIT_KEY = "grppo_answer_credit"
@@ -93,6 +100,11 @@ except Exception:
     GRPPO_STEP_VALID_KEY = "grppo_step_signal_valid"
     GRPPO_ANSWER_VALID_KEY = "grppo_answer_signal_valid"
     GRPPO_UPDATE_VALID_KEY = "grppo_update_signal_valid"
+    GRPO_TRAJSUM_TURN_REWARD_KEY = "grpo_trajsum_turn_reward"
+    GRPO_TRAJSUM_SCORE_KEY = "grpo_trajsum_score"
+    GRPO_TRAJSUM_ADVANTAGE_KEY = "grpo_trajsum_advantage"
+    GRPO_TRAJSUM_VALID_KEY = "grpo_trajsum_signal_valid"
+    GRPO_TRAJSUM_JUDGE_VALID_KEY = "grpo_trajsum_judge_valid"
 
 try:
     from streamweave_rl.dapo import compute_group_filter_result, select_reward_extra_infos
@@ -212,24 +224,99 @@ def _add_metric_stats(metrics: dict[str, Any], prefix: str, values: Any) -> None
     metrics[f"{prefix}/std"] = float(np.std(arr))
 
 
+def _add_grppo_answer_condition_metrics(
+    metrics: dict[str, Any],
+    non_tensor_batch: dict[str, Any],
+    *,
+    prefix: str = "grppo",
+) -> None:
+    if "grppo_answer_supervision" not in non_tensor_batch or "grppo_has_answer" not in non_tensor_batch:
+        return
+    supervision = np.asarray(non_tensor_batch["grppo_answer_supervision"], dtype=np.float32).reshape(-1)
+    has_answer = np.asarray(non_tensor_batch["grppo_has_answer"], dtype=np.float32).reshape(-1) > 0.5
+    if supervision.size == 0 or supervision.size != has_answer.size:
+        return
+
+    answer_required = supervision == 2.0
+    silence_required = supervision == 1.0
+    answer_required_count = int(np.count_nonzero(answer_required))
+    silence_required_count = int(np.count_nonzero(silence_required))
+    total = int(supervision.size)
+    key_prefix = f"{prefix}/" if prefix else ""
+    metrics[f"{key_prefix}answer_required_rate"] = float(answer_required_count / total) if total else 0.0
+    metrics[f"{key_prefix}answer_required_missing_rate"] = (
+        float(np.count_nonzero(answer_required & ~has_answer) / answer_required_count)
+        if answer_required_count
+        else 0.0
+    )
+    metrics[f"{key_prefix}silence_required_rate"] = float(silence_required_count / total) if total else 0.0
+    metrics[f"{key_prefix}silence_violation_rate"] = (
+        float(np.count_nonzero(silence_required & has_answer) / silence_required_count)
+        if silence_required_count
+        else 0.0
+    )
+
+
+_STREAMWEAVE_TARGET_TRAJ_METRIC_ALIASES = {
+    "grppo_target_trajectory_score": "traj/target_score",
+    "grppo_target_answer_reward": "traj/target_answer",
+    "grppo_target_format_reward": "traj/target_format",
+    "grppo_target_answer_count": "traj/target_answer_count",
+}
+
+
+def _add_streamweave_target_trajectory_metrics(
+    metrics: dict[str, Any],
+    non_tensor_batch: dict[str, Any],
+    *,
+    prefix: str = "",
+) -> None:
+    for key, alias in _STREAMWEAVE_TARGET_TRAJ_METRIC_ALIASES.items():
+        if key not in non_tensor_batch:
+            continue
+        values = np.asarray(non_tensor_batch[key], dtype=object).reshape(-1)
+        indices = _first_trajectory_indices(non_tensor_batch, len(values))
+        selected_values = _select_array(values, indices)
+        _add_metric_stats(metrics, f"{prefix}streamweave/{key}", selected_values)
+        _add_metric_stats(metrics, f"{prefix}{alias}", selected_values)
+        if indices is not None:
+            metrics[f"{prefix}streamweave/num_trajectories"] = int(len(indices))
+            metrics[f"{prefix}traj/num_trajectories"] = int(len(indices))
+
+
+def _is_streamweave_target_trajectory_metric(key: str) -> bool:
+    if key in {"streamweave/num_trajectories", "traj/num_trajectories"}:
+        return True
+    target_prefixes = tuple(
+        [f"streamweave/{name}/" for name in _STREAMWEAVE_TARGET_TRAJ_METRIC_ALIASES]
+        + [f"{alias}/" for alias in _STREAMWEAVE_TARGET_TRAJ_METRIC_ALIASES.values()]
+    )
+    return key.startswith(target_prefixes)
+
+
+def _copy_streamweave_target_trajectory_metrics(metrics: dict[str, Any], *, prefix: str) -> None:
+    for key, value in list(metrics.items()):
+        if _is_streamweave_target_trajectory_metric(key):
+            metrics[f"{prefix}{key}"] = value
+
+
+def _promote_prefilter_target_trajectory_metrics(metrics: dict[str, Any]) -> None:
+    prefix = "prefilter/"
+    for key, value in list(metrics.items()):
+        if not key.startswith(prefix):
+            continue
+        raw_key = key[len(prefix) :]
+        if _is_streamweave_target_trajectory_metric(raw_key):
+            metrics[raw_key] = value
+
+
 def _compute_streamweave_stepwise_metrics(batch: DataProto) -> dict[str, Any]:
     metrics: dict[str, Any] = {}
     non_tensor_batch = batch.non_tensor_batch
-    traj_metric_aliases = {
-        "trajectory_score": "traj/score",
-        "success_score": "traj/success",
-        "grppo_target_trajectory_score": "traj/target_score",
-        "grppo_target_answer_reward": "traj/target_answer",
-        "grppo_target_format_reward": "traj/target_format",
-    }
+    _add_streamweave_target_trajectory_metrics(metrics, non_tensor_batch)
+    traj_metric_aliases = {"trajectory_score": "traj/score", "success_score": "traj/success"}
 
-    for key in (
-        "trajectory_score",
-        "success_score",
-        "grppo_target_trajectory_score",
-        "grppo_target_answer_reward",
-        "grppo_target_format_reward",
-    ):
+    for key in ("trajectory_score", "success_score"):
         if key not in non_tensor_batch:
             continue
         values = np.asarray(non_tensor_batch[key], dtype=object).reshape(-1)
@@ -263,6 +350,11 @@ def _compute_streamweave_stepwise_metrics(batch: DataProto) -> dict[str, Any]:
         GRPPO_STEP_VALID_KEY,
         GRPPO_ANSWER_VALID_KEY,
         GRPPO_UPDATE_VALID_KEY,
+        GRPO_TRAJSUM_TURN_REWARD_KEY,
+        GRPO_TRAJSUM_SCORE_KEY,
+        GRPO_TRAJSUM_ADVANTAGE_KEY,
+        GRPO_TRAJSUM_VALID_KEY,
+        GRPO_TRAJSUM_JUDGE_VALID_KEY,
         "grppo_answer_event",
         "grppo_answer_supervision",
         "grppo_answer_reward_scale",
@@ -277,6 +369,8 @@ def _compute_streamweave_stepwise_metrics(batch: DataProto) -> dict[str, Any]:
     ):
         if key in non_tensor_batch:
             _add_metric_stats(metrics, f"streamweave/{key}", non_tensor_batch[key])
+
+    _add_grppo_answer_condition_metrics(metrics, non_tensor_batch, prefix="grppo")
 
     if "judge_status" in non_tensor_batch:
         statuses = [str(item) for item in np.asarray(non_tensor_batch["judge_status"], dtype=object).reshape(-1)]
@@ -854,9 +948,23 @@ class RayPPOTrainer:
         if not self._stepwise_rollout_enabled():
             return batch, reward_extra_infos_dict, metrics
 
+        adv_estimator = str(self.config.algorithm.get("adv_estimator", ""))
+        if adv_estimator == "streamweave_stepwise_trajsum_grpo":
+            if compute_trajsum_grpo_values is None:
+                raise RuntimeError("streamweave_stepwise_trajsum_grpo is configured, but trajsum helpers are unavailable")
+            trajsum_values = compute_trajsum_grpo_values(batch.non_tensor_batch, self.config.algorithm)
+            for key, values in trajsum_values.items():
+                values = np.asarray(values, dtype=np.float32)
+                batch.non_tensor_batch[key] = values
+                reward_extra_infos_dict[key] = [float(item) for item in values.tolist()]
+
         filter_cfg = self.config.algorithm.get("filter_groups", None)
         enabled = _as_bool(filter_cfg.get("enable", False)) if filter_cfg is not None else False
-        metric = filter_cfg.get("metric", "trajectory_score") if filter_cfg is not None else "trajectory_score"
+        metric = filter_cfg.get("metric", None) if filter_cfg is not None else None
+        if adv_estimator == "streamweave_stepwise_trajsum_grpo" and metric in (None, "", "trajectory_score"):
+            metric = GRPO_TRAJSUM_SCORE_KEY
+        if metric in (None, ""):
+            metric = "trajectory_score"
         min_std = float(filter_cfg.get("min_std", 1e-6)) if filter_cfg is not None else 1e-6
 
         if compute_group_filter_result is None:
@@ -884,10 +992,25 @@ class RayPPOTrainer:
         if result.valid_groups == 0:
             metrics["traj/dapo_all_groups_invalid"] = 1.0
             return batch, reward_extra_infos_dict, metrics
-        if result.valid_groups == result.total_groups:
-            return batch, reward_extra_infos_dict, metrics
 
         keep_mask = result.keep_mask
+        if adv_estimator == "streamweave_stepwise_trajsum_grpo" and GRPO_TRAJSUM_VALID_KEY in batch.non_tensor_batch:
+            trajsum_valid = np.asarray(batch.non_tensor_batch[GRPO_TRAJSUM_VALID_KEY], dtype=np.float32).reshape(-1)
+            if trajsum_valid.shape[0] == keep_mask.shape[0]:
+                keep_mask = np.logical_and(keep_mask, trajsum_valid > 0.5)
+                signal_kept_rows = int(np.count_nonzero(keep_mask))
+                metrics["trajsum/dapo_signal_kept_rows"] = float(signal_kept_rows)
+                metrics["trajsum/dapo_signal_kept_row_ratio"] = (
+                    float(signal_kept_rows / len(keep_mask)) if len(keep_mask) else 0.0
+                )
+        final_kept_rows = int(np.count_nonzero(keep_mask))
+        metrics["traj/dapo_kept_rows"] = float(final_kept_rows)
+        metrics["traj/dapo_kept_row_ratio"] = float(final_kept_rows / len(keep_mask)) if len(keep_mask) else 0.0
+        if not np.any(keep_mask):
+            metrics["traj/dapo_all_groups_invalid"] = 1.0
+            return batch, reward_extra_infos_dict, metrics
+        if np.all(keep_mask):
+            return batch, reward_extra_infos_dict, metrics
         filtered_batch = batch.select_idxs(keep_mask)
         _refresh_rollout_meta(filtered_batch)
         filtered_reward_extra_infos = (
@@ -897,7 +1020,7 @@ class RayPPOTrainer:
         )
         metrics["traj/dapo_filter_applied"] = 1.0
         metrics["traj/dapo_filtered_groups"] = float(result.total_groups - result.valid_groups)
-        metrics["traj/dapo_filtered_rows"] = float(result.total_rows - result.kept_rows)
+        metrics["traj/dapo_filtered_rows"] = float(result.total_rows - final_kept_rows)
         return filtered_batch, filtered_reward_extra_infos, metrics
 
     def _apply_grppo_forced_answer_rewards(
@@ -1080,10 +1203,12 @@ class RayPPOTrainer:
             "grppo_target_trajectory_score",
             "grppo_target_answer_reward",
             "grppo_target_format_reward",
+            "grppo_target_answer_count",
             "grppo_target_ground_truth",
             "final_answer",
             "judge_status",
             "judge_error",
+            "judge_raw_response_preview",
             "grppo_delta_groundedness",
             "grppo_anchor_keyframe",
             "grppo_semantic_alignment",
@@ -1164,14 +1289,38 @@ class RayPPOTrainer:
             values = np.asarray(values, dtype=np.float32)
             batch.non_tensor_batch[key] = values
             reward_extra_infos_dict[key] = [float(item) for item in values.tolist()]
+        _add_streamweave_target_trajectory_metrics(metrics, batch.non_tensor_batch, prefix="prefilter/")
+        _add_grppo_answer_condition_metrics(metrics, batch.non_tensor_batch, prefix="grppo/prefilter")
         self._maybe_dump_streamweave_grppo_debug(batch, stage="prefilter")
 
         groups = np.asarray(batch.non_tensor_batch.get("group_idx", []), dtype=object).reshape(-1)
+        trajs = np.asarray(batch.non_tensor_batch.get("traj_idx", []), dtype=object).reshape(-1)
         turns = np.asarray(batch.non_tensor_batch.get("turn_idx", []), dtype=object).reshape(-1)
         step_rewards = np.asarray(batch.non_tensor_batch[GRPPO_STEP_REWARD_KEY], dtype=np.float32).reshape(-1)
         answer_credit = np.asarray(batch.non_tensor_batch[GRPPO_ANSWER_CREDIT_KEY], dtype=np.float32).reshape(-1)
-        if not (len(groups) == len(turns) == len(step_rewards) == len(answer_credit)):
+        if not (len(groups) == len(trajs) == len(turns) == len(step_rewards) == len(answer_credit)):
             raise ValueError("GRPPO filter requires row-aligned group_idx, turn_idx, and GRPPO reward fields")
+        if "judge_status" in batch.non_tensor_batch:
+            statuses = np.asarray(batch.non_tensor_batch["judge_status"], dtype=object).reshape(-1)
+            if len(statuses) == len(step_rewards):
+                judge_valid = np.asarray(
+                    [str(status).strip().lower() not in {"error", "aborted"} for status in statuses],
+                    dtype=bool,
+                )
+            else:
+                judge_valid = np.ones(len(step_rewards), dtype=bool)
+        else:
+            judge_valid = np.ones(len(step_rewards), dtype=bool)
+        answer_credit_valid = judge_valid.copy()
+        traj_to_rows: dict[tuple[str, str], list[int]] = defaultdict(list)
+        for idx, (group, traj) in enumerate(zip(groups, trajs, strict=True)):
+            traj_to_rows[(str(group), str(traj))].append(idx)
+        for rows in traj_to_rows.values():
+            valid_future = True
+            for idx in sorted(rows, key=lambda row: int(turns[row]), reverse=True):
+                if not bool(judge_valid[idx]):
+                    valid_future = False
+                answer_credit_valid[idx] = valid_future
 
         filter_cfg = self.config.algorithm.get("grppo_filter_groups", None)
         enabled = _as_bool(filter_cfg.get("enable", False)) if filter_cfg is not None else False
@@ -1196,8 +1345,10 @@ class RayPPOTrainer:
         for key, rows in cohort_to_rows.items():
             del key
             row_idx = np.asarray(rows, dtype=np.int64)
-            step_values = step_rewards[row_idx]
-            answer_values = answer_credit[row_idx]
+            step_idx = row_idx[judge_valid[row_idx]]
+            answer_idx = row_idx[answer_credit_valid[row_idx]]
+            step_values = step_rewards[step_idx]
+            answer_values = answer_credit[answer_idx]
             step_mean = float(step_values.mean()) if step_values.size else 0.0
             step_std = float(step_values.std(ddof=1)) if step_values.size > 1 else 0.0
             answer_mean = float(answer_values.mean()) if answer_values.size else 0.0
@@ -1216,7 +1367,10 @@ class RayPPOTrainer:
                 both_valid_cohorts += 1
             if step_ok or answer_ok:
                 valid_cohorts += 1
-                keep_mask[row_idx] = True
+                keep_mask[row_idx] = np.logical_or(
+                    np.logical_and(step_ok, judge_valid[row_idx]),
+                    np.logical_and(answer_ok, answer_credit_valid[row_idx]),
+                )
 
         total_cohorts = len(cohort_to_rows)
         kept_rows = int(keep_mask.sum())
@@ -2523,7 +2677,12 @@ class RayPPOTrainer:
                 # collect metrics
                 metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
                 if self._stepwise_rollout_enabled():
-                    metrics.update(_compute_streamweave_stepwise_metrics(batch))
+                    stepwise_metrics = _compute_streamweave_stepwise_metrics(batch)
+                    if str(self.config.algorithm.get("adv_estimator", "")) == "streamweave_stepwise_grppo":
+                        _copy_streamweave_target_trajectory_metrics(stepwise_metrics, prefix="postfilter/")
+                    metrics.update(stepwise_metrics)
+                    if str(self.config.algorithm.get("adv_estimator", "")) == "streamweave_stepwise_grppo":
+                        _promote_prefilter_target_trajectory_metrics(metrics)
                 # GDPO per-component reward metrics
                 gdpo_reward_keys = self.config.algorithm.get("gdpo_reward_keys", None)
                 if gdpo_reward_keys and self.config.algorithm.adv_estimator in ("gdpo", AdvantageEstimator.GDPO):

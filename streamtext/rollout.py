@@ -87,6 +87,7 @@ class StreamTextRunner:
             sample_fps=self.runtime.sample_fps,
             frame_id_base=self.frame_store.config.frame_id_base,
         )
+        frames = _drop_frames_before_timestamp(frames, sample.metadata.get("start_timestamp"))
         env = StreamTextEnv(
             prompt_profile=self.prompt_profile,
             memory_window=self.memory_config.window_seconds,
@@ -110,7 +111,7 @@ class StreamTextRunner:
                 continue
             for frame in group:
                 for query in query_by_frame.get(frame.global_index, []):
-                    env.add_question(QARecord(timestamp=query.timestamp, text=query.text, role="q"))
+                    env.add_question(QARecord(timestamp=query.timestamp, text=query.text, role=query.role))
 
             step_end = group[-1].end_time
             env.evict_memory(step_end)
@@ -266,6 +267,16 @@ def _truncate_frames_at_timestamp(
         max_frame_id=max_frame_id,
     )
     return [frame for frame in frames if frame.global_index <= target_frame_id]
+
+
+def _drop_frames_before_timestamp(frames: list[FrameRef], timestamp: object) -> list[FrameRef]:
+    if timestamp is None or not frames:
+        return frames
+    try:
+        start_timestamp = float(timestamp)
+    except (TypeError, ValueError):
+        return frames
+    return [frame for frame in frames if frame.end_time > start_timestamp]
 
 
 def _query_events_by_frame(

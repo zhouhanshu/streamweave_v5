@@ -130,7 +130,7 @@ fi
 ulimit -n 65535
 
 if [[ ! -f "${TRAIN_FILE}" || ! -f "${VAL_FILE}" ]]; then
-    echo "Missing exp7 smoke data file:" >&2
+    echo "Missing ${RUN_NAME} data file:" >&2
     echo "  train=${TRAIN_FILE}" >&2
     echo "  val=${VAL_FILE}" >&2
     exit 2
@@ -165,12 +165,12 @@ echo "StreamWeave model source=${SOURCE_MODEL_PATH}"
 echo "StreamWeave model path=${MODEL_PATH}"
 echo "StreamWeave train file=${TRAIN_FILE}"
 echo "StreamWeave validation file=${VAL_FILE}"
-echo "StreamWeave exp7_smoke groups=${TRAIN_BATCH_SIZE} traj_per_group=${ROLLOUT_N} real_batch=$((TRAIN_BATCH_SIZE * ROLLOUT_N)) total_training_steps=${TOTAL_TRAINING_STEPS}"
-echo "StreamWeave exp7_smoke grppo reward process_weight=${GRPPO_PROCESS_WEIGHT} format_weight=${GRPPO_FORMAT_WEIGHT} note_frequency_weight=${GRPPO_NOTE_FREQUENCY_WEIGHT}"
-echo "StreamWeave exp7_smoke grppo answer_decay=${GRPPO_ANSWER_DECAY} step_weight=${GRPPO_STEP_WEIGHT} answer_weight=${GRPPO_ANSWER_WEIGHT} norm_by_std=${GRPPO_NORM_BY_STD}"
-echo "StreamWeave exp7_smoke grppo answer_event_mode=${GRPPO_ANSWER_EVENT_MODE} silence_reward=${GRPPO_SILENCE_REWARD} silence_reward_value=${GRPPO_SILENCE_REWARD_VALUE}"
-echo "StreamWeave exp7_smoke grppo step_filter enable=${GRPPO_FILTER_GROUPS_ENABLE} min_std=${GRPPO_FILTER_MIN_STD} advantage_min_std=${GRPPO_MIN_STD}"
-echo "StreamWeave exp7_smoke actor_kl use=${ACTOR_USE_KL_LOSS} coef=${ACTOR_KL_LOSS_COEF} type=${ACTOR_KL_LOSS_TYPE}"
+echo "StreamWeave ${RUN_NAME} groups=${TRAIN_BATCH_SIZE} traj_per_group=${ROLLOUT_N} real_batch=$((TRAIN_BATCH_SIZE * ROLLOUT_N)) total_training_steps=${TOTAL_TRAINING_STEPS}"
+echo "StreamWeave ${RUN_NAME} grppo reward process_weight=${GRPPO_PROCESS_WEIGHT} format_weight=${GRPPO_FORMAT_WEIGHT} note_frequency_weight=${GRPPO_NOTE_FREQUENCY_WEIGHT}"
+echo "StreamWeave ${RUN_NAME} grppo answer_decay=${GRPPO_ANSWER_DECAY} step_weight=${GRPPO_STEP_WEIGHT} answer_weight=${GRPPO_ANSWER_WEIGHT} norm_by_std=${GRPPO_NORM_BY_STD}"
+echo "StreamWeave ${RUN_NAME} grppo answer_event_mode=${GRPPO_ANSWER_EVENT_MODE} silence_reward=${GRPPO_SILENCE_REWARD} silence_reward_value=${GRPPO_SILENCE_REWARD_VALUE}"
+echo "StreamWeave ${RUN_NAME} grppo step_filter enable=${GRPPO_FILTER_GROUPS_ENABLE} min_std=${GRPPO_FILTER_MIN_STD} advantage_min_std=${GRPPO_MIN_STD}"
+echo "StreamWeave ${RUN_NAME} actor_kl use=${ACTOR_USE_KL_LOSS} coef=${ACTOR_KL_LOSS_COEF} type=${ACTOR_KL_LOSS_TYPE}"
 echo "StreamWeave trace sample_every=${TRACE_SAMPLE_EVERY} traj_index=${TRACE_TRAJ_INDEX} debug_groups=${DEBUG_GROUPS} debug_trajs=${DEBUG_TRAJS}"
 
 cd "${RL_DIR}"

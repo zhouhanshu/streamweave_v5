@@ -88,6 +88,7 @@ class StreamWeaveAgentLoop(AgentLoopBase):
                     "grppo_target_format_reward": float(info.get("grppo_target_format_reward", 0.0)),
                     "judge_status": str(reward_info_dict.get("judge_status", "disabled")),
                     "judge_error": str(reward_info_dict.get("judge_error", "") or ""),
+                    "judge_raw_response_preview": str(reward_info_dict.get("judge_raw_response_preview", "") or ""),
                     "reward_info": reward_info_dict,
                 }
                 grppo_fields = _grppo_extra_fields(info)

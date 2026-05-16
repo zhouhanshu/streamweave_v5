@@ -30,7 +30,6 @@ from .rewards import (
     compute_grppo_target_trajectory_reward,
     compute_note_frequency_score,
     compute_step_reward,
-    compute_success_score,
     compute_trajectory_reward,
     judge_blocked_by_note_frequency,
     reward_config_from_mapping,
@@ -122,6 +121,7 @@ class StreamWeaveRLEnv:
         self.step_rewards: list[StepRewardResult] = []
         self.records: list[StepRecord] = []
         self.trajectory_reward: TrajectoryRewardResult | None = None
+        self.target_answer_scores: list[float] = []
         self.no_note_streak = 0
         self.judge = StepJudge(self.settings.rl_reward.judge)
 
@@ -191,6 +191,7 @@ class StreamWeaveRLEnv:
         self.step_rewards = []
         self.records = []
         self.trajectory_reward = None
+        self.target_answer_scores = []
         self.no_note_streak = 0
         self.current_query_event = None
         self.current_answer_target = None
@@ -215,10 +216,17 @@ class StreamWeaveRLEnv:
         grppo_has_answer = bool(raw_action.answer.strip())
         grppo_has_query = bool(self.current_query_event is not None)
         grppo_has_answer_target = bool(self.current_answer_target is not None)
-        grppo_supervision = (
-            self.current_answer_supervision
-            if _uses_timeline_answer_supervision(self.settings.rl_reward)
-            else _legacy_grppo_answer_supervision(
+        if _uses_timeline_answer_supervision(self.settings.rl_reward):
+            grppo_supervision = _timeline_grppo_answer_supervision(
+                grppo_enabled=self.grppo_enabled,
+                current_query_event=self.current_query_event,
+                current_answer_target=self.current_answer_target,
+                latest_query_event=self.latest_query_event,
+                has_answer=grppo_has_answer,
+            )
+            self.current_answer_supervision = grppo_supervision
+        else:
+            grppo_supervision = _legacy_grppo_answer_supervision(
                 grppo_enabled=self.grppo_enabled,
                 cfg=self.settings.rl_reward,
                 label=self.current_answer_label,
@@ -226,7 +234,6 @@ class StreamWeaveRLEnv:
                 has_answer_target=grppo_has_answer_target,
                 has_answer=grppo_has_answer,
             )
-        )
         grppo_label = grppo_supervision.label
         grppo_answer_event = grppo_supervision.enabled
         if grppo_answer_event and not quality.parser_ok:
@@ -242,6 +249,17 @@ class StreamWeaveRLEnv:
         else:
             grppo_answer_correctness = 0.0
             grppo_label_status = grppo_supervision.status
+        if self.current_answer_target is not None and _grppo_label_requires_answer(self.current_answer_target):
+            if not quality.parser_ok:
+                target_step_answer_score = 0.0
+            else:
+                target_step_answer_score, _ = _score_current_step_answer(
+                    answer=raw_action.answer,
+                    label=self.current_answer_target,
+                    metadata=self.sample.metadata,
+                    cfg=self.settings.rl_reward,
+                )
+            self.target_answer_scores.append(float(target_step_answer_score))
         note_frequency_result = compute_note_frequency_score(
             action=raw_action,
             previous_no_note_streak=self.no_note_streak,
@@ -306,17 +324,11 @@ class StreamWeaveRLEnv:
             )
             target_label = _trajectory_answer_label(annotations=self.query_annotations)
             target_ground_truth = _label_ground_truth(target_label) if target_label is not None else self.ground_truth
-            target_metadata = {**self.sample.metadata}
-            if target_label is not None:
-                target_metadata.update(target_label)
-            target_metadata["ground_truth"] = target_ground_truth
-            target_answer_reward = compute_success_score(
-                final_answer,
-                target_ground_truth,
-                mode=self.settings.rl_reward.success_mode,
-                scorer=self.settings.rl_reward.success_scorer,
-                metadata=target_metadata,
-                score_scale=self.settings.rl_reward.score_scale,
+            target_answer_count = len(self.target_answer_scores)
+            target_answer_reward = (
+                sum(self.target_answer_scores) / target_answer_count
+                if target_answer_count > 0
+                else 0.0
             )
             target_trajectory_score = compute_grppo_target_trajectory_reward(
                 answer_score=target_answer_reward,
@@ -335,6 +347,7 @@ class StreamWeaveRLEnv:
                 "grppo_target_trajectory_score": target_trajectory_score,
                 "grppo_target_answer_reward": target_answer_reward,
                 "grppo_target_format_reward": self.trajectory_reward.format_mean,
+                "grppo_target_answer_count": float(target_answer_count),
                 "grppo_target_ground_truth": "" if target_ground_truth is None else str(target_ground_truth),
             }
 
@@ -342,7 +355,11 @@ class StreamWeaveRLEnv:
         if self.grppo_enabled:
             judge_scores = judge_result.scores if isinstance(judge_result, JudgeResult) else {}
             grppo_dims = {key: float(judge_scores.get(key, 0.0) or 0.0) for key in GRPPO_STEP_SCORE_KEYS}
-            grppo_judge_step_reward = sum(grppo_dims.values()) / max(len(grppo_dims), 1)
+            grppo_judge_step_reward = (
+                float(judge_result.score)
+                if isinstance(judge_result, JudgeResult)
+                else sum(grppo_dims.values()) / max(len(grppo_dims), 1)
+            )
             grppo_step_reward = compute_grppo_step_reward(
                 process_score=grppo_judge_step_reward,
                 format_score=reward_result.format_score,
@@ -456,6 +473,7 @@ class StreamWeaveRLEnv:
             current_query_event=self.current_query_event,
             current_answer_target=self.current_answer_target,
             latest_query_event=self.latest_query_event,
+            has_answer=False,
         )
         self.current_answer_label = (
             self.current_answer_supervision.label
@@ -629,6 +647,7 @@ def _timeline_grppo_answer_supervision(
     current_query_event: dict[str, Any] | None,
     current_answer_target: dict[str, Any] | None,
     latest_query_event: dict[str, Any] | None,
+    has_answer: bool = False,
 ) -> GrppoAnswerSupervision:
     if not grppo_enabled:
         return GrppoAnswerSupervision()
@@ -640,12 +659,19 @@ def _timeline_grppo_answer_supervision(
             label=_silence_supervision_label(current_answer_target),
             status="answer_target_without_target",
         )
-    query_label = current_query_event or latest_query_event
-    if query_label is not None:
+    if current_query_event is not None:
+        if _grppo_label_requires_answer(current_query_event):
+            return GrppoAnswerSupervision(kind="answer", label=current_query_event, status="query_answer")
         return GrppoAnswerSupervision(
             kind="silence",
-            label=_silence_supervision_label(query_label),
-            status="query_timeline_silence",
+            label=_silence_supervision_label(current_query_event),
+            status="query_silence",
+        )
+    if has_answer:
+        return GrppoAnswerSupervision(
+            kind="silence",
+            label=_unprompted_answer_silence_label(latest_query_event),
+            status="unprompted_answer",
         )
     return GrppoAnswerSupervision()
 
@@ -687,6 +713,12 @@ def _silence_supervision_label(label: Mapping[str, Any]) -> dict[str, Any]:
     out["event_type"] = "answer_silence"
     out["should_answer"] = False
     return out
+
+
+def _unprompted_answer_silence_label(latest_query_event: Mapping[str, Any] | None) -> dict[str, Any]:
+    if latest_query_event is not None:
+        return _silence_supervision_label(latest_query_event)
+    return {"event_type": "answer_silence", "should_answer": False}
 
 
 def _score_current_step_answer(
@@ -734,18 +766,23 @@ def _final_grppo_answer_reward(
     silence_reward_value: float = 1.0,
 ) -> float:
     """Convert the judge answer score into the scalar consumed by GRPPO."""
-    del label_status
     kind = str(supervision_kind or "none")
     if kind == "none":
+        return 0.0
+    if str(label_status or "") == "parser_invalid":
         return 0.0
     binary_score = 1.0 if float(raw_score) >= 0.5 else 0.0
     if kind == "silence":
         if not _bool_from_value(silence_reward):
             return 0.0
+        if has_answer:
+            return 0.0
         if use_llm_for_silence:
             return float(silence_reward_value) * binary_score
-        return 0.0 if has_answer else float(silence_reward_value)
+        return float(silence_reward_value)
     if kind == "answer":
+        if not has_answer:
+            return 0.0
         return binary_score
     raise ValueError(f"Unknown GRPPO answer supervision kind: {supervision_kind}")
 

@@ -10,12 +10,13 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parent
+RL_DIR = "0516data/rl"
 
 JOBS = (
-    ("CogStream/rl_0514.jsonl", "CogStream/rl_0514_normalized.jsonl"),
-    ("Streamo-Instruct-465K/rl_0514_unable.jsonl", "Streamo-Instruct-465K/rl_0514_unable_normalized.jsonl"),
-    ("Streamo-Instruct-465K/rl_0514_one.jsonl", "Streamo-Instruct-465K/rl_0514_one_normalized.jsonl"),
-    ("Streamo-Instruct-465K/rl_0514_multi.jsonl", "Streamo-Instruct-465K/rl_0514_multi_normalized.jsonl"),
+    ("CogStream/rl_0514.jsonl", f"{RL_DIR}/rl_0514_normalized.jsonl"),
+    ("Streamo-Instruct-465K/rl_0514_unable.jsonl", f"{RL_DIR}/rl_0514_unable_normalized.jsonl"),
+    ("Streamo-Instruct-465K/rl_0514_one.jsonl", f"{RL_DIR}/rl_0514_one_normalized.jsonl"),
+    ("Streamo-Instruct-465K/rl_0514_multi.jsonl", f"{RL_DIR}/rl_0514_multi_normalized.jsonl"),
 )
 
 TOP_KEYS = {

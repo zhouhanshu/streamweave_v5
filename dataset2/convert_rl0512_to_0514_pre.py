@@ -11,8 +11,9 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parent
+RL_DIR = ROOT / "0516data" / "rl"
 DEFAULT_INPUT = ROOT / "rl_0512.jsonl"
-DEFAULT_OUTPUT = ROOT / "rl_0514_pre.jsonl"
+DEFAULT_OUTPUT = RL_DIR / "rl_0514_pre.jsonl"
 
 TOP_KEYS = {
     "dataset",

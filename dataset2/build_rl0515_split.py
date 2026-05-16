@@ -12,39 +12,40 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_TRAIN_OUTPUT = ROOT / "rl_0515_train.jsonl"
-DEFAULT_VAL_OUTPUT = ROOT / "rl_0515_val.jsonl"
-DEFAULT_SUMMARY_OUTPUT = ROOT / "rl_0515_split.summary.json"
+RL_DIR = ROOT / "0516data" / "rl"
+DEFAULT_TRAIN_OUTPUT = RL_DIR / "rl_0515_train.jsonl"
+DEFAULT_VAL_OUTPUT = RL_DIR / "rl_0515_val.jsonl"
+DEFAULT_SUMMARY_OUTPUT = RL_DIR / "rl_0515_split.summary.json"
 RANDOM_SEED = 511
 
 SOURCES = (
     {
         "name": "pre",
-        "path": "rl_0514_pre.jsonl",
+        "path": "0516data/rl/rl_0514_pre.jsonl",
         "train": 800,
         "val": 20,
     },
     {
         "name": "cogstream",
-        "path": "CogStream/rl_0514_normalized.jsonl",
+        "path": "0516data/rl/rl_0514_normalized.jsonl",
         "train": 1000,
         "val": 30,
     },
     {
         "name": "streamo_unable",
-        "path": "Streamo-Instruct-465K/rl_0514_unable_normalized.jsonl",
+        "path": "0516data/rl/rl_0514_unable_normalized.jsonl",
         "train": 300,
         "val": 15,
     },
     {
         "name": "streamo_one",
-        "path": "Streamo-Instruct-465K/rl_0514_one_normalized.jsonl",
+        "path": "0516data/rl/rl_0514_one_normalized.jsonl",
         "train": 220,
         "val": 15,
     },
     {
         "name": "streamo_multi",
-        "path": "Streamo-Instruct-465K/rl_0514_multi_normalized.jsonl",
+        "path": "0516data/rl/rl_0514_multi_normalized.jsonl",
         "train": 280,
         "val": 20,
     },

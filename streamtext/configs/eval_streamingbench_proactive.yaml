@@ -1,0 +1,64 @@
+benchmark: streamingbench
+policy: streamtext
+result_output: outputs/streamtext_streamingbench_proactive_debug/results.jsonl
+
+prompt:
+  profile: text_memory_eval
+
+postprocess:
+  mode: eval_repair
+
+reward:
+  enable_format_reward: true
+  enable_timing_reward: true
+  enable_open_tail_reward: false
+
+memory:
+  window_seconds: 120.0
+
+runtime:
+  sample_fps: 1.0
+  frames_per_step: 5
+  max_frames: 0
+  max_steps: 0
+  resolution: 768
+
+dataset:
+  dataset_root: dataset
+  dataset_name: streamingbench
+  video_root: dataset/streamingbench/source_videos
+  frame_id_base: 0
+  image_ext: jpg
+  jpeg_quality: 95
+  overwrite_frames: false
+
+backend:
+  backend: mock
+  model: mock
+  base_url: http://127.0.0.1:8000/v1
+  api_key_env: OPENAI_API_KEY
+  max_tokens: 1024
+  temperature: 0.0
+  timeout_seconds: 120.0
+  image_quality: 85
+  max_retries: 2
+  retry_backoff_seconds: 1.0
+  retry_backoff_multiplier: 2.0
+
+trace:
+  output_root: outputs/streamtext_streamingbench_proactive_debug/traces
+  experiment_name: ""
+  write_jsonl: true
+
+benchmark_args:
+  anno_dir: /mmu_mllm_hdd/zhouhanshu/test/StreamingBench/StreamingBench/StreamingBench/src/data
+  video_dir: dataset/streamingbench/source_videos
+  split: proactive
+  limit: 0
+
+batch:
+  workers: 1
+  endpoints: []
+  limit: 0
+  output: outputs/streamtext_streamingbench_proactive_debug/results.jsonl
+  worker_log_dir: outputs/streamtext_streamingbench_proactive_debug/worker_logs

@@ -34,6 +34,13 @@ class GrppoJudgePromptContext:
     answer_correctness: float | None
 
 
+@dataclass(slots=True)
+class GrppoAnswerJudgePromptContext:
+    raw_output: str
+    quality: QualityReport
+    query_label: dict[str, Any] | None
+
+
 LEGACY_PROCESS_RUBRIC = """\
 Scoring dimensions, each from 0.0 to 1.0:
 
@@ -93,65 +100,58 @@ Return JSON only:
 
 
 GRPPO_PROCESS_RUBRIC = """\
-1. delta_groundedness
-Evaluate whether <delta> is a concise, faithful, and useful text memory of observable video changes.
-It should describe the correct time span from the previous anchor to the next anchor, or to the end of
-the current window. If previous Memory ends with a delta, the current delta should merge and rewrite
-that old delta instead of merely repeating it or appending a disconnected continuation. It should preserve
-key observable state needed for future QA, but must not invent details or import facts from the question,
-answer, answer options, or QA History.
-- 1.0: Concise, faithful, correctly scoped to the interval, captures the main observable changes, preserves
-  useful state for future QA, and properly merges any unfinished previous delta.
-- 0.7: Mostly faithful and useful, but slightly vague, slightly long, missing minor changes, or only
-  partially effective at merging the previous delta.
-- 0.4: Generic, overlong, under-informative, partially off-interval, weakly grounded, or misses important
-  observable changes.
-- 0.0: Hallucinates, contradicts frames or Memory, describes the wrong interval, copies question/options/QA
-  content as visual fact, or is unusable as memory.
+For each process dimension, fill every listed check with 1, 0.5, or 0:
+- 1 means the check passes.
+- 0.5 means the check is neutral or partially applicable only where explicitly allowed below.
+- 0 means the check fails.
+- Do not use null.
+Set the dimension score to the mean of all listed checks. Reflect severe failures by failing the
+relevant checks; do not hide them only in caps_applied. Include every listed check for each dimension;
+omitting a listed check is treated as a failed check.
 
-2. anchor_keyframe
-Evaluate whether <anchor> preserves the right visual evidence from the current window. Important anchors
-include query-relevant evidence, major object/person/state changes, scene/camera/workspace changes, event
-boundaries, or visual details that a text delta cannot reliably preserve. At most one anchor should be
-selected in one step. It is acceptable to select no anchor when the current window has no meaningful new
-visual evidence. Penalize missing an anchor when the current change is important, when the delta span is
-long, or when visual evidence cannot be safely reduced to text.
-- 1.0: Selects exactly the right important anchor when needed, avoids duplicates, and does not save
-  unimportant frames; or correctly selects no anchor when there is no useful new visual evidence.
-- 0.7: Relevant anchor choice, but misses a moderately useful anchor, chooses a suboptimal time, or saves
-  a mildly redundant frame.
-- 0.4: Weakly relevant, redundant, poorly timed, loosely useful, or omits a useful but not critical anchor.
-- 0.0: Misses a clearly important anchor, selects irrelevant frames, emits more than one anchor in this
-  step, duplicates existing visual evidence, or uses an invalid/unhelpful anchor.
-Special first-window rule: if the current frame window spans exactly t="0.0-5.0" or "0-5",
-anchor_keyframe may be 1.0 only when the output contains exactly one anchor with t="0.0-1.0" or "0-1".
-For that first window, anchor_keyframe must be 0.0 if the anchor is absent, duplicated, or uses any other
-timing.
+1. delta_groundedness checks
+- delta_captures_action_progress: <delta> records the main observable actions, progress, starts, stops,
+  completions, or phase changes in the frames between the previous visual anchor and the next visual
+  anchor, or the current window end if there is no next anchor.
+- delta_captures_state_or_location_changes: when visible, <delta> preserves important object/person
+  state, location, layout, or cumulative-progress changes that are not already preserved by the
+  surrounding visual anchors.
+- delta_preserves_query_relevant_details: <delta> keeps textual details that may matter for current or
+  future QA and can be safely represented in text.
+- delta_no_visual_hallucination: <delta> does not invent unsupported objects, attributes, actions, counts,
+  relations, causes, or outcomes.
+- delta_not_polluted_by_qa: <delta> does not treat question text, answer choices, prior answers, or QA
+  History as observed video facts.
 
-3. semantic_alignment
-Evaluate whether the resulting visual-text memory is aligned with the current frames, frame order, anchor
-times, delta intervals, and existing Memory. The anchor/delta sequence should form a coherent, time-ordered
-memory update whose text and visual evidence support each other.
-- 1.0: Anchor times, delta intervals, frame order, described content, and existing Memory all align.
-- 0.7: Minor omissions or mild ambiguity, but no material contradiction and temporal order remains clear.
-- 0.4: Partial mismatch between text and images, weak temporal ordering, unclear grounding, or poor
-  coherence with existing Memory.
-- 0.0: Clear contradiction, wrong event order, anchor/delta mismatch, text not grounded in images, or a
-  memory update that breaks temporal coherence.
+2. anchor_keyframe checks
+- anchor_count_valid: the step emits at most one <anchor>.
+- anchor_time_and_body_valid: if an <anchor> is emitted, its time range must come from the current frame
+  window and the <anchor> tag body must be empty; if no <anchor> is emitted, use 0.5.
+- anchor_representative_if_present: when an anchor is used, it is the best representative frame for the
+  current state/evidence rather than a poorly timed frame; if no <anchor> is emitted, use 0.5.
+- first_window_rule_followed: if the current window is exactly t="0.0-5.0" or "0-5", the output contains
+  exactly one anchor at t="0.0-1.0" or "0-1"; if this is not the first window, use 1.
 
-4. state_groundedness
-Evaluate whether <state> makes reliable, useful reasoning from Memory, current frames, and QA History.
-It should state uncertainty when evidence is insufficient, avoid hallucination and unsupported inference,
-and avoid being contaminated by question wording, answer choices, previous answers, or QA History. If
-<state> reasons about whether to answer, judge whether that decision is grounded and whether the actual
-<answer> is consistent with the state's reasoning.
-- 1.0: Grounded, useful for QA and memory decisions, hallucination-free, handles uncertainty correctly,
-  and makes a sound answer-or-silence decision consistent with <answer>.
-- 0.7: Mostly grounded, but generic, mildly incomplete, or missing some useful decision context.
-- 0.4: Weak, speculative, not useful for QA decisions, mildly inconsistent with evidence, or partially
-  contaminated by QA History or answer options.
-- 0.0: Hallucinates, contradicts Memory/current frames, claims certainty without evidence, forces an
-  unsupported answer, or makes an answer decision inconsistent with the actual <answer>.
+3. semantic_alignment checks
+- semantic_output_coherent: the current model output is semantically coherent as a whole; its <anchor>,
+  <delta>, <state>, and <answer> do not conflict with each other.
+- semantic_text_anchor_express_current_frames: compared with the current frames, the model's text and
+  anchored frame, if any, effectively express the visually important content of this step.
+- semantic_no_cross_step_contradiction: the output does not move events to the wrong time, reverse
+  cause/order, or create a contradiction between Memory before this step and the current output.
+
+4. state_groundedness checks
+- state_uses_available_evidence: <state> reasons from historical Memory and current frames, captures
+  the important evidence, and stays focused rather than verbose.
+- state_identifies_question_scope: when QA History contains a question, <state> recognizes the question
+  and reasons toward the correct answer from the visible content.
+- state_decision_is_grounded: <state> gives an evidence-based reason for answering or staying silent when
+  a QA decision is relevant.
+- state_no_visual_hallucination: <state> does not invent unsupported visual facts.
+- state_consistent_with_answer: <state>'s reasoning is consistent with the actual <answer>.
+- state_no_unreasonable_hallucination: <state> does not contain unreasonable hallucinations, including
+  unsupported causes, intentions, conclusions, answer inferences, or claims imported from QA History
+  without visual/memory evidence.
 """
 
 
@@ -171,13 +171,59 @@ answer are authoritative for the current step.
 """
 
 
+GRPPO_ANSWER_ONLY_SCHEMA = """\
+Return JSON only. Do not output any other text:
+{
+  "answer_reward": {"score": 0.0, "reason": "brief reason"}
+}
+"""
+
+
 GRPPO_OUTPUT_SCHEMA_4 = """\
 Return JSON only. Do not output any other text:
 {
-  "delta_groundedness": {"score": 0.0, "reason": "brief reason"},
-  "anchor_keyframe": {"score": 0.0, "reason": "brief reason"},
-  "semantic_alignment": {"score": 0.0, "reason": "brief reason"},
-  "state_groundedness": {"score": 0.0, "reason": "brief reason"},
+  "delta_groundedness": {
+    "score": 0.0,
+    "checks": {
+      "delta_captures_action_progress": 0.0,
+      "delta_captures_state_or_location_changes": 0.0,
+      "delta_preserves_query_relevant_details": 0.0,
+      "delta_no_visual_hallucination": 0.0,
+      "delta_not_polluted_by_qa": 0.0
+    },
+    "reason": "brief reason"
+  },
+  "anchor_keyframe": {
+    "score": 0.0,
+    "checks": {
+      "anchor_count_valid": 0.0,
+      "anchor_time_and_body_valid": 0.0,
+      "anchor_representative_if_present": 0.0,
+      "first_window_rule_followed": 0.0
+    },
+    "reason": "brief reason"
+  },
+  "semantic_alignment": {
+    "score": 0.0,
+    "checks": {
+      "semantic_output_coherent": 0.0,
+      "semantic_text_anchor_express_current_frames": 0.0,
+      "semantic_no_cross_step_contradiction": 0.0
+    },
+    "reason": "brief reason"
+  },
+  "state_groundedness": {
+    "score": 0.0,
+    "checks": {
+      "state_uses_available_evidence": 0.0,
+      "state_identifies_question_scope": 0.0,
+      "state_decision_is_grounded": 0.0,
+      "state_no_visual_hallucination": 0.0,
+      "state_consistent_with_answer": 0.0,
+      "state_no_unreasonable_hallucination": 0.0
+    },
+    "reason": "brief reason"
+  },
   "caps_applied": ["brief cap notes, or empty list"],
   "overall": 0.0,
   "issues": ["brief issue notes"]
@@ -188,10 +234,48 @@ Return JSON only. Do not output any other text:
 GRPPO_OUTPUT_SCHEMA_5 = """\
 Return JSON only. Do not output any other text:
 {
-  "delta_groundedness": {"score": 0.0, "reason": "brief reason"},
-  "anchor_keyframe": {"score": 0.0, "reason": "brief reason"},
-  "semantic_alignment": {"score": 0.0, "reason": "brief reason"},
-  "state_groundedness": {"score": 0.0, "reason": "brief reason"},
+  "delta_groundedness": {
+    "score": 0.0,
+    "checks": {
+      "delta_captures_action_progress": 0.0,
+      "delta_captures_state_or_location_changes": 0.0,
+      "delta_preserves_query_relevant_details": 0.0,
+      "delta_no_visual_hallucination": 0.0,
+      "delta_not_polluted_by_qa": 0.0
+    },
+    "reason": "brief reason"
+  },
+  "anchor_keyframe": {
+    "score": 0.0,
+    "checks": {
+      "anchor_count_valid": 0.0,
+      "anchor_time_and_body_valid": 0.0,
+      "anchor_representative_if_present": 0.0,
+      "first_window_rule_followed": 0.0
+    },
+    "reason": "brief reason"
+  },
+  "semantic_alignment": {
+    "score": 0.0,
+    "checks": {
+      "semantic_output_coherent": 0.0,
+      "semantic_text_anchor_express_current_frames": 0.0,
+      "semantic_no_cross_step_contradiction": 0.0
+    },
+    "reason": "brief reason"
+  },
+  "state_groundedness": {
+    "score": 0.0,
+    "checks": {
+      "state_uses_available_evidence": 0.0,
+      "state_identifies_question_scope": 0.0,
+      "state_decision_is_grounded": 0.0,
+      "state_no_visual_hallucination": 0.0,
+      "state_consistent_with_answer": 0.0,
+      "state_no_unreasonable_hallucination": 0.0
+    },
+    "reason": "brief reason"
+  },
   "answer_reward": {"score": 0.0, "reason": "brief reason"},
   "caps_applied": ["brief cap notes, or empty list"],
   "overall": 0.0,
@@ -274,9 +358,11 @@ def build_grppo_judge_content(ctx: GrppoJudgePromptContext) -> list[ContentItem]
     answer_rubric = f"\n{GRPPO_ANSWER_RUBRIC}" if answer_reward_event else ""
     answer_caps = "- answer_reward must be exactly 0.0 or 1.0.\n" if answer_reward_event else ""
     overall_rule = (
-        "overall is the average of the four process dimensions. Do not include answer_reward in overall."
+        "overall is a process-only diagnostic score. Compute it as 2.0 times the mean of all "
+        "process checks across the four process dimensions. Do not include answer_reward in overall."
         if answer_reward_event
-        else "overall is the average of the four process dimensions."
+        else "overall is a process-only diagnostic score. Compute it as 2.0 times the mean of all "
+        "process checks across the four process dimensions."
     )
     output_schema = GRPPO_OUTPUT_SCHEMA_5 if answer_reward_event else GRPPO_OUTPUT_SCHEMA_4
 
@@ -346,14 +432,14 @@ Frame index:
 
 {GRPPO_PROCESS_RUBRIC}{answer_rubric}
 
-## Hard Caps
+## Hard Failure Guidance
 
-- If parser or timing issues make a component unusable, cap that component at 0.4.
-- If state or delta fabricates important visual facts, cap that component at 0.3.
-- If state or delta copies query/options into memory as observed video facts, cap that component at 0.3.
-- If the output has no usable anchor/delta content, cap overall at 0.2.
-- If the output clearly contradicts current frames or Memory, cap overall at 0.5.
-- If state or delta relies on hidden future frames or outside knowledge, cap overall at 0.3.
+- If parser or timing issues make a component unusable, fail the affected checks.
+- If state or delta fabricates important visual facts, fail the hallucination and grounding checks.
+- If state or delta copies query/options into memory as observed video facts, fail the QA-pollution checks.
+- If the output has no usable anchor/delta content, fail the relevant delta/anchor/semantic checks.
+- If the output clearly contradicts current frames or Memory, fail the relevant grounding/alignment checks.
+- If state or delta relies on hidden future frames or outside knowledge, fail the relevant state/delta checks.
 {answer_caps}
 ## overall
 
@@ -362,6 +448,50 @@ Frame index:
 {output_schema}
 """
     return _content_with_frames(prompt_prefix, ctx.frames, suffix=prompt_suffix)
+
+
+def build_grppo_answer_judge_content(ctx: GrppoAnswerJudgePromptContext) -> list[ContentItem]:
+    answer_label = build_grppo_answer_label_section(ctx.query_label, answer_reward_event=True)
+    issue_codes = _issue_codes_text(ctx.quality)
+    prompt = f"""\
+You are a strict answer-reward judge for one step of a streaming video QA agent.
+
+Judge only whether the model's <answer> satisfies the current Answer Label.
+Use only the Answer Label and the Model Output below. Do not use video frames, Memory, future frames,
+outside knowledge, or your own interpretation of whether the visual evidence changed.
+The Answer Label is authoritative for this step.
+
+Important rule for answer checkpoints:
+- If the label says "the model must answer now", the model must output a non-empty <answer> now.
+- This is true even if the original question says "update your answer when the video evidence changes".
+- At an answer checkpoint, staying silent is incorrect.
+
+For multiple-choice questions, treat the full option form and its content as equivalent.
+For example, if the reference answer is "C. 0", then "C", "0", and "C. 0" are equivalent.
+
+=== Answer Label ===
+{answer_label}
+
+=== Model Output ===
+{ctx.raw_output}
+
+=== Existing Parser Or Timing Issues ===
+{issue_codes}
+
+Scoring:
+- Return answer_reward = 1.0 only if the model follows the current requirement.
+- If the label requires an answer now, <answer> must be non-empty and match the reference answer or a
+  clearly equivalent paraphrase.
+- If the label requires silence now, <answer> must be empty.
+- The model's <state> can only be used as a consistency check. It must not override or reinterpret the
+  Answer Label.
+- Give answer_reward = 0.0 if the model stays silent when it must answer, answers when it must stay
+  silent, gives the wrong answer, or gives an answer contradicted by its own <state>.
+- If parser issues make <answer> unusable, give answer_reward = 0.0.
+
+{GRPPO_ANSWER_ONLY_SCHEMA}
+"""
+    return [ContentItem("text", text=prompt)]
 
 
 def build_grppo_answer_label_section(label: dict[str, Any] | None, *, answer_reward_event: bool) -> str:
@@ -408,7 +538,6 @@ def build_grppo_answer_label_section(label: dict[str, Any] | None, *, answer_rew
 def _answer_label_block(ctx: GrppoJudgePromptContext) -> str:
     if not ctx.answer_reward_event:
         return ""
-    correctness_text = "null" if ctx.answer_correctness is None else f"{_clamp_score(ctx.answer_correctness):.4f}"
     answer_label = build_grppo_answer_label_section(
         ctx.query_label,
         answer_reward_event=ctx.answer_reward_event,
@@ -417,9 +546,7 @@ def _answer_label_block(ctx: GrppoJudgePromptContext) -> str:
 === Answer Label ===
 {answer_label}
 
-=== Rule Correctness Reference ===
-rule_answer_correctness={correctness_text}
-This rule score is an auxiliary reference. Judge answer_reward primarily from the Answer Label:
+Judge answer_reward from the Answer Label:
 the model's <answer> must satisfy the current requirement and match the reference answer when one is required.
 Also check whether the model's <state> is grounded and consistent with its <answer>.
 If the answer is wrong, missing when required, present when silence is required, or inconsistent with the
@@ -488,7 +615,13 @@ def _label_time_text(label: dict[str, Any]) -> str:
 
 def _label_answer_text(label: dict[str, Any]) -> str:
     if label.get("event_type") == "answer_target":
-        for key in ("answer", "content", "target_answer", "target"):
+        combined = _combined_option_answer_text(label)
+        if combined:
+            return combined
+        content = label.get("content")
+        if content is not None and str(content).strip():
+            return str(content).strip()
+        for key in ("answer", "target_answer", "target"):
             value = label.get(key)
             if value is not None and str(value).strip():
                 return str(value).strip()
@@ -501,6 +634,22 @@ def _label_answer_text(label: dict[str, Any]) -> str:
     if value is not None and str(value).strip():
         return str(value).strip()
     return ""
+
+
+def _combined_option_answer_text(label: dict[str, Any]) -> str:
+    option = None
+    for key in ("ground_truth", "gt"):
+        value = label.get(key)
+        if value is not None and str(value).strip():
+            option = str(value).strip()
+            break
+    if not option or len(option) != 1 or not option.isalpha():
+        return ""
+    answer = label.get("answer") or label.get("target_answer") or label.get("target")
+    if answer is None or not str(answer).strip():
+        return ""
+    text = str(answer).strip()
+    return text if text[:2].upper() == f"{option.upper()}." else f"{option.upper()}. {text}"
 
 
 def _option_text_for_label(value: Any, label: dict[str, Any]) -> str:

@@ -26,7 +26,7 @@ runtime:
 dataset:
   dataset_root: dataset
   dataset_name: streamingbench
-  video_root: /path/to/StreamingBench/videos
+  video_root: dataset/streamingbench/source_videos
   frame_id_base: 0
   image_ext: jpg
   jpeg_quality: 95
@@ -51,8 +51,8 @@ trace:
   write_jsonl: true
 
 benchmark_args:
-  anno_dir: /path/to/StreamingBench
-  video_dir: /path/to/StreamingBench/videos
+  anno_dir: /mmu_mllm_hdd/zhouhanshu/test/StreamingBench/StreamingBench/StreamingBench/src/data
+  video_dir: dataset/streamingbench/source_videos
   split: real
   limit: 0
 

@@ -16,13 +16,21 @@ from backend.factory import create_backend
 from streamweave.config import EvalConfig, load_eval_config
 from streamweave.frame_store import FrameStore
 from streamweave.rollout import RolloutRunner
+from streamweave.schemas import BenchmarkSample, QueryEvent
 
 from evaluation import ovo_adapter, streamingbench_adapter
 
 
 def run_eval(cfg: EvalConfig, *, output_path: Path, limit: int = 0) -> list[dict[str, Any]]:
+    loader_limit = bool(
+        cfg.benchmark == "streamingbench"
+        and str(cfg.benchmark_args.get("split", "real")) in {"real", "omni"}
+        and _truthy(cfg.benchmark_args.get("group_by_video", False))
+    )
+    if limit and loader_limit:
+        cfg.benchmark_args["limit"] = limit
     samples = load_samples(cfg)
-    if limit:
+    if limit and not loader_limit:
         samples = samples[:limit]
     backend = create_backend(cfg.backend, cfg.runtime)
     frame_store = FrameStore(cfg.dataset)
@@ -44,10 +52,11 @@ def run_eval(cfg: EvalConfig, *, output_path: Path, limit: int = 0) -> list[dict
     results: list[dict[str, Any]] = []
     with output_path.open("w", encoding="utf-8") as f:
         for index, sample in enumerate(samples):
-            result = _run_one(cfg.benchmark, runner, index, sample)
-            result.update({"policy": cfg.policy, "prompt_type": cfg.prompt.profile})
-            results.append(result)
-            _write_result(f, result, index + 1, len(samples))
+            task_results = _run_task(cfg, runner, index, sample)
+            for result in task_results:
+                result.update({"policy": cfg.policy, "prompt_type": cfg.prompt.profile})
+                results.append(result)
+                _write_result(f, result, len(results), len(samples))
     write_summary(cfg.benchmark, results, output_path)
     return results
 
@@ -60,6 +69,77 @@ def _run_one(benchmark: str, runner: RolloutRunner, index: int, sample) -> dict[
         result = error_result(benchmark, sample, repr(exc))
     result["index"] = index
     return result
+
+
+def _run_task(cfg: EvalConfig, runner: RolloutRunner, index: int, sample) -> list[dict[str, Any]]:
+    metadata = getattr(sample, "metadata", {}) or {}
+    if cfg.benchmark == "streamingbench" and bool(metadata.get("streamingbench_grouped_eval") or metadata.get("streamingbench_grouped_real")):
+        return _run_grouped_streamingbench_real(cfg.benchmark, runner, sample)
+    return [_run_one(cfg.benchmark, runner, index, sample)]
+
+
+def _run_grouped_streamingbench_real(benchmark: str, runner: RolloutRunner, sample) -> list[dict[str, Any]]:
+    qa_list = [item for item in (getattr(sample, "metadata", {}) or {}).get("qa_list") or [] if isinstance(item, dict)]
+    results: list[dict[str, Any]] = []
+    try:
+        multi_trace = runner.run_streaming_qa_sample(sample)
+        for trace in multi_trace.qa_traces:
+            result = result_from_trace(benchmark, trace)
+            result["index"] = int(trace.sample.metadata.get("result_index"))
+            result["grouped_eval"] = True
+            result["group_sample_id"] = sample.sample_id
+            results.append(result)
+    except Exception as exc:
+        for qa_index, qa in enumerate(qa_list):
+            qsample = _sample_for_grouped_error(sample, qa, qa_index)
+            result = error_result(benchmark, qsample, repr(exc))
+            result["index"] = int(qa.get("result_index", qa_index))
+            result["grouped_eval"] = True
+            result["group_sample_id"] = sample.sample_id
+            results.append(result)
+    return sorted(results, key=lambda item: int(item.get("index", 0)))
+
+
+def _sample_for_grouped_error(sample, qa: dict[str, Any], qa_index: int) -> BenchmarkSample:
+    timestamp = _float_value(qa.get("query_timestamp"), _float_value(qa.get("target_timestamp"), 0.0))
+    metadata = dict(getattr(sample, "metadata", {}) or {})
+    metadata.pop("qa_list", None)
+    metadata.update(
+        {
+            "is_streaming_qa_branch": True,
+            "streamingbench_grouped_eval": True,
+            "streamingbench_grouped_real": str(metadata.get("split", "")) == "real",
+            "qa_id": qa.get("qa_id") or f"qa_{qa_index:04d}",
+            "qa_index": qa_index,
+            "question": qa.get("question") if isinstance(qa.get("question"), dict) else {},
+            "query_text": qa.get("query_text") or "",
+            "query_timestamp": timestamp,
+            "target_timestamp": timestamp,
+            "result_index": qa.get("result_index", qa_index),
+        }
+    )
+    return BenchmarkSample(
+        sample_id=str(qa.get("sample_id") or f"{sample.sample_id}_q{qa_index:03d}"),
+        video_id=str(getattr(sample, "video_id", "")),
+        video_path=str(getattr(sample, "video_path", "")),
+        query_events=[QueryEvent(text=str(qa.get("query_text") or ""), timestamp=timestamp)],
+        metadata=metadata,
+    )
+
+
+def _float_value(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def result_from_trace(benchmark: str, trace) -> dict[str, Any]:

@@ -24,6 +24,11 @@ GRPPO_ADVANTAGE_KEY = "grppo_advantage"
 GRPPO_STEP_VALID_KEY = "grppo_step_signal_valid"
 GRPPO_ANSWER_VALID_KEY = "grppo_answer_signal_valid"
 GRPPO_UPDATE_VALID_KEY = "grppo_update_signal_valid"
+GRPO_TRAJSUM_TURN_REWARD_KEY = "grpo_trajsum_turn_reward"
+GRPO_TRAJSUM_SCORE_KEY = "grpo_trajsum_score"
+GRPO_TRAJSUM_ADVANTAGE_KEY = "grpo_trajsum_advantage"
+GRPO_TRAJSUM_VALID_KEY = "grpo_trajsum_signal_valid"
+GRPO_TRAJSUM_JUDGE_VALID_KEY = "grpo_trajsum_judge_valid"
 
 
 def _to_numpy_int64(values: Any, *, factorize: bool = False) -> np.ndarray:
@@ -49,6 +54,17 @@ def _to_float_array(values: Any) -> np.ndarray:
     else:
         arr = arr.astype(np.float32, copy=False)
     return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+
+
+def _grppo_judge_valid_mask(non_tensor_batch: dict[str, Any], row_count: int) -> np.ndarray:
+    """Rows with judge infrastructure failures must not create GRPPO gradients."""
+    if "judge_status" not in non_tensor_batch:
+        return np.ones(row_count, dtype=bool)
+    statuses = np.asarray(non_tensor_batch["judge_status"], dtype=object).reshape(-1)
+    if statuses.shape[0] != row_count:
+        return np.ones(row_count, dtype=bool)
+    invalid_statuses = {"error", "aborted"}
+    return np.asarray([str(status).strip().lower() not in invalid_statuses for status in statuses], dtype=bool)
 
 
 def _unique_turn_rows(data):
@@ -279,6 +295,191 @@ def compute_streamweave_stepwise_traj_grpo(
     return advantages, returns
 
 
+def compute_trajsum_grpo_values(
+    non_tensor_batch: dict[str, Any],
+    config: Any = None,
+    *,
+    epsilon: float = 1e-6,
+    norm_adv_by_std_in_grpo: bool = True,
+) -> dict[str, np.ndarray]:
+    """Return row-aligned trajectory-sum GRPO scores and advantages.
+
+    This estimator intentionally sums raw per-turn training rewards. It does
+    not use ``grppo_answer_credit`` because that value has already propagated a
+    future answer reward to earlier turns; summing it over a trajectory would
+    double-count the same answer signal.
+    """
+    reward_values = compute_grppo_step_reward_values(non_tensor_batch, config)
+    step_reward_full = reward_values[GRPPO_STEP_REWARD_KEY]
+    answer_reward_full = reward_values[GRPPO_ANSWER_REWARD_KEY]
+    row_count = int(step_reward_full.shape[0])
+
+    groups = np.asarray(non_tensor_batch["group_idx"], dtype=object).reshape(-1)
+    trajs = np.asarray(non_tensor_batch["traj_idx"], dtype=object).reshape(-1)
+    turns = _to_numpy_int64(non_tensor_batch["turn_idx"], factorize=False).reshape(-1)
+    if not (len(groups) == len(trajs) == len(turns) == row_count):
+        raise ValueError("trajectory-sum GRPO group_idx/traj_idx/turn_idx/reward columns must have the same length")
+
+    step_weight = _config_get_float(
+        config,
+        "trajsum_step_weight",
+        _config_get_float(config, "grppo_step_weight", 1.0),
+    )
+    answer_weight = _config_get_float(
+        config,
+        "trajsum_answer_weight",
+        _config_get_float(config, "grppo_answer_weight", 1.0),
+    )
+    norm_by_std = _config_get_bool(config, "trajsum_norm_by_std", bool(norm_adv_by_std_in_grpo))
+    min_std = max(_config_get_float(config, "trajsum_min_std", _config_get_filter_min_std(config, 0.0)), 0.0)
+    exclude_judge_error = _config_get_bool(config, "trajsum_exclude_judge_error", True)
+
+    unique_keys: list[tuple[str, str, int]] = []
+    first_indices: list[int] = []
+    inverse = np.zeros(row_count, dtype=np.int64)
+    key_to_unique: dict[tuple[str, str, int], int] = {}
+    for row in range(row_count):
+        key = (str(groups[row]), str(trajs[row]), int(turns[row]))
+        unique_row = key_to_unique.get(key)
+        if unique_row is None:
+            unique_row = len(unique_keys)
+            key_to_unique[key] = unique_row
+            unique_keys.append(key)
+            first_indices.append(row)
+        inverse[row] = unique_row
+
+    first = np.asarray(first_indices, dtype=np.int64)
+    step_reward_u = step_reward_full[first].astype(np.float32, copy=False)
+    answer_reward_u = answer_reward_full[first].astype(np.float32, copy=False)
+    turn_reward_u = (step_weight * step_reward_u + answer_weight * answer_reward_u).astype(np.float32, copy=False)
+    judge_valid_u = _grppo_judge_valid_mask(non_tensor_batch, row_count)[first]
+
+    traj_to_unique_rows: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for unique_row, (group_id, traj_id, _turn_id) in enumerate(unique_keys):
+        traj_to_unique_rows[(group_id, traj_id)].append(unique_row)
+
+    traj_score: dict[tuple[str, str], float] = {}
+    traj_judge_valid: dict[tuple[str, str], bool] = {}
+    group_to_traj_scores: dict[str, list[tuple[str, float]]] = defaultdict(list)
+    for traj_key, rows in traj_to_unique_rows.items():
+        ordered_rows = sorted(rows, key=lambda idx: unique_keys[idx][2])
+        valid = bool(np.all(judge_valid_u[ordered_rows])) if exclude_judge_error else True
+        score = float(turn_reward_u[ordered_rows].sum()) if valid else 0.0
+        traj_score[traj_key] = score
+        traj_judge_valid[traj_key] = valid
+        if valid:
+            group_to_traj_scores[traj_key[0]].append((traj_key[1], score))
+
+    adv_by_traj: dict[tuple[str, str], float] = {}
+    signal_valid_by_traj: dict[tuple[str, str], float] = {}
+    for group_id, items in group_to_traj_scores.items():
+        if len(items) <= 1:
+            for traj_id, _score in items:
+                signal_valid_by_traj[(group_id, traj_id)] = 0.0
+            continue
+        values = np.asarray([score for _traj_id, score in items], dtype=np.float32)
+        std = float(values.std(ddof=1))
+        if std <= min_std:
+            for traj_id, _score in items:
+                signal_valid_by_traj[(group_id, traj_id)] = 0.0
+            continue
+        centered = values - float(values.mean())
+        if norm_by_std:
+            centered = centered / (std + float(epsilon))
+        for (traj_id, _score), adv in zip(items, centered.tolist(), strict=True):
+            traj_key = (group_id, traj_id)
+            adv_by_traj[traj_key] = float(adv)
+            signal_valid_by_traj[traj_key] = 1.0
+
+    score_u = np.zeros(len(unique_keys), dtype=np.float32)
+    adv_u = np.zeros(len(unique_keys), dtype=np.float32)
+    signal_valid_u = np.zeros(len(unique_keys), dtype=np.float32)
+    judge_valid_out_u = np.zeros(len(unique_keys), dtype=np.float32)
+    for unique_row, (group_id, traj_id, _turn_id) in enumerate(unique_keys):
+        traj_key = (group_id, traj_id)
+        score_u[unique_row] = float(traj_score.get(traj_key, 0.0))
+        adv_u[unique_row] = float(adv_by_traj.get(traj_key, 0.0))
+        signal_valid_u[unique_row] = float(signal_valid_by_traj.get(traj_key, 0.0))
+        judge_valid_out_u[unique_row] = float(bool(traj_judge_valid.get(traj_key, False)))
+
+    return {
+        GRPO_TRAJSUM_TURN_REWARD_KEY: turn_reward_u[inverse].astype(np.float32, copy=False),
+        GRPO_TRAJSUM_SCORE_KEY: score_u[inverse].astype(np.float32, copy=False),
+        GRPO_TRAJSUM_ADVANTAGE_KEY: adv_u[inverse].astype(np.float32, copy=False),
+        GRPO_TRAJSUM_VALID_KEY: signal_valid_u[inverse].astype(np.float32, copy=False),
+        GRPO_TRAJSUM_JUDGE_VALID_KEY: judge_valid_out_u[inverse].astype(np.float32, copy=False),
+    }
+
+
+@register_adv_est("streamweave_stepwise_trajsum_grpo")
+def compute_streamweave_stepwise_trajsum_grpo(
+    data,
+    gamma=1.0,
+    lam=1.0,
+    config=None,
+    epsilon: float = 1e-6,
+    norm_adv_by_std_in_grpo: bool = True,
+    **kwargs,
+):
+    """Trajectory-sum GRPO over StreamWeave stepwise rollouts.
+
+    Per-turn reward is assembled from raw ``grppo_step_reward`` and raw
+    ``grppo_answer_reward``. The trajectory sum is normalized inside each
+    ``group_idx`` cohort and then broadcast to every response token in every
+    turn of the trajectory.
+    """
+    del gamma, lam, kwargs
+    response_mask = data.batch["response_mask"]
+    device = response_mask.device
+
+    with torch.no_grad():
+        uniq_key, first_idx, inverse = _unique_turn_rows(data)
+        first_idx_t = torch.as_tensor(first_idx, dtype=torch.long, device=device)
+        mask_u = response_mask.index_select(0, first_idx_t).to(dtype=torch.float32)
+
+        values = compute_trajsum_grpo_values(
+            data.non_tensor_batch,
+            config,
+            epsilon=epsilon,
+            norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+        )
+        for key, value in values.items():
+            data.non_tensor_batch[key] = np.asarray(value, dtype=np.float32)
+
+        score_full = _to_float_array(values[GRPO_TRAJSUM_SCORE_KEY])
+        adv_full = _to_float_array(values[GRPO_TRAJSUM_ADVANTAGE_KEY])
+        score_u = score_full[first_idx]
+        adv_u = adv_full[first_idx]
+
+        if _trace_trajsum_grpo_enabled():
+            group = uniq_key[:, 0]
+            traj = uniq_key[:, 1]
+            raw_groups = np.asarray(data.non_tensor_batch["group_idx"], dtype=object).reshape(-1)
+            group_labels = {int(group[row]): str(raw_groups[int(first_idx[row])]) for row in range(len(first_idx))}
+            group_to_traj_scores: dict[int, list[tuple[int, float]]] = defaultdict(list)
+            adv_by_traj: dict[tuple[int, int], float] = {}
+            for row, score in enumerate(score_u):
+                key = (int(group[row]), int(traj[row]))
+                if key not in adv_by_traj:
+                    group_to_traj_scores[key[0]].append((key[1], float(score)))
+                    adv_by_traj[key] = float(adv_u[row])
+            _trace_grpo_groups(
+                group_to_traj_scores=group_to_traj_scores,
+                adv_by_traj=adv_by_traj,
+                group_labels=group_labels,
+            )
+
+        advantages_u = torch.zeros_like(mask_u)
+        for row, adv in enumerate(adv_u.tolist()):
+            advantages_u[row] = float(adv) * mask_u[row]
+
+        inverse_t = torch.as_tensor(inverse, dtype=torch.long, device=device)
+        advantages = advantages_u.index_select(0, inverse_t)
+        returns_u = torch.as_tensor(score_u, dtype=torch.float32, device=device).unsqueeze(-1) * mask_u
+        returns = returns_u.index_select(0, inverse_t)
+    return advantages, returns
+
+
 def compute_grppo_step_reward_values(non_tensor_batch: dict[str, Any], config: Any = None) -> dict[str, np.ndarray]:
     """Return row-aligned GRPPO reward components.
 
@@ -307,7 +508,7 @@ def compute_grppo_step_reward_values(non_tensor_batch: dict[str, Any], config: A
             + _to_float_array(non_tensor_batch["grppo_anchor_keyframe"])
             + _to_float_array(non_tensor_batch["grppo_semantic_alignment"])
             + _to_float_array(non_tensor_batch["grppo_state_groundedness"])
-        ) / 4.0
+        ) / 2.0
     elif all(
         key in non_tensor_batch
         for key in (
@@ -322,7 +523,7 @@ def compute_grppo_step_reward_values(non_tensor_batch: dict[str, Any], config: A
             + _to_float_array(non_tensor_batch["grppo_note_keyframe"])
             + _to_float_array(non_tensor_batch["grppo_semantic_alignment"])
             + _to_float_array(non_tensor_batch["grppo_state_groundedness"])
-        ) / 4.0
+        ) / 2.0
     elif "step_score" in non_tensor_batch:
         step_reward_full = _to_float_array(non_tensor_batch["step_score"])
     else:
@@ -432,7 +633,10 @@ def compute_grppo_component_advantage_values(
 
     first = np.asarray(first_indices, dtype=np.int64)
     step_reward_u = step_reward_full[first].astype(np.float32, copy=False)
+    answer_reward_u = reward_values[GRPPO_ANSWER_REWARD_KEY][first].astype(np.float32, copy=False)
     answer_credit_u = answer_credit_full[first].astype(np.float32, copy=False)
+    judge_valid_u = _grppo_judge_valid_mask(non_tensor_batch, row_count)[first]
+    answer_credit_valid_u = judge_valid_u.copy()
     step_adv_u = np.zeros_like(step_reward_u, dtype=np.float32)
     answer_adv_u = np.zeros_like(answer_credit_u, dtype=np.float32)
     step_valid_u = np.zeros_like(step_reward_u, dtype=np.float32)
@@ -447,33 +651,59 @@ def compute_grppo_component_advantage_values(
     for unique_row, (group_id, _traj_id, turn_id) in enumerate(unique_keys):
         cohort_to_unique_rows[(group_id, int(turn_id))].append(unique_row)
 
+    traj_to_unique_rows: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for unique_row, (group_id, traj_id, _turn_id) in enumerate(unique_keys):
+        traj_to_unique_rows[(group_id, traj_id)].append(unique_row)
+    for rows in traj_to_unique_rows.values():
+        valid_future = True
+        for unique_row in sorted(rows, key=lambda idx: unique_keys[idx][2], reverse=True):
+            if not bool(judge_valid_u[unique_row]):
+                valid_future = False
+            answer_credit_valid_u[unique_row] = valid_future
+
     for rows in cohort_to_unique_rows.values():
         row_idx = np.asarray(rows, dtype=np.int64)
+        step_row_idx = row_idx[judge_valid_u[row_idx]]
+        answer_row_idx = row_idx[answer_credit_valid_u[row_idx]]
         step_adv, step_valid = _normalize_grppo_component(
-            step_reward_u[row_idx],
+            step_reward_u[step_row_idx],
             norm_by_std=norm_by_std,
             min_std=min_std,
             epsilon=epsilon,
         )
         answer_adv, answer_valid = _normalize_grppo_component(
-            answer_credit_u[row_idx],
+            answer_credit_u[answer_row_idx],
             norm_by_std=norm_by_std,
             min_std=min_std,
             epsilon=epsilon,
         )
-        step_adv_u[row_idx] = step_adv
-        answer_adv_u[row_idx] = answer_adv
+        step_adv_u[step_row_idx] = step_adv
+        answer_adv_u[answer_row_idx] = answer_adv
         if step_valid:
-            step_valid_u[row_idx] = 1.0
+            step_valid_u[step_row_idx] = 1.0
         if answer_valid:
-            answer_valid_u[row_idx] = 1.0
+            answer_valid_u[answer_row_idx] = 1.0
 
     grppo_adv_u = (step_weight * step_adv_u + answer_weight * answer_adv_u).astype(np.float32, copy=False)
     update_valid_u = np.maximum(step_valid_u, answer_valid_u).astype(np.float32, copy=False)
+    step_reward_out_u = step_reward_u.copy()
+    answer_reward_out_u = answer_reward_u.copy()
+    answer_credit_out_u = answer_credit_u.copy()
+    step_reward_out_u[~judge_valid_u] = 0.0
+    answer_reward_out_u[~judge_valid_u] = 0.0
+    answer_credit_out_u[~answer_credit_valid_u] = 0.0
+    grppo_reward_out_u = (step_weight * step_reward_out_u + answer_weight * answer_credit_out_u).astype(
+        np.float32,
+        copy=False,
+    )
 
     out = dict(reward_values)
     out.update(
         {
+            GRPPO_STEP_REWARD_KEY: step_reward_out_u[inverse].astype(np.float32, copy=False),
+            GRPPO_ANSWER_REWARD_KEY: answer_reward_out_u[inverse].astype(np.float32, copy=False),
+            GRPPO_ANSWER_CREDIT_KEY: answer_credit_out_u[inverse].astype(np.float32, copy=False),
+            GRPPO_REWARD_KEY: grppo_reward_out_u[inverse].astype(np.float32, copy=False),
             GRPPO_STEP_ADVANTAGE_KEY: step_adv_u[inverse].astype(np.float32, copy=False),
             GRPPO_ANSWER_ADVANTAGE_KEY: answer_adv_u[inverse].astype(np.float32, copy=False),
             GRPPO_ADVANTAGE_KEY: grppo_adv_u[inverse].astype(np.float32, copy=False),
@@ -598,6 +828,13 @@ def _trace_grpo_enabled() -> bool:
     )
 
 
+def _trace_trajsum_grpo_enabled() -> bool:
+    return env_flag(
+        "STREAMWEAVE_TRACE_TRAJSUM_GRPO_GROUPS",
+        default=env_flag("STREAMWEAVE_TRACE_GRPO_GROUPS", default=False),
+    )
+
+
 def _trace_grpo_groups(
     *,
     group_to_traj_scores: dict[int, list[tuple[int, float]]],
@@ -665,6 +902,21 @@ def _config_get_float(config: Any, key: str, default: float) -> float:
         return float(config.get(key, default))
     except AttributeError:
         return float(getattr(config, key, default))
+
+
+def _config_get_filter_min_std(config: Any, default: float) -> float:
+    if config is None:
+        return float(default)
+    try:
+        filter_cfg = config.get("filter_groups", None)
+    except AttributeError:
+        filter_cfg = getattr(config, "filter_groups", None)
+    if filter_cfg is None:
+        return float(default)
+    try:
+        return float(filter_cfg.get("min_std", default))
+    except AttributeError:
+        return float(getattr(filter_cfg, "min_std", default))
 
 
 def _config_get_bool(config: Any, key: str, default: bool) -> bool:

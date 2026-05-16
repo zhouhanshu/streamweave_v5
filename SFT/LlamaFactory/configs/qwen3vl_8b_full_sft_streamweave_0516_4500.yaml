@@ -1,0 +1,56 @@
+### model
+model_name_or_path: /mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct
+image_max_pixels: 131072
+video_max_pixels: 16384
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+freeze_vision_tower: true
+freeze_multi_modal_projector: true
+freeze_language_model: false
+deepspeed: examples/deepspeed/ds_z3_config.json
+
+### dataset
+dataset: streamweave_sft_0516_4500
+dataset_dir: data_streamweave
+media_dir: /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/dataset2
+template: qwen3_vl_nothink
+cutoff_len: 16384
+preprocessing_num_workers: 32
+dataloader_num_workers: 8
+tokenized_path: /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/SFT/LlamaFactory/cache/streamweave_sft_0516_4500
+overwrite_cache: true
+
+### output
+output_dir: saves/qwen3-vl-8b/full/streamweave_sft_0516_4500
+logging_steps: 1
+save_steps: 25
+save_total_limit: 5
+plot_loss: true
+overwrite_output_dir: false
+save_only_model: false
+report_to: swanlab
+use_swanlab: true
+swanlab_project: streamweave-sft
+swanlab_run_name: qwen3vl-8b-full-streamweave-sft-0516-4500
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 16
+learning_rate: 1.0e-5
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.03
+bf16: true
+gradient_checkpointing: true
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+
+### eval
+val_size: 0.01
+per_device_eval_batch_size: 1
+eval_strategy: steps
+eval_steps: 200

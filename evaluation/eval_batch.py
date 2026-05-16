@@ -15,6 +15,7 @@ import multiprocessing as mp
 import queue
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -25,7 +26,9 @@ from backend.factory import create_backend
 from streamweave.config import EvalConfig, eval_config_from_dict, load_config
 from streamweave.frame_store import FrameStore
 from streamweave.rollout import RolloutRunner
+from streamweave.schemas import BenchmarkSample, QueryEvent
 
+from evaluation.rollout_metrics import rollout_metrics_from_trace
 from evaluation.runner import error_result, load_samples, result_from_trace, write_summary
 
 
@@ -38,11 +41,13 @@ def main() -> None:
     config_data = load_config(args.config)
     cfg = eval_config_from_dict(config_data)
     _apply_overrides(cfg, args)
+    _apply_loader_limit(cfg, args)
 
     samples = load_samples(cfg)
     limit = args.limit or cfg.batch.limit
-    if limit:
+    if limit and not _limit_applied_by_loader(cfg):
         samples = samples[:limit]
+    expected_sample_ids = _expected_result_sample_ids(samples)
 
     output_path = Path(
         args.output
@@ -64,19 +69,23 @@ def main() -> None:
     workers = args.workers or cfg.batch.workers or (len(endpoints) if endpoints else 1)
     workers = max(1, workers)
     manifest_path = shard_dir / "run_manifest.json"
-    manifest = _build_manifest(cfg, args, samples, output_path)
+    manifest = _build_manifest(cfg, args, samples, output_path, expected_sample_ids)
     if args.resume:
         _validate_manifest(manifest_path, manifest)
 
     completed_results: dict[int, dict[str, Any]] = {}
     if args.resume:
-        completed_results = _load_completed_results(output_path, shard_dir, samples)
+        completed_results = _load_completed_results(output_path, shard_dir, expected_sample_ids)
+        pending_tasks = _pending_task_count(samples, completed_results)
         print(
-            f"resume: completed={len(completed_results)} pending={len(samples) - len(completed_results)} total={len(samples)}",
+            f"resume: completed_rows={len(completed_results)} pending_tasks={pending_tasks} "
+            f"total_tasks={len(samples)} total_rows={len(expected_sample_ids)}",
             flush=True,
         )
     _write_manifest(manifest_path, manifest)
-    pending_indices = [idx for idx in range(len(samples)) if idx not in completed_results]
+    pending_indices = [
+        idx for idx, sample in enumerate(samples) if not _task_is_completed(idx, sample, completed_results)
+    ]
     jobs = []
     for worker_id in range(workers):
         endpoint = endpoints[worker_id % len(endpoints)] if endpoints else ""
@@ -99,7 +108,12 @@ def main() -> None:
         write_summary(cfg.benchmark, [], output_path)
         return
     if not pending_indices:
-        results = _merge_parts(shard_dir, output_path, samples=samples, include_existing_output=args.resume)
+        results = _merge_parts(
+            shard_dir,
+            output_path,
+            expected_sample_ids=expected_sample_ids,
+            include_existing_output=args.resume,
+        )
         write_summary(cfg.benchmark, results, output_path)
         print(f"Saved merged results to {output_path}", flush=True)
         print(f"Saved worker logs to {worker_log_dir}", flush=True)
@@ -118,7 +132,12 @@ def main() -> None:
         for result in async_results:
             result.get()
 
-    results = _merge_parts(shard_dir, output_path, samples=samples, include_existing_output=args.resume)
+    results = _merge_parts(
+        shard_dir,
+        output_path,
+        expected_sample_ids=expected_sample_ids,
+        include_existing_output=args.resume,
+    )
     write_summary(cfg.benchmark, results, output_path)
     print(f"Saved merged results to {output_path}", flush=True)
     print(f"Saved worker logs to {worker_log_dir}", flush=True)
@@ -154,13 +173,14 @@ def _worker_run(
 ) -> str:
     cfg = eval_config_from_dict(config_data)
     _apply_overrides(cfg, argparse.Namespace(**args_data))
+    _apply_loader_limit(cfg, argparse.Namespace(**args_data))
     if endpoint:
         cfg.backend.base_url = endpoint
     cfg.backend.endpoints = []
 
     samples = load_samples(cfg)
     limit = int(args_data.get("limit") or 0) or cfg.batch.limit
-    if limit:
+    if limit and not _limit_applied_by_loader(cfg):
         samples = samples[:limit]
 
     runner = RolloutRunner(
@@ -186,22 +206,21 @@ def _worker_run(
                 break
             local_count += 1
             sample = samples[sample_idx]
-            try:
-                trace = runner.run_sample(sample)
-                result = result_from_trace(cfg.benchmark, trace)
-            except Exception as exc:
-                result = error_result(cfg.benchmark, sample, repr(exc))
-            result.update(
-                {
-                    "index": sample_idx,
-                    "worker_id": worker_id,
-                    "endpoint": endpoint,
-                    "policy": cfg.policy,
-                    "prompt_type": cfg.prompt.profile,
-                }
-            )
-            f.write(json.dumps(result, ensure_ascii=False) + "\n")
+            task_results = _run_task_results(cfg, runner, sample_idx, sample)
+            for result_index, result in task_results:
+                result.update(
+                    {
+                        "index": result_index,
+                        "task_index": sample_idx,
+                        "worker_id": worker_id,
+                        "endpoint": endpoint,
+                        "policy": cfg.policy,
+                        "prompt_type": cfg.prompt.profile,
+                    }
+                )
+                f.write(json.dumps(result, ensure_ascii=False) + "\n")
             f.flush()
+            task_failed = any(bool(result.get("error")) for _, result in task_results)
             progress_queue.put(
                 {
                     "type": "sample_done",
@@ -209,14 +228,135 @@ def _worker_run(
                     "local_count": local_count,
                     "index": sample_idx,
                     "sample_id": sample.sample_id,
-                    "error": bool(result.get("error")),
+                    "result_count": len(task_results),
+                    "error": task_failed,
                 }
             )
             print(
-                f"[worker {worker_id}] {local_count} index={sample_idx} sample={sample.sample_id} error={bool(result.get('error'))}",
+                f"[worker {worker_id}] {local_count} task_index={sample_idx} sample={sample.sample_id} "
+                f"rows={len(task_results)} error={task_failed}",
                 flush=True,
             )
     return f"[worker {worker_id}] done {local_count} samples endpoint={endpoint}"
+
+
+def _run_task_results(
+    cfg: EvalConfig,
+    runner: RolloutRunner,
+    task_index: int,
+    sample: Any,
+) -> list[tuple[int, dict[str, Any]]]:
+    if cfg.benchmark == "streamingbench" and _is_grouped_real_sample(sample):
+        return _run_grouped_streamingbench_real(cfg, runner, sample)
+    try:
+        trace = runner.run_sample(sample)
+        result = result_from_trace(cfg.benchmark, trace)
+    except Exception as exc:
+        result = error_result(cfg.benchmark, sample, repr(exc))
+    return [(task_index, result)]
+
+
+def _run_grouped_streamingbench_real(
+    cfg: EvalConfig,
+    runner: RolloutRunner,
+    sample: Any,
+) -> list[tuple[int, dict[str, Any]]]:
+    qa_list = [item for item in (getattr(sample, "metadata", {}) or {}).get("qa_list") or [] if isinstance(item, dict)]
+    results: list[tuple[int, dict[str, Any]]] = []
+    try:
+        multi_trace = runner.run_streaming_qa_sample(sample)
+        actual_metrics = _grouped_actual_metrics(multi_trace)
+        for trace in multi_trace.qa_traces:
+            result = result_from_trace(cfg.benchmark, trace)
+            result.update(
+                {
+                    "grouped_eval": True,
+                    "group_sample_id": sample.sample_id,
+                    "group_video_id": sample.video_id,
+                    "qa_id": trace.sample.metadata.get("qa_id"),
+                    "qa_index": trace.sample.metadata.get("qa_index"),
+                    "query_timestamp": trace.sample.metadata.get("query_timestamp"),
+                    "target_timestamp": trace.sample.metadata.get("target_timestamp"),
+                    "group_result_count": len(qa_list),
+                    "group_actual_num_steps": actual_metrics.get("num_steps"),
+                    "group_actual_model_call_count": actual_metrics.get("model_call_count"),
+                    "group_actual_total_latency_seconds": actual_metrics.get("total_latency_seconds"),
+                }
+            )
+            results.append((int(trace.sample.metadata.get("result_index")), result))
+    except Exception as exc:
+        results = []
+        for qa_index, qa in enumerate(qa_list):
+            result = error_result(cfg.benchmark, _sample_for_grouped_error(sample, qa, qa_index), repr(exc))
+            result.update(
+                {
+                    "grouped_eval": True,
+                    "group_sample_id": sample.sample_id,
+                    "group_video_id": sample.video_id,
+                    "qa_id": qa.get("qa_id") or f"qa_{qa_index:04d}",
+                    "qa_index": qa_index,
+                    "query_timestamp": qa.get("query_timestamp"),
+                    "target_timestamp": qa.get("target_timestamp"),
+                }
+            )
+            results.append((int(qa.get("result_index", qa_index)), result))
+
+    seen = {index for index, _ in results}
+    for qa_index, qa in enumerate(qa_list):
+        result_index = int(qa.get("result_index", qa_index))
+        if result_index in seen:
+            continue
+        result = error_result(cfg.benchmark, _sample_for_grouped_error(sample, qa, qa_index), "missing_grouped_qa_trace")
+        result.update(
+            {
+                "grouped_eval": True,
+                "group_sample_id": sample.sample_id,
+                "group_video_id": sample.video_id,
+                "qa_id": qa.get("qa_id") or f"qa_{qa_index:04d}",
+                "qa_index": qa_index,
+                "query_timestamp": qa.get("query_timestamp"),
+                "target_timestamp": qa.get("target_timestamp"),
+            }
+        )
+        results.append((result_index, result))
+    return sorted(results, key=lambda item: item[0])
+
+
+def _grouped_actual_metrics(multi_trace: Any) -> dict[str, Any]:
+    transitions = list(getattr(multi_trace, "prefix_transitions", []) or [])
+    for trace in getattr(multi_trace, "qa_traces", []) or []:
+        trace_transitions = list(getattr(trace, "transitions", []) or [])
+        if trace_transitions and trace_transitions[-1].sample_id == trace.sample.sample_id:
+            transitions.append(trace_transitions[-1])
+    return rollout_metrics_from_trace(SimpleNamespace(transitions=transitions))
+
+
+def _sample_for_grouped_error(sample: Any, qa: dict[str, Any], qa_index: int) -> BenchmarkSample:
+    qa_id = str(qa.get("qa_id") or f"qa_{qa_index:04d}")
+    timestamp = _float_value(qa.get("query_timestamp"), _float_value(qa.get("target_timestamp"), 0.0))
+    metadata = dict(getattr(sample, "metadata", {}) or {})
+    metadata.pop("qa_list", None)
+    metadata.update(
+        {
+            "is_streaming_qa_branch": True,
+            "streamingbench_grouped_eval": True,
+            "streamingbench_grouped_real": str(metadata.get("split", "")) == "real",
+            "qa_id": qa_id,
+            "qa_index": qa_index,
+            "question": qa.get("question") if isinstance(qa.get("question"), dict) else {},
+            "query_text": qa.get("query_text") or "",
+            "query_timestamp": timestamp,
+            "target_timestamp": timestamp,
+            "result_index": qa.get("result_index", qa_index),
+        }
+    )
+    return BenchmarkSample(
+        sample_id=str(qa.get("sample_id") or f"{sample.sample_id}_{qa_id}"),
+        video_id=str(getattr(sample, "video_id", "")),
+        video_path=str(getattr(sample, "video_path", "")),
+        query_events=[QueryEvent(text=str(qa.get("query_text") or ""), timestamp=timestamp)],
+        metadata=metadata,
+    )
 
 
 def _apply_overrides(cfg: EvalConfig, args: argparse.Namespace) -> None:
@@ -226,6 +366,20 @@ def _apply_overrides(cfg: EvalConfig, args: argparse.Namespace) -> None:
         cfg.backend.backend = args.backend
     if getattr(args, "model", ""):
         cfg.backend.model = args.model
+
+
+def _apply_loader_limit(cfg: EvalConfig, args: argparse.Namespace) -> None:
+    limit = int(getattr(args, "limit", 0) or cfg.batch.limit or 0)
+    if limit and _limit_applied_by_loader(cfg):
+        cfg.benchmark_args["limit"] = limit
+
+
+def _limit_applied_by_loader(cfg: EvalConfig) -> bool:
+    return (
+        cfg.benchmark == "streamingbench"
+        and str(cfg.benchmark_args.get("split", "real")) in {"real", "omni"}
+        and _truthy(cfg.benchmark_args.get("group_by_video", False))
+    )
 
 
 def _configured_endpoints(cfg: EvalConfig, args: argparse.Namespace) -> list[str]:
@@ -244,11 +398,85 @@ def _prepare_run_dir(path: Path, pattern: str) -> None:
         old_path.unlink()
 
 
-def _build_manifest(cfg: EvalConfig, args: argparse.Namespace, samples: list[Any], output_path: Path) -> dict[str, Any]:
+def _expected_result_sample_ids(samples: list[Any]) -> list[str]:
+    entries: list[tuple[int, str]] = []
+    for task_index, sample in enumerate(samples):
+        entries.extend(_sample_result_entries(task_index, sample))
+    if not entries:
+        return []
+    max_index = max(index for index, _ in entries)
+    sample_ids = [""] * (max_index + 1)
+    for index, sample_id in entries:
+        if index < 0:
+            raise ValueError(f"Invalid negative result index {index} for sample_id={sample_id!r}.")
+        if sample_ids[index]:
+            raise ValueError(f"Duplicate result index {index} for sample_id={sample_id!r}.")
+        sample_ids[index] = sample_id
+    missing = [idx for idx, sample_id in enumerate(sample_ids) if not sample_id]
+    if missing:
+        raise ValueError(f"Missing result sample ids for index range; first gaps: {missing[:10]}")
+    return sample_ids
+
+
+def _sample_result_entries(task_index: int, sample: Any) -> list[tuple[int, str]]:
+    if _is_grouped_real_sample(sample):
+        entries: list[tuple[int, str]] = []
+        for qa_index, qa in enumerate((getattr(sample, "metadata", {}) or {}).get("qa_list") or []):
+            if not isinstance(qa, dict):
+                continue
+            result_index = int(qa.get("result_index", qa_index))
+            sample_id = str(qa.get("sample_id") or f"{getattr(sample, 'sample_id', '')}_q{qa_index:03d}")
+            entries.append((result_index, sample_id))
+        return entries
+    return [(task_index, str(getattr(sample, "sample_id", "")))]
+
+
+def _task_result_indices(task_index: int, sample: Any) -> list[int]:
+    return [index for index, _ in _sample_result_entries(task_index, sample)]
+
+
+def _task_is_completed(task_index: int, sample: Any, completed_results: dict[int, dict[str, Any]]) -> bool:
+    result_indices = _task_result_indices(task_index, sample)
+    return bool(result_indices) and all(index in completed_results for index in result_indices)
+
+
+def _pending_task_count(samples: list[Any], completed_results: dict[int, dict[str, Any]]) -> int:
+    return sum(1 for task_index, sample in enumerate(samples) if not _task_is_completed(task_index, sample, completed_results))
+
+
+def _is_grouped_real_sample(sample: Any) -> bool:
+    metadata = getattr(sample, "metadata", {}) or {}
+    return bool(metadata.get("streamingbench_grouped_eval") or metadata.get("streamingbench_grouped_real"))
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _float_value(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _build_manifest(
+    cfg: EvalConfig,
+    args: argparse.Namespace,
+    samples: list[Any],
+    output_path: Path,
+    expected_sample_ids: list[str],
+) -> dict[str, Any]:
     return {
         "benchmark": cfg.benchmark,
-        "total_samples": len(samples),
-        "sample_ids": [str(sample.sample_id) for sample in samples],
+        "total_tasks": len(samples),
+        "task_sample_ids": [str(sample.sample_id) for sample in samples],
+        "total_samples": len(expected_sample_ids),
+        "sample_ids": expected_sample_ids,
         "limit": int(getattr(args, "limit", 0) or cfg.batch.limit or 0),
         "model": cfg.backend.model,
         "output": str(output_path),
@@ -272,7 +500,7 @@ def _validate_manifest(path: Path, expected: dict[str, Any]) -> None:
         return
     with path.open(encoding="utf-8") as handle:
         actual = json.load(handle)
-    for key in ("benchmark", "total_samples", "sample_ids"):
+    for key in ("benchmark", "total_samples", "sample_ids", "benchmark_args"):
         if actual.get(key) != expected.get(key):
             raise ValueError(
                 f"Cannot resume because {path} does not match current run for {key}. "
@@ -285,10 +513,10 @@ def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
     path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _load_completed_results(output_path: Path, shard_dir: Path, samples: list[Any]) -> dict[int, dict[str, Any]]:
+def _load_completed_results(output_path: Path, shard_dir: Path, expected_sample_ids: list[str]) -> dict[int, dict[str, Any]]:
     completed: dict[int, dict[str, Any]] = {}
     for source_path in _result_sources(output_path, shard_dir, include_existing_output=True):
-        for index, result in _iter_result_rows(source_path, samples):
+        for index, result in _iter_result_rows(source_path, expected_sample_ids):
             completed[index] = result
     return completed
 
@@ -301,7 +529,7 @@ def _result_sources(output_path: Path, shard_dir: Path, *, include_existing_outp
     return sources
 
 
-def _iter_result_rows(path: Path, samples: list[Any]):
+def _iter_result_rows(path: Path, expected_sample_ids: list[str]):
     with path.open(encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, start=1):
             if not line.strip():
@@ -316,11 +544,11 @@ def _iter_result_rows(path: Path, samples: list[Any]):
             except (KeyError, TypeError, ValueError):
                 print(f"warning: ignored result row without valid index {path}:{line_no}", file=sys.stderr, flush=True)
                 continue
-            if index < 0 or index >= len(samples):
+            if index < 0 or index >= len(expected_sample_ids):
                 print(f"warning: ignored out-of-range result index {index} in {path}:{line_no}", file=sys.stderr, flush=True)
                 continue
             sample_id = str(result.get("sample_id", ""))
-            expected_sample_id = str(samples[index].sample_id)
+            expected_sample_id = str(expected_sample_ids[index])
             if not sample_id:
                 print(f"warning: ignored result row without sample_id {path}:{line_no}", file=sys.stderr, flush=True)
                 continue
@@ -336,17 +564,17 @@ def _merge_parts(
     shard_dir: Path,
     output_path: Path,
     *,
-    samples: list[Any],
+    expected_sample_ids: list[str],
     include_existing_output: bool,
 ) -> list[dict[str, Any]]:
     results_by_index: dict[int, dict[str, Any]] = {}
     for source_path in _result_sources(output_path, shard_dir, include_existing_output=include_existing_output):
-        for index, result in _iter_result_rows(source_path, samples):
+        for index, result in _iter_result_rows(source_path, expected_sample_ids):
             results_by_index[index] = result
     results = [results_by_index[index] for index in sorted(results_by_index)]
-    if len(results) != len(samples):
+    if len(results) != len(expected_sample_ids):
         print(
-            f"warning: merged {len(results)}/{len(samples)} results; summary will cover completed rows only",
+            f"warning: merged {len(results)}/{len(expected_sample_ids)} results; summary will cover completed rows only",
             file=sys.stderr,
             flush=True,
         )

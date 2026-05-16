@@ -24,6 +24,7 @@ Before starting a new run:
 | 2026-05-15 | prepared | TBD | Experiment 7: `exp7` | `RL/scripts/train_exp7.sh` | `RL/configs/streamweave_stepwise.yaml` | train `dataset2/rl_0515_train.jsonl`; val `dataset2/rl_0515_val.jsonl`, capped by `data.val_max_samples=200` | `models/qwen_sft_0513` | Initial copy of exp6 for the next parameter experiment, with source model switched to `qwen_sft_0513`: timeline answer supervision, final advantage `1.0*step_adv + 0.5*answer_adv`, `answer_decay=0.7`, no std division, GRPPO step reward `0.7*judge + 0.25*format + 0.25*note_frequency`, silence scalar `0.2`, actor KL loss coef `0.001`, both `grppo_min_std` and `grppo_filter_groups.min_std` set to `0.05` | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp7` | Dedicated script/output directory so exp6 remains reproducible. Uses the 2026-05-15 canonical train/val split. |
 | 2026-05-15 | prepared | TBD | Experiment 7 smoke: `exp7_smoke` | `RL/scripts/train_exp7_smoke.sh` | `RL/configs/streamweave_stepwise.yaml` | train `dataset2/rl_0515_train.jsonl`; val `dataset2/rl_0515_val.jsonl`, capped by `data.val_max_samples=16` | `models/qwen_sft_0513` | Two-step debug run for exp7: `train_batch_size=2`, `gen_batch_size=2`, `rollout.n=4`, real batch `8`, `total_training_steps=2`; same reward/advantage settings as exp7, including silence scalar `0.2` and both std thresholds `0.05`; GRPPO debug dumps enabled for 2 groups x 4 trajectories | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp7_smoke` | Use this before full exp7 to inspect reward scale, cohort stds, kept ratio, and per-turn advantages. Console-only logger, no checkpoint save, no validation during training. |
 | 2026-05-15 | prepared | TBD | Experiment 8: `exp8` | `RL/scripts/train_exp8.sh` | `RL/configs/streamweave_stepwise.yaml` | train `dataset2/rl_0515_train.jsonl`; val `dataset2/rl_0515_val.jsonl`, capped by `data.val_max_samples=200` | `models/qwen_sft_0513` | Exp7 algorithm on a 2-node Ray cluster: `trainer.nnodes=2`, `trainer.n_gpus_per_node=8`, `train/gen/val_batch_size=16`, `rollout.n=8`, real batch `128`, `agent.num_workers=64`, actor KL enabled, timeline answer supervision, silence scalar `0.2`, both std thresholds `0.05` | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp8` | Multi-node script with explicit `head`, `worker`, and `driver` modes. Driver connects to the existing Ray cluster and does not stop Ray before launch. |
+| 2026-05-17 | prepared | TBD | Experiment 9 24-GPU: `exp9_24` | `RL/scripts/train_exp9_24.sh` | `RL/configs/streamweave_stepwise.yaml` | train `dataset2/rl_0516_filter.jsonl`; val `dataset2/rl_0515_val.jsonl`, capped by `data.val_max_samples=200` | `models/qwen3vl_sft_0516_step50` | Self-contained 24-GPU exp9 script: `trainer.nnodes=3`, `trainer.n_gpus_per_node=8`, `train/gen/val_batch_size=24`, `rollout.n=8`, real batch `192`, actor lr `5e-6`, `agent.num_workers=96`, rollout `max_num_seqs=3072`, Ray object store `40GB`; uses exp9 context budget, KL, reward mix, answer decay, silence scalar, and filtering settings | Gemini judge enabled, `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp9_24` | Use when three 8-GPU nodes are available. Supports `EXP9_24_RAY_ROLE=head|worker|driver` as an alias for `EXP9_RAY_ROLE`. |
 | 2026-05-14 | prepared | TBD | Experiment 9: `exp9_localjudge` | `RL/scripts/train_exp9_localjudge.sh` | `RL/configs/streamweave_stepwise.yaml` | `dataset2/rl_exp3.jsonl`; val same file, capped by `data.val_max_samples=200` | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | Same single-node algorithm as exp7, but judge backend defaults to local OpenAI-compatible/vLLM endpoint: `JUDGE_BACKEND=vllm`, `JUDGE_BASE_URL=http://127.0.0.1:9000/v1`, `JUDGE_MODEL=qwen3vl-32b-judge` | Local Qwen3VL-32B judge assumed already deployed; `streamweave_grppo_judge_v1` | `RL/outputs/runs/exp9_localjudge` | Use this to switch scoring from Gemini to a local judge without changing exp6/exp7/exp8 scripts. |
 | 2026-05-12 | planned | TBD | `TBD` | `RL/scripts/TBD.sh` | `RL/configs/streamweave_stepwise.yaml` | `TBD` | `TBD` | `TBD` | `TBD` | `RL/outputs/runs/TBD` | Fill this row when the next launch script is created. |
 
@@ -293,6 +294,602 @@ RAY_HEAD_IP=10.82.121.78 EXP8_RAY_ROLE=driver bash RL/scripts/train_exp8.sh
 
 The script assumes both machines can see the same repo, dataset, frames, source model, and
 output directory paths under `/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5`.
+
+### 2026-05-15 OVO 1/8 Step-40 Error Analysis
+
+Exported model under evaluation:
+
+- Checkpoint: `RL/outputs/runs/exp8/checkpoints/global_step_40/actor`.
+- HF export: `models/qwen3_rl_exp8_step40`.
+- OVO 1/8 output: `outputs/ovo_qwen3_rl_exp8_step40_1of8_6gpu`.
+- Current trace source: `outputs/ovo_qwen3_rl_exp8_step40_1of8_6gpu/traces/{sample_id}/trace.jsonl`.
+- Gemini comparison source: `outputs/ovo_gemini_1of8_state_note_t/traces/{sample_id}/trace.jsonl`.
+- Final Gemini-retry loss report: `RL/scripts/EXP8_STEP40_GEMINI_RETRY_ERROR_REPORT.md`.
+
+The first focused set is the early same-id cases where Gemini answered correctly but
+`qwen3_rl_exp8_step40` did not: `20`, `28`, `36`, `100`, `164`, `188`.
+
+Five-way same-id snapshot at `2026-05-15 14:46:33` while the exp8 step40 OVO run was still
+in progress:
+
+| Model / run | Same-id score |
+| --- | ---: |
+| `exp8_step40` | `106/158 = 67.09%` |
+| `gemini_state` (`outputs/ovo_gemini_1of8_state_note_t`) | `104/158 = 65.82%` |
+| `gemini_retry` (`outputs/ovo_gemini_full_retry`) | `117/158 = 74.05%` |
+| `base` (`outputs/ovo_qwen3vl8b_base_full_state_note_t`) | `104/158 = 65.82%` |
+| `sft_0513` (`outputs/ovo_qwen_sft_0513_1of8`) | `98/158 = 62.03%` |
+
+Relative to `exp8_step40` at this snapshot:
+
+- vs `gemini_state`: exp8 wins `23`, loses `21`, net `+2`.
+- vs `gemini_retry`: exp8 wins `13`, loses `24`, net `-11`.
+- vs `base`: exp8 wins `18`, loses `16`, net `+2`.
+- vs `sft_0513`: exp8 wins `17`, loses `9`, net `+8`.
+
+Current `gemini_retry` correct but `exp8_step40` wrong cases to inspect:
+
+```text
+28, 92, 100, 148, 164, 301, 438, 462, 541, 557, 572, 580,
+619, 683, 780, 804, 845, 957, 1030, 1143, 1151, 1159, 1206, 1276
+```
+
+Answer-level snapshot for these cases:
+
+| sample_id | exp8 step40 | gemini_retry | GT |
+| --- | --- | --- | --- |
+| `28` | empty | `A` | `A` |
+| `92` | `D` | `C` | `C` |
+| `100` | `A. yes` | `B` | `B` |
+| `148` | `B` | `A` | `A` |
+| `164` | `A` | `B` | `B` |
+| `301` | `B` | `A` | `A` |
+| `438` | `C` | `B` | `B` |
+| `462` | `E` | `B` | `B` |
+| `541` | `D` | `C` | `C` |
+| `557` | `B` | `C` | `C` |
+| `572` | empty | `A` | `A` |
+| `580` | empty | `C` | `C` |
+| `619` | `D` | `C` | `C` |
+| `683` | `D` | `B` | `B` |
+| `780` | `D` | `A` | `A` |
+| `804` | `A` | `C` | `C` |
+| `845` | `C` | `A` | `A` |
+| `957` | `A. A metal clasp.` | `C` | `C` |
+| `1030` | `A. There is a green traffic light illuminated.` | `B` | `B` |
+| `1143` | empty | `B` | `B` |
+| `1151` | empty | `B` | `B` |
+| `1159` | `B` | `C` | `C` |
+| `1206` | empty | `A` | `A` |
+| `1276` | `B` | `A` | `A` |
+
+#### Gemini-retry loss queue at ~205/364 progress
+
+At the `2026-05-15 15:08:04` live snapshot, `exp8_step40` was `137/205 = 66.83%`,
+while `gemini_retry` was `152/205 = 74.15%`. The monitor showed `28` cases where
+`gemini_retry` was correct and `exp8_step40` was wrong. A direct read of the live
+`.results_parts` immediately afterwards had advanced one more case, adding `1520_1`;
+the current queue to inspect is therefore `29` cases:
+
+```text
+28, 92, 100, 148, 164, 301, 438, 462, 541, 557, 572, 580,
+619, 683, 780, 804, 845, 957, 1030, 1143, 1151, 1159, 1206, 1276,
+1472_3, 1480_2, 1496_4, 1520_0, 1520_1
+```
+
+| sample_id | exp8 step40 | GT | gemini_retry | base score | sft_0513 score |
+| --- | --- | --- | --- | ---: | ---: |
+| `28` | empty | `A` | `A` | `1` | `1` |
+| `92` | `D` | `C` | `C` | `0` | `0` |
+| `100` | `A. yes` | `B` | `B` | `0` | `0` |
+| `148` | `B` | `A` | `A` | `0` | `0` |
+| `164` | `A` | `B` | `B` | `0` | `0` |
+| `301` | `B` | `A` | `A` | `0` | `0` |
+| `438` | `C` | `B` | `B` | `0` | `0` |
+| `462` | `E` | `B` | `B` | `1` | `0` |
+| `541` | `D` | `C` | `C` | `0` | `0` |
+| `557` | `B` | `C` | `C` | `1` | `0` |
+| `572` | empty | `A` | `A` | `1` | `1` |
+| `580` | empty | `C` | `C` | `1` | `1` |
+| `619` | `D` | `C` | `C` | `1` | `0` |
+| `683` | `D` | `B` | `B` | `0` | `0` |
+| `780` | `D` | `A` | `A` | `0` | `0` |
+| `804` | `A` | `C` | `C` | `1` | `0` |
+| `845` | `C` | `A` | `A` | `0` | `1` |
+| `957` | `A. A metal clasp.` | `C` | `C` | `1` | `0` |
+| `1030` | `A. There is a green traffic light illuminated.` | `B` | `B` | `0` | `0` |
+| `1143` | empty | `B` | `B` | `1` | `1` |
+| `1151` | empty | `B` | `B` | `1` | `1` |
+| `1159` | `B` | `C` | `C` | `0` | `0` |
+| `1206` | empty | `A` | `A` | `1` | `1` |
+| `1276` | `B` | `A` | `A` | `1` | `0` |
+| `1472_3` | `No` | `1` | correct long-form yes answer | `0` | `0` |
+| `1480_2` | `No` | `1` | correct long-form yes answer | `0` | `0` |
+| `1496_4` | `No` | `1` | correct long-form yes answer | `0` | `0` |
+| `1520_0` | `No` | `1` | `Yes` | `1` | `1` |
+| `1520_1` | `No` | `1` | `Yes` | `0` | `1` |
+
+Priority buckets for manual trace analysis:
+
+- Empty-answer / abstention despite QA: `28`, `572`, `580`, `1143`, `1151`, `1206`.
+- Multiple-choice wrong-letter choices: `92`, `100`, `148`, `164`, `301`, `438`, `462`,
+  `541`, `557`, `619`, `683`, `780`, `804`, `845`, `957`, `1030`, `1159`, `1276`.
+- Yes/no temporal or causal misses: `1472_3`, `1480_2`, `1496_4`, `1520_0`, `1520_1`.
+
+Main failure taxonomy from the final-step traces:
+
+| Failure type | Cases | Trace diagnosis |
+| --- | --- | --- |
+| QA present but model abstains or says no question | `1143`, `1151`, `1206`, `1520_0`, `1520_1` | Final prompts contain QA and images, but exp8 raw output says "no question" or leaves `<answer>` empty while describing the answer-relevant scene. This is model-side answer gating / prompt-following failure. |
+| Over-conservative "not enough evidence" | `28`, `572`, `580`, `1472_3`, `1480_2`, `1496_4` | The model often sees partial evidence but refuses to decide. For recipe/procedure and CRR questions it waits for a future or completed action even when the target answer is inferable from the current/latest evidence or memory. |
+| Past-memory / object-location tracking failure | `28`, `92`, `148`, `164`, `619` | The model either loses the object in memory (`28`), answers from the current visible support instead of the earlier queried location (`92`, `148`, `619`), or substitutes a likely object class from context instead of the actual inserted object (`164`). |
+| Procedure order confusion | `541`, `557`, `572`, `580` | The model confuses previous and next cooking steps. It answers an earlier ingredient step for "after noodles" (`557`), chooses tomato puree instead of cover pan after chicken/spices (`541`), or abstains when the recipe sequence is enough (`572`, `580`). |
+| Overconfident answer where GT is unable | `301`, `438`, `462` | These HLD cases have `Unable to answer` as GT. Exp8 hallucinates a specific answer from weak visual evidence: rice cooker location, closet vs bedroom door, chandelier target. |
+| Fine visual detail error | `683`, `780`, `804`, `845`, `957`, `1030`, `1276` | These are mostly visual discrimination failures: fridge side compartment, facing direction, court depth/audience side, counting three dogs, zip tie vs metal clasp, traffic light color, and standing still vs dancing/sipping. |
+| Option granularity / semantic mismatch | `100`, `1159`, `1206` | The model's observation is plausible but maps to the wrong option granularity. `100` is borderline because the current frame visually looks open while GT/Gemini say closed from memory; keep it as an annotation/timestamp ambiguity candidate. `1159` picks dishwashing while GT asks broader cleaning. `1206` has a possible label/scene mismatch. |
+
+Case-level short diagnoses:
+
+| sample_id | Diagnosis |
+| --- | --- |
+| `28` | Book/notebook was not retained in memory; exp8 says no book visible and abstains, while base/SFT/Gemini answer table. |
+| `92` | Soy sauce location is in a box; exp8 latches onto the later/current bottle/sink area. |
+| `100` | Borderline visual/timestamp ambiguity: exp8 sees drawer open at `395-396s`, but Gemini memory says it was closed and GT is no. |
+| `148` | Asked source location before picking the litter bin; exp8 answers physical support "on the floor" instead of room-level "stock room". |
+| `164` | Washing-machine object identity failure: exp8 infers clothes from context, but GT is detergent. |
+| `301` | GT is Unable; exp8 overconfidently claims top cabinet based on weak/old evidence. |
+| `438` | Bedroom door question; exp8 answers about closed closet doors, not the bedroom door. |
+| `462` | Chandelier target not determined; exp8 over-interprets background and chooses living room. |
+| `541` | Recipe order error: after chicken/spices/mix should cover pan; exp8 chooses earlier tomato puree step. |
+| `557` | Recipe order error: after noodles/stir should add sauce; exp8 chooses vegetables/chicken step before noodles. |
+| `572` | State already contains drain/rinse beans but exp8 abstains because sauteing garlic has not happened yet. |
+| `580` | Exp8 treats the spring-roll frying follow-up as unanswerable future; Gemini uses recipe sequence and answers remove to paper towels. |
+| `619` | Box action verb error: trace shows putting box down before sitting; exp8 says opened. |
+| `683` | Fine fridge-location error: chooses door middle holder instead of second/fourth side compartments. |
+| `780` | Facing-direction error: girl is facing left; exp8 says forward. |
+| `804` | Court-depth/perspective error: white-shirt players are closer to audience; exp8 says red. |
+| `845` | Counting miss: exp8 answers two dogs although a third dog enters. |
+| `957` | Attachment object miss: zip tie mistaken for metal clasp. |
+| `1030` | Traffic light color/stale-memory error: exp8 answers green, GT/Gemini yellow. |
+| `1143` | Drawer/cabinet naming mismatch triggers abstention despite clear option `B`. |
+| `1151` | Sink/faucet action anticipation failure; exp8 describes the faucet-adjacent action but says no question. |
+| `1159` | Option granularity: exp8 picks washing dishes; GT is broader "clean with sponge". |
+| `1206` | Possible noisy-label case: trace is workbench/tool scene but option says napkin/table; exp8 still wrongly abstains despite QA. |
+| `1276` | Action classification error: woman is standing and drinking; exp8 over-interprets as dancing while sipping. |
+| `1472_3` | CRR future-intent miss: exp8 sees a person near a tree but says insufficient; Gemini uses latest context to answer yes. |
+| `1480_2` | CRR completion miss: exp8 only records holding books, missing that the man places them on the table. |
+| `1496_4` | Causal memory miss: reason for prisoners' excitement is guards spraying water; exp8 looks only at later distressed conversation. |
+| `1520_0` | SSR step is happening: adding beetroot/raw material to processor; exp8 describes it but says no question. |
+| `1520_1` | Same SSR failure extended: exp8 describes adding raw materials but outputs empty/no. |
+
+##### Live degradation after ~205 samples
+
+At a live `.results_parts` read with `353` completed samples, exp8 step40 was
+`180/353 = 50.99%`. The drop is not a change in the model; the later evaluation slice is
+dominated by task types where exp8 is weak:
+
+| Slice | exp8 | gemini_state | gemini_retry | base | sft_0513 | Main contents |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| first `205` | `138/205 = 67.32%` | `136/205 = 66.34%` | `152/205 = 74.15%` | `130/205 = 63.41%` | `130/205 = 63.41%` | mixed OVO tasks |
+| `205-270` | `29/65 = 44.62%` | `47/65 = 72.31%` | `45/65 = 69.23%` | `33/65 = 50.77%` | `40/65 = 61.54%` | mostly CRR + SSR |
+| `270-current` | `13/83 = 15.66%` | `35/83 = 42.17%` | `25/83 = 30.12%` | `25/83 = 30.12%` | `41/83 = 49.40%` | mostly REC counting |
+| `205-current` | `42/148 = 28.38%` | `82/148 = 55.41%` | `70/148 = 47.30%` | `58/148 = 39.19%` | `81/148 = 54.73%` | SSR/REC-heavy tail |
+
+By task type in the degrading tail:
+
+- `SSR/forward`: `33/69 = 47.8%`. The model frequently outputs `No` or empty even when the
+  prompted step is visibly happening, e.g. `1520_0`, `1520_1`, `1528_0`, `1545_1`.
+- `REC/forward`: `6/70 = 8.6%`. The model badly undercounts repeated actions or fails to
+  answer numeric-count questions. Examples: `1562_0-1562_4`, `1578_0-1578_4`,
+  `1603_14-1603_15`, `1635_0-1635_6`.
+- `CRR/forward`: `3/9 = 33.3%`. Some CRR questions ask only whether enough evidence exists,
+  but exp8 outputs content answers or stale object labels instead of `Yes/No`, e.g. `1504_2`,
+  `1512_2`.
+
+Representative trace evidence:
+
+- `1520_0`: QA asks if the current tutorial step is "add raw materials". Exp8 state says the
+  woman is pouring the yellow bowl into the food processor, but then says "There is no
+  question to answer" and outputs empty/`No`. This is the same answer-gating failure seen
+  earlier.
+- `1528_0`: QA asks "remove pumpkin pedicle". Exp8 state says the man begins cutting around
+  the pumpkin with a knife, then again says no QA and outputs empty/`No`.
+- `1562_0`: REC asks how many times someone shows something to the camera. Exp8 state says a
+  person is holding up a jersey and displaying it to the camera, but outputs empty instead of
+  `1`.
+- `1603_15`: REC asks total pole vault count. Exp8 answers `5` while GT is `7`; the memory
+  stores generic "multiple vaults" instead of a robust running count.
+- `1635_6`: REC asks total cliff diving count. Exp8 state says one person jumped twice and a
+  second person is mid-air, but outputs empty/`0` while GT is `5`; repeated-event counting is
+  not preserved in memory.
+
+##### Final 364/364 task-level comparison
+
+Final live monitor snapshot at `2026-05-15 15:28:36`: exp8 step40 is
+`180/364 = 49.45%`, Gemini state is `221/364 = 60.71%`, Gemini retry is
+`225/364 = 61.81%`, and base is `189/364 = 51.92%`. Same-id task-level comparison
+including SFT:
+
+| Task | n | exp8 | gemini_state | gemini_retry | base | sft_0513 | exp8 vs base | exp8 vs sft |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| ACR | 14 | `12/14 = 85.7%` | `13/14 = 92.9%` | `13/14 = 92.9%` | `12/14 = 85.7%` | `11/14 = 78.6%` | `+0.0` | `+7.1` |
+| ASI | 19 | `9/19 = 47.4%` | `10/19 = 52.6%` | `14/19 = 73.7%` | `13/19 = 68.4%` | `11/19 = 57.9%` | `-21.1` | `-10.5` |
+| ATR | 14 | `11/14 = 78.6%` | `9/14 = 64.3%` | `12/14 = 85.7%` | `10/14 = 71.4%` | `12/14 = 85.7%` | `+7.1` | `-7.1` |
+| CRR | 30 | `12/30 = 40.0%` | `14/30 = 46.7%` | `16/30 = 53.3%` | `8/30 = 26.7%` | `12/30 = 40.0%` | `+13.3` | `+0.0` |
+| EPM | 37 | `22/37 = 59.5%` | `23/37 = 62.2%` | `24/37 = 64.9%` | `19/37 = 51.4%` | `20/37 = 54.1%` | `+8.1` | `+5.4` |
+| FPD | 13 | `7/13 = 53.8%` | `8/13 = 61.5%` | `11/13 = 84.6%` | `9/13 = 69.2%` | `9/13 = 69.2%` | `-15.4` | `-15.4` |
+| HLD | 23 | `17/23 = 73.9%` | `16/23 = 69.6%` | `13/23 = 56.5%` | `13/23 = 56.5%` | `10/23 = 43.5%` | `+17.4` | `+30.4` |
+| OCR | 19 | `18/19 = 94.7%` | `18/19 = 94.7%` | `18/19 = 94.7%` | `16/19 = 84.2%` | `17/19 = 89.5%` | `+10.5` | `+5.3` |
+| OJR | 23 | `18/23 = 78.3%` | `15/23 = 65.2%` | `19/23 = 82.6%` | `19/23 = 82.6%` | `18/23 = 78.3%` | `-4.3` | `+0.0` |
+| REC | 81 | `6/81 = 7.4%` | `30/81 = 37.0%` | `20/81 = 24.7%` | `20/81 = 24.7%` | `31/81 = 38.3%` | `-17.3` | `-30.9` |
+| SSR | 69 | `33/69 = 47.8%` | `51/69 = 73.9%` | `49/69 = 71.0%` | `36/69 = 52.2%` | `47/69 = 68.1%` | `-4.3` | `-20.3` |
+| STU | 22 | `15/22 = 68.2%` | `14/22 = 63.6%` | `16/22 = 72.7%` | `14/22 = 63.6%` | `13/22 = 59.1%` | `+4.5` | `+9.1` |
+
+Takeaways:
+
+- Clear gains vs base/SFT: `HLD`, `OCR`, `EPM`, `STU`, and partly `CRR`/`ATR`.
+- Clear regressions: `REC`, `SSR`, `ASI`, `FPD`.
+- `REC` is the largest single blocker: only `6/81 = 7.4%`, losing `25` net cases vs
+  SFT and `14` net cases vs base/Gemini retry. This task needs explicit running-count
+  memory rather than generic event summaries.
+- `SSR` remains a prompt-following / answer-gating issue: the model often describes the
+  queried step but still answers `No` or empty.
+
+##### Detailed trace investigation: ASI / CRR / REC / FPD
+
+Raw final and intermediate trace outputs were inspected for all wrong cases in these four
+tasks:
+
+- `ASI`: `10` wrong out of `19`.
+- `CRR`: `18` wrong out of `30`.
+- `REC`: `75` wrong out of `81`.
+- `FPD`: `6` wrong out of `13`.
+
+###### ASI: procedure-order reasoning is not step-indexed
+
+Wrong cases: `494`, `502`, `510`, `518`, `541`, `549`, `557`, `572`, `580`, `619`.
+
+Important split:
+
+- Not exp8-specific / likely ambiguous or hard labels: `494`, `502`, `510`, `518`.
+  Gemini/base/SFT are also wrong on these. Example `494`: the prompt asks what happens
+  after loading a new phone battery, but the current trace is still removing the old battery;
+  exp8 raw state says "the new battery has not been loaded yet" and answers `D` ("take down
+  the old battery"), while GT is `B`.
+- Exp8-specific or actionable failures: `541`, `557`, `572`, `580`, `619`.
+
+Representative raw evidence:
+
+- `541`: prompt asks what happens after adding chicken/salt/coriander/garam masala and mixing.
+  Exp8 state reviews earlier spice/tomato steps and answers `D` ("add tomato puree"), but
+  Gemini bridge reaches the later action: "cover the pan". The model is anchoring to an
+  earlier ingredient step instead of the target step boundary.
+- `557`: prompt asks after adding noodles and stirring. Exp8 answers `B` ("add carrots green
+  onion and chicken") although Gemini bridge shows those were before noodles; after noodles is
+  sauce. This is a before/after alignment error.
+- `572`: exp8 state itself says the woman drains/rinses cannellini beans, but because sauteing
+  garlic has not happened yet it outputs empty. The question is answerable from the recipe
+  sequence/options, so this is over-conservative gating.
+- `580`: exp8 sees the oil/wok stage but says the step after golden-brown rolls is future and
+  unanswerable. Gemini chooses the recipe-consistent next step `C`.
+- `619`: exp8 raw bridge says the person places the box on the floor, but answer is `D`
+  ("opened"). The correct option is `C` ("put down"). This is verb/action mapping failure.
+
+ASI improvement plan:
+
+- Add a procedure memory format, not just free-text deltas. Example fields:
+  `step_id`, `time`, `action`, `objects`, `status=observed|inferred|future_recipe`.
+- For ASI prompts containing `before`/`after`, force a two-stage decision:
+  identify the anchor step in memory/options, then choose the adjacent step.
+- Do not let "future step not shown" cause empty answers when the options are procedural
+  recipe/tutorial steps and one option is the natural next/previous step.
+- Add a repair path for multiple-choice ASI when QA exists but `<answer>` is empty.
+
+###### CRR: format confusion plus late-evidence misses
+
+Wrong cases: `1472_2`, `1472_3`, `1472_4`, `1480_2`, `1480_3`, `1480_4`,
+`1488_2`, `1488_3`, `1488_4`, `1496_2`, `1496_3`, `1496_4`, `1504_2`,
+`1504_3`, `1504_4`, `1512_2`, `1512_3`, `1512_4`.
+
+Raw-output summary over the `18` wrong CRR cases:
+
+- `8` cases output `No` while GT is `Yes`.
+- `10` cases output a content answer instead of the required `Yes/No`.
+- All `18` wrong traces contain many states with "no question" language; later QA is present,
+  but the model often keeps treating the task as normal content QA or silence.
+
+Representative raw evidence:
+
+- `1504_2`: prompt explicitly says "Decide whether ... enough information ... Answer only
+  Yes or No." Exp8 result is "The woman finds a snake on the floor in her room." This content
+  proves the answer should be `Yes`, but the output format is wrong.
+- `1512_2`: asks whether there is enough evidence to know what is in the blue box. Exp8
+  says "The blue box contains a keychain" instead of `Yes`, and the object is also wrong
+  compared with Gemini's necklace/pendant trace.
+- `1488_3`: asks whether the video has enough information about what the man does next with
+  the yellow life float. Exp8 outputs a descriptive sentence about pulling the float, not
+  `Yes/No`.
+- `1480_2` and `1496_4`: exp8 answers `No` even though later memory contains the books being
+  placed/handed over or the prisoners being sprayed with water. These are late-evidence misses.
+
+CRR improvement plan:
+
+- Make CRR a separate prompt template: "This is a sufficiency-classification task, not a
+  content-answer task. Output `Yes` if the content answer is knowable, otherwise `No`."
+- Add few-shot examples where a content answer is available but the required output is `Yes`.
+- Add a repair/postprocess rule for CRR: if the answer is neither `Yes` nor `No`, retry with
+  only the question and the relevant memory; as a weaker heuristic, non-empty content answers
+  usually imply `Yes`.
+- Keep an active QA flag in memory so "no question" boilerplate cannot dominate after a CRR
+  question appears.
+
+###### REC: no reliable running counter
+
+Wrong cases: `75/81`. The full sequences show systematic undercounting:
+
+| video prefix | action | GT sequence | exp8 sequence |
+| --- | --- | --- | --- |
+| `1562` | showing something to the camera | `1,2,3,4,4` | empty, empty, `2,2,2` |
+| `1570` | hitting something against/with something | `0,1,2,3,4,5,5` | `0,0,0,0,0,0,0` |
+| `1578` | showing something to the camera | `1,2,3,4,4` | empty, `0,0,0,0` |
+| `1586` | showing something to the camera | `0,1,2,3,4,4` | all `0` |
+| `1594` | opening something | `1,1,1,1` | empty, `0,0,0` |
+| `1603` | pole vault | `0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,7` | `0,0,1,1,1,2,2,3,2,4,4,4,4,4,5,5` |
+| `1611` | tennis swing | `0,0,1,1,2,3,3,3` | all `0` |
+| `1619` | clean and jerk | `1,1,1` | all `0` |
+| `1627` | shotput | `1,2,3,3,4,5,5,6,6,7,7` | `0,1,1,1,1,0,1,1,3,5,1` |
+| `1635` | cliff diving | `1,1,2,3,4,4,5,5,6,6,7,8,8,8,8,8` | `0,0,0,1,1,2,0,4,1,0,1,5,1,1,3,7` |
+
+Raw-output summary over the `75` wrong REC cases:
+
+- `71/75` traces have states containing "no question" or "no question to answer" even though
+  the REC QA is present from the start.
+- `4/75` are empty answers; most others are numeric but stale or undercounted.
+- The model usually describes the visible action, but the memory stores generic text such as
+  "continues" or "multiple instances" instead of a countable event ledger.
+
+Representative raw evidence:
+
+- `1562_0`: prompt asks count of "showing something to the camera"; exp8 state says the
+  person is holding up a jersey and displaying it to the camera, then says no question and
+  outputs empty instead of `1`.
+- `1603_15`: pole vault GT is `7`; exp8 answers `5`. Its state says "multiple instances"
+  rather than listing completed vaults, so the count cannot be recovered.
+- `1635_6`: cliff diving GT is `5`; exp8 state says one person jumped twice and a second
+  person is mid-air, then outputs empty/`0`. Count state is not preserved.
+
+REC improvement plan:
+
+- Add a dedicated counter memory for REC:
+  `counter_name`, `count`, `last_counted_event_time`, `pending_event`, `evidence`.
+- Increment only on completed action cycles, with debouncing so one long action does not count
+  multiple times.
+- Output the current count at every REC QA step; never output "no question" when a counting QA
+  is active.
+- Train/reward intermediate count correctness, not only final trace quality. The current delta
+  rewards do not force count preservation.
+
+###### FPD: anticipation plus option mapping
+
+Wrong cases: `1120`, `1143`, `1151`, `1159`, `1198`, `1206`.
+
+Important split:
+
+- Strong exp8 failures: `1143`, `1151`, `1159`.
+- Likely ambiguous / label-boundary cases: `1120`, `1198`, `1206`.
+
+Representative raw evidence:
+
+- `1143`: exp8 says the person put clothing in a drawer and opens a cabinet, then outputs
+  empty because it thinks there is no drawer question. This is drawer/cabinet synonym mismatch
+  plus answer gating.
+- `1151`: exp8 describes sink/faucet-adjacent action but says "There is no question to
+  answer"; Gemini maps it to opening the faucet.
+- `1159`: exp8 selects `B` ("wash dishes") because a sponge is being used on dishes; GT is
+  broader `C` ("clean with sponge"). This is option granularity.
+- `1198`: exp8 and Gemini both answer power drill, but GT is saw. Raw trace shows the person
+  reaching for/picking up a power drill, so this looks like annotation/timestamp ambiguity.
+- `1206`: trace scene is workbench/tools while option says napkin/table; likely label/scene
+  mismatch, though exp8 still incorrectly abstains.
+
+FPD improvement plan:
+
+- Add a prompt rule for "about to / preparing to": choose the most likely option from affordance
+  and immediate hand/object trajectory; do not require the future action to complete.
+- Add synonym/affordance normalization for furniture and tools (`drawer`/`cabinet`,
+  `cleaning`/`washing dishes`, `faucet`/`sink`).
+- Add empty-answer repair for multiple-choice FPD.
+- Maintain a small label-noise list for cases like `1198` and `1206` so they do not dominate
+  training conclusions.
+
+##### Refined conclusions for next iteration
+
+1. `ASI` in this dataset is best understood as action-sequence inference over instructional
+   videos. The question names a procedure step and asks what happens before/after it. The
+   model must recover the ordered recipe/tutorial steps, not merely describe the latest
+   visible frame. Delta oversimplification hurts this because it removes the exact step
+   boundaries and action-object pairs needed for before/after alignment.
+
+2. `572` and `580` are not mainly "missing memory" cases. In both traces, exp8 has enough
+   evidence in raw state/memory but applies the wrong answering policy:
+
+   - `572`: dataset row is YouCook2, question at `221s`, answer is `A` ("drain and rinse
+     cannellini beans and set aside"). Exp8 timeline records holding cans of cannellini beans
+     at `125-150s`, pouring/rinsing one can at `155-180s`, and pouring the second can at
+     `215-221s`. Final raw state says the woman has been preparing ingredients including
+     rinsing beans, but then refuses because "sauteing minced garlic" has not happened yet.
+     The error is over-conservative procedural gating: it treats the named anchor step as
+     needing to be observed before answering, although the before-step is already observed.
+   - `580`: dataset row is YouCook2, question at `458s`, answer is `C` ("remove brown rolls
+     and place them on paper towels"). Exp8 timeline records filling preparation, wrapper
+     filling/rolling, several finished rolls on a baking sheet at `445-450s`, and oil/wok at
+     `450-458s`. Final raw state says this is a future step and refuses. The error is again
+     not missing images but a mismatch between live evidence policy and recipe/procedure
+     semantics. For ASI, the model should use the procedure context and options to answer
+     adjacent steps even if the named future anchor is not yet visually completed.
+
+3. `CRR` data has a built-in format trap. The dataset row stores a content question and answer
+   (e.g. `1504`: question asks what frightened the woman; answer is "A snake"), plus
+   `test_info` with `type=0/1` at different timestamps. The evaluation prompt asks whether
+   enough visual evidence is available and requires `Yes/No`. Exp8 often answers the content
+   question instead of the sufficiency question. Future prompts/training should separate
+   content-answer QA from sufficiency-classification QA and include explicit few-shot examples
+   where the content answer is known but the required output is only `Yes`.
+
+4. `FPD` is not only entity recognition. The failures mix several causes:
+
+   - object naming/synonym mismatch: `1143` uses `cabinet` vs question `drawer`.
+   - action affordance / anticipation: `1151` sees sink/faucet-adjacent movement but does not
+     map it to "open faucet".
+   - option granularity: `1159` picks "wash dishes" while GT uses broader "clean with sponge".
+   - possible label/timestamp noise: `1198` raw trace supports power drill while GT says saw;
+     `1206` trace is workbench/tools while option says napkin/table.
+
+5. For the next iteration, the highest-impact changes should be:
+
+   - Add task-aware memory fields: procedure step ledger for `ASI`, running counter for `REC`,
+     active sufficiency flag for `CRR`, and affordance/object-normalization hints for `FPD`.
+   - Penalize or repair `QA present + empty answer` and `QA present + state says no question`.
+   - Add a CRR-specific output validator: only `Yes/No` is valid; non-empty content answers
+     should be retried.
+   - Add REC-specific reward on the numeric count at every step, not only generic delta quality.
+
+#### Empty-answer group: 28 / 572 / 580 / 1143 / 1151 / 1206
+
+Checked the raw final-step traces against `gemini_retry` for these six cases. The final
+prompts all contain the QA block, all contain nonzero prompt images, and all include the
+current frame(s). The current model's raw outputs literally contain empty answers such as
+`<answer></answer>`, so this is not an answer parser bug. The current model also describes
+the visible scene in the generated state, so the evidence points to model-side answer gating
+or visual/action reasoning failures rather than missing image input.
+
+| sample_id | Final current frames | prompt images | exp8 raw answer | gemini_retry | Main diagnosis |
+| --- | --- | ---: | --- | --- | --- |
+| `28` | `210-214s` | `21` | empty | `A` | Object/memory tracking failure. The prompt asks where the carried book ended up; exp8 says no book is visible and abstains, while Gemini uses the bridge that the notebook/book was placed on the table. |
+| `572` | `220-221s` | `19` | empty | `A` | Process-order reasoning failure. Exp8's own state says the person drained/rinsed cannellini beans, but it refuses because sauteing garlic has not happened yet. |
+| `580` | `455-458s` | `18` | empty | `C` | Future/procedure reasoning failure. Exp8 sees the oil/wok stage but treats "after cooking until golden brown" as unanswerable, while Gemini picks the recipe-consistent next step. |
+| `1143` | `15-16s` | `3` | empty | `B` | Prompt-following/object-name mismatch. Exp8 sees the person moving clothing into a drawer/cabinet area but says there is no drawer question, despite QA being present. |
+| `1151` | `235-240s` | `22` | empty | `B` | Prompt-following/action anticipation failure. Exp8 describes sink/faucet-adjacent activity but still says there is no question to answer; Gemini maps the motion to opening the faucet. |
+| `1206` | `25-28s` | `7` | empty | `A` | Prompt-following plus possible dataset label/noisy-scene issue. The trace scene is workbench/tools, while the option says napkin/table; exp8 still saw the image and abstained instead of choosing. |
+
+Actionable hypothesis: these are mostly "answer required but model abstains" cases. A useful
+debug metric is `QA present + empty <answer>` rate. For evaluation, a repair pass could retry
+only these cases with a hard instruction to choose one option. For RL/prompting, these should
+be penalized separately from wrong-letter choices because the failure mode is different.
+
+##### Sample 1143 detail
+
+Question appears at `t=15.1`:
+
+```text
+Question: What is this person doing with the drawer?
+Options:
+A. The person is testing the drawer's mechanisms for maintenance.
+B. The person is opening the drawer to retrieve or place an item inside.
+C. The person is cleaning out the drawer for cleanliness.
+D. The person is inspecting the contents for safety.
+```
+
+The final exp8 prompt contains this QA block plus memory:
+
+- `1.0-9.0`: person handles clothing and puts it into a drawer.
+- `10.0-15.0`: person picks up another piece of clothing and moves towards a cabinet.
+- current frame `15.0-16.0`: `dataset/ovo/video/1143/000015.jpg`.
+
+Exp8 final raw output:
+
+```xml
+<state>The person was manipulating a piece of clothing and putting it into a drawer, then picked up another piece of clothing and moved towards a cabinet. The current frames show the person opening the cabinet. There is no question about the drawer, so I do not need to answer.</state>
+<answer></answer>
+<delta t="10.0-16.0">The person picks up another piece of clothing and moves towards a cabinet, then opens the cabinet.</delta>
+```
+
+Gemini retry final raw output:
+
+```xml
+<eta>18.0</eta>
+<answer>B</answer>
+<note t="15.0-16.0" frame="1"/>
+<bridge t="10.0-16.0">The person puts the folded clothing away, picks up a blue item, inspects it, moves towards a blue cabinet, opens the cabinet door, and prepares to place the item inside.</bridge>
+```
+
+Diagnosis: the model has enough visual and memory evidence to choose `B`; it even says
+"putting it into a drawer" and "opening the cabinet". The failure is that it treats the
+current object as a cabinet rather than the drawer mentioned by the question, then incorrectly
+uses that mismatch to abstain. This is a model-side prompt-following / object-name mismatch
+failure, not a missing-QA or missing-image program bug.
+
+#### Sample 20: Utensil Holder / Frying Pan
+
+Full question at `t=304.0`:
+
+```text
+Question: What did I pick from the utensil holder?
+Options:
+A. Knife; B. Spoon; C. Dying pan; D. Fork;
+
+Respond only with the letter corresponding to your chosen option.
+Do not include any additional text or explanation in your response.
+```
+
+Result:
+
+- Ground truth: `C`.
+- `qwen3_rl_exp8_step40`: `B` (`Spoon`), incorrect.
+- Gemini teacher trace: `C`, correct.
+
+Current model timeline:
+
+- `0-10s`: kitchen counter, sink area, lower drawer/cabinet opened; metal bowl and colander
+  retrieved. The model already records generic kitchen tools but no later-use object identity.
+- `10-30s`: colander placed in the sink; potatoes taken out of packaging and washed.
+- `30-55s`: potatoes washed; first potato peeled with a knife over the cutting board.
+- `55-105s`: first potato peeled/cut; cut pieces placed into a metal bowl and rinsed.
+- `105-194s`: second potato peeled and cut. The model repeatedly summarizes this as
+  "continues to peel the second potato", which is correct but very repetitive and consumes most
+  of the memory with low-information deltas.
+- `195-224s`: cut potatoes rinsed; plate taken out; potatoes transferred to the plate.
+- `225-234s`: plastic wrap picked up; plate wrapped and put in the microwave.
+- `235-259s`: potato peels, cutting board, and knife cleaned up at the sink.
+- `260-295s`: current model says the operator picks up a pot from the stove, pours water into
+  the sink, washes/scrubs the pot, holds it over the sink, and dries it with a towel.
+- `295-300s`: current model says the operator moves toward the stove area.
+- `300-304s`: current model answers `B`, with the final bridge:
+
+  ```text
+  The operator holds the pot over the sink, dries it with a towel, moves towards the stove area,
+  and then reaches for a spoon from the utensil holder near the sink.
+  ```
+
+Gemini comparison timeline around the divergence:
+
+- `248-255s`: after microwaving potatoes, Gemini records washing the cutting board and knife,
+  then washing hands.
+- `257-265s`: Gemini records a missing action that the current model did not capture:
+
+  ```text
+  The person turns away from the sink, opens the drawer under the counter, and takes out a small
+  frying pan. The person places the small frying pan on the stove next to the boiling pot.
+  ```
+
+- `263-285s`: Gemini tracks the pot/eggs sequence: the person empties/rinses the pot, places two
+  eggs in it, and fills it with water.
+- `295-304s`: Gemini says the pot with eggs/water is placed on the stove, then the person turns
+  back toward the counter. Its final state says the person is picking up a frying pan from the
+  dish rack / holder area and therefore answers `C`.
+
+Error diagnosis:
+
+- The current model loses the `small frying pan` event around `257-265s`. Instead, from `260s`
+  onward it collapses the scene into "picked up a pot from the stove / washed a pot".
+- By the final question, the model no longer has a reliable representation of the pan. It then
+  hallucinates a visually plausible kitchen utensil, `spoon`, from the same area.
+- This is a long-horizon memory error plus a fine-grained object recognition error. The model's
+  format reward is perfect on this sample, but the memory content is not discriminative enough:
+  repetitive potato-peeling summaries dominate earlier context, while the key small-pan event is
+  not preserved.
+- Gemini succeeds because it names and preserves the object as `small frying pan` at the moment it
+  appears, then carries that object identity forward to the final backward question.
 
 ## Experiment 9: Local Qwen3VL Judge
 
@@ -848,7 +1445,126 @@ memory 里同时存在多个语义接近的候选动作，state 选了符合 que
 - 接受门槛：每个新 checkpoint 在做 full 评测前必须先过 HLD full 或 HLD 1/8 + Unable rate + same-id non-HLD net vs GRPO0509 + REC 计数偏差 + SSR/CRR FP/FN + notes/step + repair/step 这套快速指标。
 - Preference / DPO 锚点样本：`1517_5`、`1517_8`、`1520_3`、`1567_0`、`63`、`491`、`20`、`341`、`390`、`1471_4`（positive trace = GRPO0509 / SFT 正确轨迹，negative trace = RL0511 错误轨迹）。
 
+## Evaluation Results Snapshot
+
+Last updated: 2026-05-15. Scores below are read from `outputs/**/results_summary.json`
+or `outputs/**/ovo_results_summary.json` with bounded-depth scan. OVO scores use
+`total_avg` from the summary file; StreamingBench scores use exact MCQ accuracy.
+
+### StreamingBench
+
+| Output dir | Split | Model / note | Samples | Score | Details |
+| --- | --- | --- | ---: | ---: | --- |
+| `outputs/streamingbench_real_exp8_step40_grouped` | `real` | `models/qwen3_rl_exp8_step40`; grouped by video on GPUs 0-6 | 2500 | 82.68% | 2067/2500; grouped actual calls 52,311 vs logical 132,742, saving 2.54x |
+| `outputs/streamingbench_sqa_exp8_step40` | `sqa` | `models/qwen3_rl_exp8_step40`; sequential QA history enabled | 250 | 41.20% | 103/250; no grouped video merge |
+| `outputs/streamingbench_proactive_exp8_step40` | `proactive` | `models/qwen3_rl_exp8_step40`; proactive trigger scoring, GPUs 0-7 | 235 | 60.43% | 142/235 final answer correct; time correct 146/235 = 62.13%; skipped 15 samples from missing videos `sample_45_proactive.mp4`, `sample_48_proactive.mp4`, `sample_50_proactive.mp4` |
+| `outputs/streamingbench_omni_mislead_anomaly_exp8_step40` | `omni` visual subset | `models/qwen3_rl_exp8_step40`; grouped by video; task filter `Misleading Context Understanding,Anomaly Context Understanding` | 500 | 61.20% | 306/500; Misleading 150/250 = 60.00%; Anomaly 156/250 = 62.40%; grouped actual call saving 2.75x |
+
+StreamingBench real by task for `outputs/streamingbench_real_exp8_step40_grouped`:
+
+| Task | Correct / Total | Accuracy |
+| --- | ---: | ---: |
+| Clips Summarize | 294/317 | 92.74% |
+| Text-Rich Understanding | 292/321 | 90.97% |
+| Attribute Recognition | 260/306 | 84.97% |
+| Prospective Reasoning | 90/108 | 83.33% |
+| Object Recognition | 305/367 | 83.11% |
+| Action Recognition | 289/353 | 81.87% |
+| Causal Reasoning | 103/128 | 80.47% |
+| Event Understanding | 126/161 | 78.26% |
+| Spatial Understanding | 192/246 | 78.05% |
+| Counting | 116/193 | 60.10% |
+
+### OVO Full Evaluations
+
+Model/backend values below are read from each output `run_config.yaml` when it exists; Gemini
+rows are matched to the corresponding checked-in config or launch script.
+
+| Output dir | Model / backend | Samples | OVO total_avg | Category scores |
+| --- | --- | ---: | ---: | --- |
+| `outputs/ovo_gemini_full_retry` | Gemini `gemini-2.5-pro` | n/a | 66.75% | backward 65.02%; realtime 85.54%; forward 49.68% |
+| `outputs/ovo_qwen3vl8b_grpo_0509_full_state_note_t` | vLLM `/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl_8b_grpo_0509` | 3035 | 63.90% | backward 60.88%; realtime 76.08%; forward 54.74% |
+| `outputs/ovo_qwen3vl8b_finetuned_full_state_note_t` | vLLM `/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm` | 3035 | 62.71% | backward 59.92%; realtime 78.15%; forward 50.07% |
+| `outputs/streamtext/ovo_gemini_flash_full` | StreamText + Gemini `gemini-2.5-flash` | 3035 | 62.22% | backward 68.50%; realtime 76.09%; forward 42.06% |
+| `outputs/ovo_exp1_rl0511_step60_full` | vLLM `models/exp1_rl0511_step60` | 3035 | 59.87% | backward 47.70%; realtime 77.72%; forward 54.17% |
+| `outputs/ovo_qwen3vl8b_base_full_state_note_t` | vLLM `/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct` | 3035 | 57.52% | backward 60.59%; realtime 75.10%; forward 36.87% |
+
+### OVO 1-of-8 / Subset Evaluations
+
+| Output dir | Model / backend | Samples | OVO total_avg | Category scores |
+| --- | --- | ---: | ---: | --- |
+| `outputs/ovo_exp1_rl0511_step60_1of8` | vLLM `models/exp1_rl0511_step60` | 364 | 64.70% | backward 52.27%; realtime 81.54%; forward 60.30% |
+| `outputs/ovo_qwen3vl8b_sft_anchor_delta_step200_1of8` | vLLM `/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | 364 | 63.10% | backward 52.71%; realtime 77.19%; forward 59.40% |
+| `outputs/ovo_gemini_1of8_mem6s` | Gemini `gemini-2.5-pro` | 364 | 62.85% | backward 56.51%; realtime 83.10%; forward 48.94% |
+| `outputs/ovo_gemini_1of8_state_note_t` | Gemini `gemini-2.5-pro` | 364 | 62.57% | backward 61.45%; realtime 73.71%; forward 52.54% |
+| `outputs/streamtext/ovo_gemini_flash_1of8` | StreamText + Gemini `gemini-2.5-flash` | 364 | 61.92% | backward 63.21%; realtime 77.37%; forward 45.19% |
+| `outputs/ovo_qwen3vl8b_finetuned_1of8_rerun` | vLLM `/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm` | 364 | 61.54% | backward 57.41%; realtime 76.50%; forward 50.72% |
+| `outputs/ovo_qwen3vl8b_finetuned_1of8` | vLLM `/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_vllm` | 364 | 61.28% | backward 55.37%; realtime 79.49%; forward 48.99% |
+| `outputs/ovo_gemini_1of8_state` | Gemini `gemini-2.5-pro` | 364 | 61.13% | backward 55.56%; realtime 79.14%; forward 48.70% |
+| `outputs/ovo_qwen_sft_0513_1of8` | vLLM `/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen_sft_0513` | 364 | 59.11% | backward 51.81%; realtime 76.72%; forward 48.80% |
+| `outputs/ovo_qwen3vl8b_8gpu_1of8_eval` | vLLM `/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct` | 364 | 57.89% | backward 58.46%; realtime 77.54%; forward 37.68% |
+| `outputs/ovo_qwen3_rl_exp8_step40_1of8_6gpu` | vLLM `models/qwen3_rl_exp8_step40` | 364 | 56.18% | backward 60.25%; realtime 76.55%; forward 31.74% |
+| `outputs/ovo_exp4_grppo_aw05_step20_1of8` | vLLM `models/exp4_grppo_aw05_step20` | 364 | 45.79% | backward 44.78%; realtime 61.91%; forward 30.69% |
+
+### OVO Debug / Small Subsets
+
+| Output dir | Model / backend | Samples | OVO total_avg | Notes |
+| --- | --- | ---: | ---: | --- |
+| `outputs/ovo_gemini_teacher_eval_selected_single` | Gemini `gemini-2.5-pro` | 61 | 71.35% | selected subset; backward 83.33%; realtime 73.33%; forward 57.38% |
+| `outputs/ovo_gemini_one_eval` | Gemini `gemini-2.5-pro` | 1 | 100.00% | one-sample smoke |
+| `outputs/ovo_gemini_one_state_eval` | Gemini `gemini-2.5-pro` | 1 | 100.00% | one-sample smoke |
+| `outputs/streamtext/ovo_gemini_one_test` | StreamText + Gemini `gemini-2.5-pro` | 1 | 100.00% | streamtext one-sample smoke |
+| `outputs/streamtext/ovo_gemini_one_eval` | StreamText + Gemini backend; exact model not persisted in output dir | 1 | 0.00% | streamtext one-sample debug |
+| `outputs/ovo_qwen3vl32b_one` | OpenAI-compatible `Qwen/Qwen3-VL-32B-Instruct` | n/a | 0.00% | one-sample/debug summary; not comparable |
+
+Current best confirmed completed results:
+
+- StreamingBench real: `qwen3_rl_exp8_step40`, 82.68%.
+- StreamingBench SQA: `qwen3_rl_exp8_step40`, 41.20%; this is low and needs follow-up error analysis before using as a claim.
+- StreamingBench proactive: `qwen3_rl_exp8_step40`, 60.43% on 235/250 available samples; 15 samples were skipped because three proactive videos were missing locally.
+- StreamingBench omni visual subset: `qwen3_rl_exp8_step40`, 61.20% on Misleading + Anomaly only; this is not full omni because audio-dependent tasks are excluded.
+- OVO full: Gemini retry baseline, 66.75%; best local full model summary is `ovo_qwen3vl8b_grpo_0509_full_state_note_t`, 63.90%.
+- OVO 1-of-8: `ovo_exp1_rl0511_step60_1of8`, 64.70%, but its full run is 59.87%, so treat the 1-of-8 number as a quick-screen metric.
+
 ## Known Launch Scripts
+
+## GRPPO Observation Metric Notes
+
+- 2026-05-15:
+  - Added SwanLab/console metrics for step-level answer behavior:
+    `grppo/answer_required_rate`, `grppo/answer_required_missing_rate`,
+    `grppo/silence_required_rate`, and `grppo/silence_violation_rate`.
+    These are computed on the post-filter training rows; pre-filter raw rollout
+    versions are also logged under `grppo/prefilter/*`.
+  - Changed `traj/target_answer` / `streamweave/grppo_target_answer_reward`
+    from "final answer vs latest answer target" to the mean rule correctness
+    across all required `answer_target` steps in the trajectory. This makes
+    multi-query / multi-answer samples observable at trajectory level.
+  - Added `traj/target_answer_count` / `streamweave/grppo_target_answer_count`
+    to show how many required answer targets contributed to the trajectory
+    target-answer mean.
+- 2026-05-16:
+  - Changed the GRPPO process judge rubric from coarse 0/0.4/0.7/1.0 score
+    anchors to binary per-dimension checklists. The parser now computes each
+    process score as the mean of the listed checks while preserving backward
+    compatibility with old `score`-only judge responses.
+  - Added two conservative actor-prompt sentences only: one asks `<state>` to be
+    brief but evidence-bearing, and one asks `<delta>` to preserve action/event
+    changes while staying concise.
+  - Exp9 32-GPU run was restarted with `train/gen/val_batch_size=32`.
+    It reached `global_step_25` after saving `global_step_20`, then failed in
+    `old_log_prob` with `Image features and image tokens do not match`, shortly
+    after a `prompt too long: 5536 tokens > 5120` abort. The attempted visual-token
+    guard fix was reverted; current diagnosis is simple overlong-input truncation.
+  - Updated GRPPO score aggregation for the next exp9 run: `grppo_judge_step_reward`
+    is now `2.0 * mean(all process checklist values)`, `grppo_step_reward`
+    is the unnormalized weighted sum `0.7*judge + 0.15*format + 0.15*note_frequency`,
+    and the dimension-only fallback path was moved from the old 0-1 average to the
+    same 0-2 judge scale.
+  - Removed `null` from the GRPPO process checklist protocol. Checks now use numeric
+    `0/0.5/1`; for anchor-specific checks, no `<anchor>` gives `0.5` on
+    `anchor_time_and_body_valid` and `anchor_representative_if_present` rather than
+    being skipped.
 
 | Script | Intended use | Current default run name | Notes |
 | --- | --- | --- | --- |
@@ -861,7 +1577,10 @@ memory 里同时存在多个语义接近的候选动作，state 选了符合 que
 | `RL/scripts/train_exp7.sh` | Experiment 7 parameter-tuning fork from exp6 | `exp7` | Initially identical to exp6; use this script for the next parameter changes without touching exp6. |
 | `RL/scripts/train_exp7_smoke.sh` | Experiment 7 two-step debug smoke | `exp7_smoke` | Uses exp7 data/model/reward settings with `train/gen batch=2`, `rollout.n=4`, `total_training_steps=2`, and GRPPO debug dumps enabled. |
 | `RL/scripts/train_exp8.sh` | Experiment 8 multi-node GRPPO | `exp8` | Two-node Ray launch helper; default `nnodes=2`, `n_gpus_per_node=8`, `train/gen/val_batch_size=16`, `agent.num_workers=64`. |
-| `RL/scripts/train_exp9_localjudge.sh` | Experiment 9 local judge GRPPO | `exp9_localjudge` | Single-node exp7 config with local OpenAI-compatible/vLLM judge; defaults to `JUDGE_BASE_URL=http://127.0.0.1:9000/v1`, `JUDGE_MODEL=qwen3vl-32b-judge`. |
+| `RL/scripts/train_exp9.sh` | Experiment 9 four-node 32-GPU GRPPO | `exp9` | Four-node Ray launch helper forked from exp8; default `nnodes=4`, `n_gpus_per_node=8`, source model `models/qwen3_rl_exp8_step100`, train data `rl_0516_train`, validation default unchanged at `rl_0515_val`, prompt/response length `6144/3072`, rollout `max_model_len=9216`, Ray object store `40GB`, default `train/gen/val_batch_size=32`, `rollout.n=8`, micro batch per GPU `8`, `agent.num_workers=128`; GRPPO step mix is unnormalized `0.7*judge_0to2 + 0.15*format + 0.15*note_frequency`; workers can set `RAY_NODE_IP` when a pod has multiple NICs. |
+| `RL/scripts/train_exp9_24.sh` | Experiment 9 24-GPU GRPPO | `exp9_24` | Self-contained exp9 script; defaults to source model `models/qwen3vl_sft_0516_step50`, train data `rl_0516_filter`, actor lr `5e-6`, `nnodes=3`, `n_gpus_per_node=8`, `train/gen/val_batch_size=24`, `agent.num_workers=96`, rollout `max_num_seqs=3072`, and keeps exp9 reward/KL/filter settings. |
+| `RL/scripts/train_exp9_smoke.sh` | Experiment 9 single-node debug smoke | `exp9_smoke` | Self-contained exp9 smoke script with `models/qwen3vl_sft_0516_step50`, actor lr `5e-6`, and train data `rl_0516_train`; defaults to `total_training_steps=8`, `train/gen/val_batch_size=2`, `rollout.n=4`, debug `2` groups x `4` trajectories; uses exp9 context budget (`max_prompt_length=6144`, `max_response_length=3072`, rollout `max_model_len=9216`) and reward mix `0.7/0.15/0.15`; validation is disabled with `test_freq=-1`; dumps GRPPO debug JSONL under `outputs/runs/exp9_smoke/grppo_debug`. |
+| `RL/scripts/train_exp9_localjudge.sh` | Experiment 9 local judge GRPPO | `exp9_localjudge` | Single-node exp7 config with local OpenAI-compatible/vLLM judge; defaults to `JUDGE_BASE_URL=http://127.0.0.1:9000/v1`, `JUDGE_MODEL=qwen3vl-32b-judge`, and the same exp9 GRPPO step mix `0.7/0.15/0.15`. |
 | `RL/scripts/train_ppo.sh` | PPO/GAE with critic enabled | `ppo_test4rl_8gpu` | Uses `streamweave_stepwise_ppo_gae`, `rollout.n=1`, critic enabled, and judge weight forced to `0.0` by default. |
 | `RL/scripts/train_rlmlr.sh` | RLMLR stepwise/outcome mixed advantage | `rlmlr_rl0511_8gpu` | Uses `streamweave_stepwise_rlmlr`; DAPO filter is off by default in the script. |
 | `RL/scripts/run_smoke.sh` | Smoke test | N/A | Use for quick integration checks before long runs. |

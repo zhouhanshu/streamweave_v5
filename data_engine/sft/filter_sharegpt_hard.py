@@ -99,9 +99,13 @@ def filter_file(
                     if not parse.parser_ok:
                         reasons.append("format_error")
 
-                long_delta_count, max_delta = count_long_deltas(assistant_content, delta_threshold)
-                if long_delta_count:
-                    reasons.append("delta_over_threshold")
+                target_long_delta_count, _ = count_long_deltas(assistant_content, delta_threshold)
+                if target_long_delta_count:
+                    reasons.append("target_delta_over_threshold")
+
+                memory_long_delta_count, _ = count_long_deltas(extract_memory_block(user_content), delta_threshold)
+                if memory_long_delta_count:
+                    reasons.append("memory_delta_over_threshold")
 
                 if user_content and is_first_step_user_prompt(user_content):
                     ok, code = first_step_anchor_ok(assistant_content)
@@ -196,11 +200,18 @@ def count_long_deltas(text: str, threshold: float) -> tuple[int, float]:
     return count, max_delta
 
 
-def is_first_step_user_prompt(user_content: str) -> bool:
+def extract_memory_block(user_content: str) -> str:
     match = MEMORY_BLOCK_RE.search(user_content)
-    if not match:
+    if match:
+        return match.group("memory")
+    return ""
+
+
+def is_first_step_user_prompt(user_content: str) -> bool:
+    memory_block = extract_memory_block(user_content)
+    if not memory_block:
         return False
-    memory = " ".join(match.group("memory").split())
+    memory = " ".join(memory_block.split())
     return memory == "<empty/>"
 
 

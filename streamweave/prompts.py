@@ -29,7 +29,7 @@ TEACHER_FEW_SHOT_EXAMPLE = """\
 <state>At the beginning of the video, the operator enters the work area and starts preparing. QA History does not contain a question yet.</state>
 <answer></answer>
 <anchor t="0.0-1.0"></anchor>
-<delta t="1.0-5.0">The operator enters the frame and begins arranging the task area on the current workbench.</delta>
+<delta t="1.0-5.0">The operator enters the frame and at 2s begins arranging the task area on the current workbench.</delta>
 
 === Few-shot Example 2 (Open-tail inheritance, with an intermediate-step anchor) ===
 [Input]
@@ -45,11 +45,11 @@ TEACHER_FEW_SHOT_EXAMPLE = """\
 <frame t="13.0-14.0"><image></frame>
 <frame t="14.0-15.0"><image></frame>
 [Output]
-<state>After entering the work area, the operator arranged objects on the workbench, then turned to another workbench and began assembling a component. The current frames show that he has picked up a broken phone. There is currently no question, so I do not need to answer</state>
+<state>Earlier the operator moved to a new workbench and assembled a component. The current frames show that at 12s he picks up a broken phone. No question yet, so no answer needed.</state>
 <answer></answer>
-<delta t="6.0-12.0">The operator is assembling a component on this new workbench, then picks up a broken phone.</delta>
+<delta t="6.0-12.0">The operator is assembling a component on this new workbench, then at 9s picks up a broken phone.</delta>
 <anchor t="12.0-13.0"></anchor>
-<delta t="13.0-15.0">The operator is inspecting the broken phone.</delta>
+<delta t="13.0-15.0">The operator is inspecting the front of the broken phone, then at 14s flips it over.</delta>
 (Annotation: the first delta inherits the start time '6.0' from the delta in Memory and ends at the start time of the anchor. The anchor uses paired opening/closing tags and has an empty body. The final delta fills the gap from the end of the anchor to the end of the step.)
 
 === Few-shot Example 3 (Incremental QA update) ===
@@ -58,9 +58,9 @@ TEACHER_FEW_SHOT_EXAMPLE = """\
 <anchor t="0.0-1.0"></anchor>
 <delta t="1.0-5.0">The camera moves left, and another workbench comes into view</delta>
 <anchor t="5.0-6.0"></anchor>
-<delta t="6.0-12.0">The operator is assembling a component on this workbench, then picks up a broken phone.</delta>
+<delta t="6.0-12.0">The operator is assembling a component on this workbench, then at 9s picks up a broken phone.</delta>
 <anchor t="12.0-13.0"></anchor>
-<delta t="13.0-15.0">The operator is inspecting the broken phone.</delta>
+<delta t="13.0-15.0">The operator is inspecting the front of the broken phone, then at 14s flips it over.</delta>
 === Current frames ===
 <frame t="15.0-16.0"><image></frame>
 <frame t="16.0-17.0"><image></frame>(Around t=16, the operator opens the phone's back cover.)
@@ -70,11 +70,11 @@ TEACHER_FEW_SHOT_EXAMPLE = """\
 === QA History ===
 <qa t="17.0" role="q">What is the operator doing now?</qa>
 [Output]
-<state>After entering the work area, the operator first arranged items on one workbench, then turned to another workbench and assembled a component, then picked up a broken phone. The current frames show that he has opened the phone's back cover. The question asks what the operator is doing now, and I can answer based on what is visible in the current frames</state>
+<state>Earlier the operator assembled a component on a new workbench and then handled a broken phone, flipping it at 14s. The current frame at 16s shows that he has opened the phone's back cover. The question asks what the operator is doing now, and the current frame is sufficient: at 16s he opened the back cover, so the answer is he has opened the phone's back cover.</state>
 <answer>The operator has opened the phone's back cover</answer>
-<delta t="13.0-16.0">The operator is inspecting the broken phone.</delta>
+<delta t="13.0-16.0">The operator is inspecting the front of the broken phone, at 14s flips it over, then continues inspecting the back.</delta>
 <anchor t="16.0-17.0"></anchor>
-<delta t="17.0-20.0">The operator has opened the phone's back cover and placed the cover on the table</delta>
+<delta t="17.0-20.0">The operator has opened the phone's back cover, then at 18s places the cover on the table.</delta>
 
 === Few-shot Example 4 (Silent observation) ===
 [Input]
@@ -82,11 +82,11 @@ TEACHER_FEW_SHOT_EXAMPLE = """\
 <anchor t="0.0-1.0"></anchor>
 <delta t="1.0-5.0">The camera moves left, and another workbench comes into view</delta>
 <anchor t="5.0-6.0"></anchor>
-<delta t="6.0-12.0">The operator is assembling a component on this workbench, then picks up a broken phone.</delta>
+<delta t="6.0-12.0">The operator is assembling a component on this workbench, then at 9s picks up a broken phone.</delta>
 <anchor t="12.0-13.0"></anchor>
-<delta t="13.0-16.0">The operator is inspecting the broken phone.</delta>
+<delta t="13.0-16.0">The operator is inspecting the front of the broken phone, at 14s flips it over, then continues inspecting the back.</delta>
 <anchor t="16.0-17.0"></anchor>
-<delta t="17.0-20.0">The operator has opened the phone's back cover and placed the cover on the table</delta>
+<delta t="17.0-20.0">The operator has opened the phone's back cover, then at 18s places the cover on the table.</delta>
 === Current frames ===
 <frame t="20.0-21.0"><image></frame>
 <frame t="21.0-22.0"><image></frame>(Around t=21, the operator picks up a new battery.)
@@ -98,11 +98,11 @@ TEACHER_FEW_SHOT_EXAMPLE = """\
 <qa t="18.0" role="a">The operator has opened the phone's back cover</qa>
 <qa t="21.0" role="q">Please tell me when the operator turns on the phone</qa>
 [Output]
-<state>After entering the work area, the operator first arranged a workbench, then turned to another workbench to assemble a component, then picked up a broken phone and opened the back cover. The current frames show that he is inserting a new battery into the phone. The question asks to tell the user when the operator turns on the phone; the phone has not been turned on yet, so no response is needed</state>
+<state>Earlier the operator assembled a component on a new workbench and gradually disassembled a broken phone, having opened the back cover by 20s. The current frames show that at 21s he picks up a new battery and at 23s inserts it into the phone. The question asks to tell the user when the operator turns on the phone; the phone has not been turned on yet, so no response is needed.</state>
 <answer></answer>
-<delta t="17.0-21.0">The operator has opened the phone's back cover and placed the cover on the table</delta>
+<delta t="17.0-21.0">The operator has opened the phone's back cover, at 18s places the cover on the table, then continues working on the phone interior.</delta>
 <anchor t="21.0-22.0"></anchor>
-<delta t="22.0-25.0">The operator inserts the battery into the broken phone and tightens the screws</delta>
+<delta t="22.0-25.0">The operator inserts the new battery into the broken phone at 23s, then tightens the screws.</delta>
 """
 
 
@@ -116,6 +116,7 @@ TEACHER_FOOTER = """\
 Task instructions:
 1. **State and answer**:
    - Before writing <answer>, first write a brief <state> that summarizes the relevant Memory and current frames. Memory contains the video history observed so far, while current frames are the immediate video window; both are sorted by timestamp. Use both together to understand the video, but keep it as concise as possible. Check QA History to determine whether there is a question to answer. If you believe the question can be answered based on the video Memory or current frames, write the answer in <answer>. If QA History contains no question, or if you believe the question cannot currently be answered, keep <answer></answer> empty.
+   - The <state> should be brief but evidence-bearing: mention the relevant Memory/current-frame evidence, uncertainty, and the answer-or-silence decision when QA History contains a question.
    - When answering a question, follow the format of the question. The question may be multiple choice; in that case, answer with the option. If it cannot be answered, choose the "cannot answer" option if one exists.
    - **Context analysis**: Carefully inspect the "QA History" log and determine the appropriate evidence scope based on the question itself. As the video progresses, a question may require multiple updates. If the question involves a currently ongoing action, state, or spatial relationship, the judgment should primarily rely on the latest frames, with historical memory used only as background context. If the question involves a past process, object location, state change, or cumulative result, the judgment should primarily rely on anchors and deltas in Memory, supplemented by current frames.
    - **Silence criterion**: If QA History contains no question, or if the current frames do not provide a useful update for a previously answered question, keep <answer> empty.
@@ -135,6 +136,7 @@ Task instructions:
    - **Gap uniqueness**: Between any two adjacent anchors, or between the final anchor and the end boundary of the current window, maintain exactly one delta. Do not split the same time gap into multiple consecutive deltas; even if there is little change, use one brief delta to describe the continuation of the state.
    - **Time alignment**: Except for open-tail inheritance, all output tags must be ordered chronologically, with continuous time, no overlap, and no backward movement. The anchor's t attribute must exactly copy the time range of the corresponding frame in Current frames; the start and end times of deltas should connect adjacent anchors or the current window boundary.
    - **Content principles**: A delta only describes the main observable actions, state changes, and event boundaries within that time span, accurately and concisely, without adding uncertain details. For repeated actions, preserve the cumulative result of completed actions; actions that are in preparation, ongoing, occluded, or uncertain must not be written as completed. Details such as tools, colors, orientation, identity, text, and object attributes should only be written when clearly visible or explicitly confirmed by Memory; if uncertain, describe conservatively or omit.
+   - The <delta> should stay concise but complete enough to preserve action changes, event boundaries, object state/location changes, and cumulative progress.
 
 The final output must contain only the specified XML tags. Do not output Markdown, explanations, annotations, code blocks, or extra text.
 The body of the <anchor> tag must be empty; it should reference the corresponding frame only through the t attribute. Do not write descriptive text inside <anchor>.
@@ -164,6 +166,7 @@ In QA History, role="q" indicates a user question, and role="a" indicates your p
 Task instructions:
 1. **State and answer**:
    - Before writing <answer>, first write a brief <state> that summarizes the relevant Memory and current frames. Memory contains the video history observed so far, while current frames are the immediate video window; both are sorted by timestamp. Use both together to understand the video, but keep it as concise as possible. Check QA History to determine whether there is a question to answer. If you believe the question can be answered based on the video Memory or current frames, write the answer in <answer>. If QA History contains no question, or if you believe the question cannot currently be answered, keep <answer></answer> empty.
+   - The <state> should be brief but evidence-bearing: mention the relevant Memory/current-frame evidence, uncertainty, and the answer-or-silence decision when QA History contains a question.
    - When answering a question, follow the format of the question. The question may be multiple choice; in that case, answer with the option. If it cannot be answered, choose the "cannot answer" option if one exists.
    - **Context analysis**: Carefully inspect the "QA History" log and determine the appropriate evidence scope based on the question itself. As the video progresses, a question may require multiple updates. If the question involves a currently ongoing action, state, or spatial relationship, the judgment should primarily rely on the latest frames, with historical memory used only as background context. If the question involves a past process, object location, state change, or cumulative result, the judgment should primarily rely on anchors and deltas in Memory, supplemented by current frames.
    - **Silence criterion**: If QA History contains no question, or if the current frames do not provide a useful update for a previously answered question, keep <answer> empty.
@@ -183,6 +186,7 @@ Task instructions:
    - **Gap uniqueness**: Between any two adjacent anchors, or between the final anchor and the end boundary of the current window, maintain exactly one delta. Do not split the same time gap into multiple consecutive deltas; even if there is little change, use one brief delta to describe the continuation of the state.
    - **Time alignment**: Except for open-tail inheritance, all output tags must be ordered chronologically, with continuous time, no overlap, and no backward movement. The anchor's t attribute must exactly copy the time range of the corresponding frame in Current frames; the start and end times of deltas should connect adjacent anchors or the current window boundary.
    - **Content principles**: A delta only describes the main observable actions, state changes, and event boundaries within that time span, accurately and concisely, without adding uncertain details. For repeated actions, preserve the cumulative result of completed actions; actions that are in preparation, ongoing, occluded, or uncertain must not be written as completed. Details such as tools, colors, orientation, identity, text, and object attributes should only be written when clearly visible or explicitly confirmed by Memory; if uncertain, describe conservatively or omit.
+   - The <delta> should stay concise but complete enough to preserve action changes, event boundaries, object state/location changes, and cumulative progress.
 
 === Memory ===
 {memory_content}

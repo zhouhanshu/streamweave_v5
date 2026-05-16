@@ -209,7 +209,11 @@ def _anno_to_samples(anno: dict[str, Any], video_dir: Path) -> list[BenchmarkSam
 
 def _forward_sample(anno: dict[str, Any], video_dir: Path, idx: int, info: dict[str, Any]) -> BenchmarkSample:
     task = anno["task"]
-    query_timestamp = float(anno.get("ask_time", 0.0)) if task == "CRR" else 0.0
+    target_timestamp = float(info.get("realtime", 0.0))
+    if task in {"REC", "SSR"}:
+        query_timestamp = target_timestamp
+    else:
+        query_timestamp = float(anno.get("ask_time", 0.0)) if task == "CRR" else 0.0
     ground_truth = info.get("count", 0) if task == "REC" else info.get("type", 0)
     sample_id = f"{anno['id']}_{idx}"
     return BenchmarkSample(
@@ -224,7 +228,7 @@ def _forward_sample(anno: dict[str, Any], video_dir: Path, idx: int, info: dict[
             "task": task,
             "ground_truth": ground_truth,
             "query_timestamp": query_timestamp,
-            "target_timestamp": float(info.get("realtime", 0.0)),
+            "target_timestamp": target_timestamp,
         },
     )
 

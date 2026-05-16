@@ -92,6 +92,19 @@ def judge_blocked_by_note_frequency(*, note_frequency_score: float, cfg: StreamW
     )
 
 
+def _judge_raw_response_preview(judge_result: Any, *, limit: int = 4000) -> str:
+    if not isinstance(judge_result, JudgeResult):
+        return ""
+    if str(judge_result.status) != "error":
+        return ""
+    raw = str(judge_result.raw_response or "")
+    if not raw:
+        return ""
+    if len(raw) <= limit:
+        return raw
+    return raw[:limit] + f"...<truncated {len(raw) - limit} chars>"
+
+
 def compute_step_score(
     *,
     note_frequency_score: float,
@@ -167,6 +180,7 @@ def compute_step_reward(
             "judge_reasons": judge_result.reasons if isinstance(judge_result, JudgeResult) else {},
             "judge_issues": judge_result.issues if isinstance(judge_result, JudgeResult) else [],
             "judge_error": judge_result.error if isinstance(judge_result, JudgeResult) else "",
+            "judge_raw_response_preview": _judge_raw_response_preview(judge_result),
         },
     )
 
@@ -178,25 +192,21 @@ def compute_grppo_step_reward(
     note_frequency_score: float = 0.0,
     cfg: StreamWeaveRewardConfig,
 ) -> float:
-    """Combine GRPPO process, format, and deterministic anchor rewards."""
+    """Return the unnormalized weighted sum of GRPPO step reward components."""
 
     process_weight = max(float(cfg.grppo_process_weight), 0.0)
     format_weight = max(float(cfg.grppo_format_weight), 0.0)
     note_frequency_weight = max(float(cfg.grppo_note_frequency_weight), 0.0)
-    denominator = process_weight + format_weight + note_frequency_weight
-    if denominator <= 0.0:
+    if process_weight <= 0.0 and format_weight <= 0.0 and note_frequency_weight <= 0.0:
         return 0.0
-    process_value = _clamp_score(float(process_score), cfg=cfg)
+    process_value = max(float(process_score), 0.0)
     format_value = _clamp_score(float(format_score), cfg=cfg)
     note_frequency_value = _clamp_score(float(note_frequency_score), cfg=cfg)
-    return _clamp_score(
-        (
-            process_weight * process_value
-            + format_weight * format_value
-            + note_frequency_weight * note_frequency_value
-        )
-        / denominator,
-        cfg=cfg,
+    return max(
+        process_weight * process_value
+        + format_weight * format_value
+        + note_frequency_weight * note_frequency_value,
+        0.0,
     )
 
 

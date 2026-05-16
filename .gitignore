@@ -27,6 +27,12 @@ dataset2/**
 !dataset2/
 !dataset2/*.md
 !dataset2/*.py
+dataset3/raw/
+dataset3/outputs/
+dataset3/eventhallusion/video/
+dataset3/videohallucer/video/
+dataset3/__pycache__/
+dataset3/*.log
 __pycache__/
 *.pyc
 *.pyo

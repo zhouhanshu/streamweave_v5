@@ -43,6 +43,12 @@ def inspect_sharegpt(path: Path, *, bridge_threshold: float, max_examples: int) 
         "delta_over_threshold_rows": 0,
         "delta_over_threshold_count": 0,
         "max_delta_duration": 0.0,
+        "target_delta_over_threshold_rows": 0,
+        "target_delta_over_threshold_count": 0,
+        "max_target_delta_duration": 0.0,
+        "memory_delta_over_threshold_rows": 0,
+        "memory_delta_over_threshold_count": 0,
+        "max_memory_delta_duration": 0.0,
         "format_issue_counts": Counter(),
         "examples": {
             "format_errors": [],
@@ -100,7 +106,23 @@ def inspect_sharegpt(path: Path, *, bridge_threshold: float, max_examples: int) 
                     },
                 )
 
-            long_deltas = long_bridge_items(target_xml, threshold=bridge_threshold)
+            target_long_deltas = long_bridge_items(target_xml, threshold=bridge_threshold)
+            memory_long_deltas = long_bridge_items(extract_memory_block(user_content), threshold=bridge_threshold)
+            long_deltas = target_long_deltas + memory_long_deltas
+            if target_long_deltas:
+                stats["target_delta_over_threshold_rows"] += 1
+                stats["target_delta_over_threshold_count"] += len(target_long_deltas)
+                stats["max_target_delta_duration"] = max(
+                    float(stats["max_target_delta_duration"]),
+                    max(item["duration"] for item in target_long_deltas),
+                )
+            if memory_long_deltas:
+                stats["memory_delta_over_threshold_rows"] += 1
+                stats["memory_delta_over_threshold_count"] += len(memory_long_deltas)
+                stats["max_memory_delta_duration"] = max(
+                    float(stats["max_memory_delta_duration"]),
+                    max(item["duration"] for item in memory_long_deltas),
+                )
             if long_deltas:
                 stats["delta_over_threshold_rows"] += 1
                 stats["delta_over_threshold_count"] += len(long_deltas)
@@ -113,7 +135,8 @@ def inspect_sharegpt(path: Path, *, bridge_threshold: float, max_examples: int) 
                     max_examples,
                     {
                         "line": line_no,
-                        "deltas": long_deltas[:3],
+                        "target_deltas": target_long_deltas[:3],
+                        "memory_deltas": memory_long_deltas[:3],
                         "answer": answer_match.group("answer").strip() if answer_match else "",
                         "num_images": len(images),
                         "num_image_placeholders": user_content.count("<image>"),
@@ -178,6 +201,19 @@ def long_bridge_items(target_xml: str, *, threshold: float) -> list[dict[str, An
     return items
 
 
+MEMORY_BLOCK_RE = re.compile(
+    r"=== Memory ===\s*(?P<memory>.*?)\s*=== Current frames ===",
+    flags=re.DOTALL,
+)
+
+
+def extract_memory_block(user_content: str) -> str:
+    match = MEMORY_BLOCK_RE.search(user_content)
+    if match:
+        return match.group("memory")
+    return ""
+
+
 def parse_interval(text: str) -> tuple[float, float] | None:
     match = re.match(r"\s*([0-9.]+)\s*[-\u2013]\s*([0-9.]+)\s*$", text)
     if not match:
@@ -208,9 +244,19 @@ def print_report(report: dict[str, Any], *, bridge_threshold: float) -> None:
     print(f"format_error_rows: {report['format_error_rows']}")
     print(f"sharegpt_structure_error_rows: {report['sharegpt_structure_error_rows']}")
     print(
-        f"deltas_longer_than_{bridge_threshold:g}s: "
+        f"target_or_memory_deltas_longer_than_{bridge_threshold:g}s: "
         f"rows={report['delta_over_threshold_rows']} count={report['delta_over_threshold_count']} "
         f"max_duration={report['max_delta_duration']:.3f}"
+    )
+    print(
+        f"target_deltas_longer_than_{bridge_threshold:g}s: "
+        f"rows={report['target_delta_over_threshold_rows']} count={report['target_delta_over_threshold_count']} "
+        f"max_duration={report['max_target_delta_duration']:.3f}"
+    )
+    print(
+        f"memory_deltas_longer_than_{bridge_threshold:g}s: "
+        f"rows={report['memory_delta_over_threshold_rows']} count={report['memory_delta_over_threshold_count']} "
+        f"max_duration={report['max_memory_delta_duration']:.3f}"
     )
     if report["format_issue_counts"]:
         print("format_issue_counts:")

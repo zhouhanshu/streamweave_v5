@@ -187,6 +187,5 @@ RL/scripts/train_ppo.sh
 - `pyproject.toml` 和若干 package docstring 仍有 V4 命名残留，不影响运行但会误导读者。
 - 历史 docs 中大量 `<eta>`、`frame="N"`、RAFT 旧计划和 V4/V3 目标已经不是当前实现。
 - SFT key-frame hard constraint 在旧文档里出现过，但当前源码没有。
-- `configs/eval_ovo_qwen3vl32b_one.yaml` 已改为从 `SILICONFLOW_API_KEY` 读取密钥。
 - `TraceWriter` 初始化会清空同一 trace 目录中的旧 trace 文件，重跑同一 sample 前要确认输出目录。
 - RL stepwise 变长 rollout 目前依赖配置避开两个未完全兜底的分支：不要同时使用 `trainer.use_legacy_worker_impl=disable` 和 `critic.enable=true`；不要打开 `trainer.balance_batch=true`。当前保留脚本默认走 `use_legacy_worker_impl=enable`，且基础配置保持 `balance_batch=false`，因此默认训练路径不会触发这两个问题。
