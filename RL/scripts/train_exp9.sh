@@ -53,24 +53,25 @@ MAX_STEPS="${MAX_STEPS:-0}"
 TEST_FREQ="${TEST_FREQ:-30}"
 SAVE_FREQ="${SAVE_FREQ:-20}"
 TOTAL_EPOCHS="${TOTAL_EPOCHS:-2}"
+RESUME_MODE="${RESUME_MODE:-auto}"
 
 PPO_MICRO_BATCH_SIZE_PER_GPU="${PPO_MICRO_BATCH_SIZE_PER_GPU:-8}"
 LOGPROB_MICRO_BATCH_SIZE_PER_GPU="${LOGPROB_MICRO_BATCH_SIZE_PER_GPU:-8}"
 ROLLOUT_MAX_NUM_SEQS="${ROLLOUT_MAX_NUM_SEQS:-4096}"
 
-GRPPO_ANSWER_DECAY=0.9
+GRPPO_ANSWER_DECAY=0.3
 GRPPO_PROCESS_WEIGHT=0.7
 GRPPO_FORMAT_WEIGHT=0.15
 GRPPO_NOTE_FREQUENCY_WEIGHT=0.15
 GRPPO_STEP_WEIGHT=1.0
-GRPPO_ANSWER_WEIGHT=0.5
+GRPPO_ANSWER_WEIGHT=0.8
 GRPPO_NORM_BY_STD=false
-GRPPO_MIN_STD=0.05
+GRPPO_MIN_STD=0.1
 GRPPO_FILTER_GROUPS_ENABLE=true
-GRPPO_FILTER_MIN_STD=0.05
+GRPPO_FILTER_MIN_STD=0.1
 GRPPO_ANSWER_EVENT_MODE="timeline"
 GRPPO_SILENCE_REWARD=true
-GRPPO_SILENCE_REWARD_VALUE=0.1
+GRPPO_SILENCE_REWARD_VALUE=0.5
 GRPPO_FORCED_ANSWER_POSTPROCESS_ENABLE=false
 GRPPO_TARGET_ANSWER_WEIGHT=1.0
 GRPPO_TARGET_FORMAT_WEIGHT=0.0
@@ -109,6 +110,7 @@ RUNTIME_ENV=(
     RAY_ENABLE_UV_RUN_RUNTIME_ENV=0
     RAY_TMPDIR="${RAY_TMPDIR}"
     STREAMWEAVE_CONSOLE_METRICS=compact
+    STREAMWEAVE_TRACKING_METRICS="${STREAMWEAVE_TRACKING_METRICS:-core}"
     TOKENIZERS_PARALLELISM=false
     STREAMWEAVE_RL_DIR="${RL_DIR}"
     SWANLAB_LOG_DIR="${RUN_DIR}/swanlab"
@@ -239,7 +241,7 @@ echo "StreamWeave exp9 grppo target_reward answer_weight=${GRPPO_TARGET_ANSWER_W
 echo "StreamWeave exp9 actor_kl use=${ACTOR_USE_KL_LOSS} coef=${ACTOR_KL_LOSS_COEF} type=${ACTOR_KL_LOSS_TYPE}"
 echo "StreamWeave exp9 grppo step_filter enable=${GRPPO_FILTER_GROUPS_ENABLE} min_std=${GRPPO_FILTER_MIN_STD}"
 echo "StreamWeave exp9 scale train_batch=${TRAIN_BATCH_SIZE} gen_batch=${GEN_BATCH_SIZE} val_batch=${VAL_BATCH_SIZE} val_max_samples=${VAL_MAX_SAMPLES} rollout.n=${ROLLOUT_N} max_steps=${MAX_STEPS}"
-echo "StreamWeave exp9 actor lr=${ACTOR_LR}"
+echo "StreamWeave exp9 actor lr=${ACTOR_LR} resume_mode=${RESUME_MODE} save_freq=${SAVE_FREQ} test_freq=${TEST_FREQ}"
 echo "StreamWeave exp9 ray role=${EXP9_RAY_ROLE} address=${DRIVER_RAY_ADDRESS} nnodes=${NNODES} n_gpus_per_node=${N_GPUS_PER_NODE} agent_workers=${AGENT_NUM_WORKERS} object_store_memory=${RAY_OBJECT_STORE_MEMORY}"
 echo "StreamWeave exp9 hardware gpu_ids=${GPU_IDS}"
 echo "StreamWeave exp9 micro ppo=${PPO_MICRO_BATCH_SIZE_PER_GPU} logprob=${LOGPROB_MICRO_BATCH_SIZE_PER_GPU} rollout_max_num_seqs=${ROLLOUT_MAX_NUM_SEQS}"
@@ -333,7 +335,7 @@ TRAINER_ARGS=(
     trainer.project_name=streamweave_rl
     trainer.experiment_name="${RUN_NAME}"
     trainer.default_local_dir="${RUN_DIR}/checkpoints"
-    trainer.resume_mode=auto
+    trainer.resume_mode="${RESUME_MODE}"
     trainer.n_gpus_per_node="${N_GPUS_PER_NODE}"
     trainer.nnodes="${NNODES}"
     +ray_kwargs.ray_init.address="${DRIVER_RAY_ADDRESS}"

@@ -257,6 +257,37 @@ def _add_grppo_answer_condition_metrics(
     )
 
 
+def _add_grppo_target_answer_behavior_metrics(
+    metrics: dict[str, Any],
+    non_tensor_batch: dict[str, Any],
+    *,
+    prefix: str = "grppo",
+) -> None:
+    if "grppo_has_answer_target" not in non_tensor_batch or "grppo_has_answer" not in non_tensor_batch:
+        return
+    has_target = np.asarray(non_tensor_batch["grppo_has_answer_target"], dtype=np.float32).reshape(-1) > 0.5
+    has_answer = np.asarray(non_tensor_batch["grppo_has_answer"], dtype=np.float32).reshape(-1) > 0.5
+    if has_target.size == 0 or has_target.size != has_answer.size:
+        return
+
+    target_count = int(np.count_nonzero(has_target))
+    no_target_count = int(has_target.size - target_count)
+    tp = int(np.count_nonzero(has_target & has_answer))
+    fn = int(np.count_nonzero(has_target & ~has_answer))
+    fp = int(np.count_nonzero(~has_target & has_answer))
+    tn = int(np.count_nonzero(~has_target & ~has_answer))
+    key_prefix = f"{prefix}/" if prefix else ""
+    metrics[f"{key_prefix}target_answer_rate"] = float(target_count / has_target.size)
+    metrics[f"{key_prefix}target_answer_model_answer_rate"] = float(tp / target_count) if target_count else 0.0
+    metrics[f"{key_prefix}target_answer_missing_rate"] = float(fn / target_count) if target_count else 0.0
+    metrics[f"{key_prefix}no_target_model_answer_rate"] = float(fp / no_target_count) if no_target_count else 0.0
+    metrics[f"{key_prefix}no_target_silence_rate"] = float(tn / no_target_count) if no_target_count else 0.0
+    metrics[f"{key_prefix}answer_tp"] = float(tp)
+    metrics[f"{key_prefix}answer_fn"] = float(fn)
+    metrics[f"{key_prefix}answer_fp"] = float(fp)
+    metrics[f"{key_prefix}answer_tn"] = float(tn)
+
+
 _STREAMWEAVE_TARGET_TRAJ_METRIC_ALIASES = {
     "grppo_target_trajectory_score": "traj/target_score",
     "grppo_target_answer_reward": "traj/target_answer",
@@ -371,6 +402,7 @@ def _compute_streamweave_stepwise_metrics(batch: DataProto) -> dict[str, Any]:
             _add_metric_stats(metrics, f"streamweave/{key}", non_tensor_batch[key])
 
     _add_grppo_answer_condition_metrics(metrics, non_tensor_batch, prefix="grppo")
+    _add_grppo_target_answer_behavior_metrics(metrics, non_tensor_batch, prefix="grppo")
 
     if "judge_status" in non_tensor_batch:
         statuses = [str(item) for item in np.asarray(non_tensor_batch["judge_status"], dtype=object).reshape(-1)]
@@ -1291,6 +1323,7 @@ class RayPPOTrainer:
             reward_extra_infos_dict[key] = [float(item) for item in values.tolist()]
         _add_streamweave_target_trajectory_metrics(metrics, batch.non_tensor_batch, prefix="prefilter/")
         _add_grppo_answer_condition_metrics(metrics, batch.non_tensor_batch, prefix="grppo/prefilter")
+        _add_grppo_target_answer_behavior_metrics(metrics, batch.non_tensor_batch, prefix="grppo/prefilter")
         self._maybe_dump_streamweave_grppo_debug(batch, stage="prefilter")
 
         groups = np.asarray(batch.non_tensor_batch.get("group_idx", []), dtype=object).reshape(-1)

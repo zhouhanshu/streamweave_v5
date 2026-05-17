@@ -31,58 +31,35 @@ logger = logging.getLogger(__name__)
 MLFLOW_MAX_ATTEMPTS = 3
 MLFLOW_SLEEP_SECONDS = 5
 
-_COMPACT_CONSOLE_METRIC_KEYS = (
+_STREAMWEAVE_CORE_METRIC_KEYS = (
     "training/global_step",
     "training/epoch",
-    "traj/score_mean",
-    "traj/score_std",
-    "traj/valid_group_ratio",
-    "traj/total_groups",
-    "traj/valid_groups",
-    "traj/dapo_kept_row_ratio",
-    "traj/dapo_filtered_groups",
     "traj/score/mean",
-    "traj/score/max",
-    "traj/score/min",
     "traj/success/mean",
     "traj/target_score/mean",
     "traj/target_answer/mean",
-    "streamweave/format_score/mean",
-    "streamweave/step_score/mean",
-    "streamweave/note_frequency_score/mean",
-    "streamweave/judge_score/mean",
-    "streamweave/turn_reward/mean",
-    "streamweave/grppo_target_trajectory_score/mean",
-    "streamweave/grppo_target_answer_reward/mean",
-    "streamweave/grppo_target_format_reward/mean",
     "streamweave/grppo_judge_step_reward/mean",
-    "streamweave/grppo_format_score/mean",
     "streamweave/grppo_step_reward/mean",
     "streamweave/grppo_answer_reward/mean",
     "streamweave/grppo_answer_credit/mean",
     "streamweave/grppo_reward/mean",
-    "streamweave/grppo_step_advantage/mean",
-    "streamweave/grppo_answer_advantage/mean",
-    "streamweave/grppo_advantage/mean",
-    "streamweave/grppo_answer_event/mean",
-    "streamweave/grppo_has_answer/mean",
-    "streamweave/grppo_forced_answer_postprocess/mean",
-    "grppo/filter_enabled",
-    "grppo/filter_applied",
+    "grppo/prefilter/target_answer_rate",
+    "grppo/prefilter/target_answer_model_answer_rate",
+    "grppo/prefilter/target_answer_missing_rate",
+    "grppo/prefilter/no_target_model_answer_rate",
+    "grppo/prefilter/no_target_silence_rate",
+    "grppo/target_answer_rate",
+    "grppo/target_answer_model_answer_rate",
+    "grppo/target_answer_missing_rate",
+    "grppo/no_target_model_answer_rate",
+    "grppo/no_target_silence_rate",
     "grppo/filter_kept_row_ratio",
-    "grppo/valid_cohorts",
-    "grppo/invalid_cohorts",
     "grppo/step_valid_cohorts",
     "grppo/answer_valid_cohorts",
-    "grppo/forced_answer_postprocess_enabled",
-    "grppo/forced_answer_cohorts",
     "actor/lr",
-    "actor/entropy",
     "actor/pg_loss",
     "actor/ppo_kl",
     "actor/kl_loss",
-    "actor/kl_coef",
-    "actor/pg_clipfrac",
     "actor/grad_norm",
     "critic/advantages/mean",
     "critic/advantages/max",
@@ -96,23 +73,31 @@ _COMPACT_CONSOLE_METRIC_KEYS = (
     "timing_s/gen",
     "timing_s/old_log_prob",
     "timing_s/update_actor",
-    "timing_s/update_weights",
-    "timing_s/reward",
     "timing_s/step",
-    "perf/total_num_tokens",
     "perf/throughput",
     "perf/max_memory_allocated_gb",
-    "perf/max_memory_reserved_gb",
-    "perf/cpu_memory_used_gb",
 )
+
+_COMPACT_CONSOLE_METRIC_KEYS = _STREAMWEAVE_CORE_METRIC_KEYS
+
+
+def _filter_core_metrics(data: dict[str, Any]) -> dict[str, Any]:
+    compact = {key: data[key] for key in _STREAMWEAVE_CORE_METRIC_KEYS if key in data}
+    return compact or data
 
 
 def _filter_console_metrics(data: dict[str, Any]) -> dict[str, Any]:
     mode = os.environ.get("STREAMWEAVE_CONSOLE_METRICS", "full").strip().lower()
-    if mode not in {"compact", "short"}:
+    if mode not in {"compact", "short", "core"}:
         return data
-    compact = {key: data[key] for key in _COMPACT_CONSOLE_METRIC_KEYS if key in data}
-    return compact or data
+    return _filter_core_metrics(data)
+
+
+def _filter_tracking_metrics(data: dict[str, Any]) -> dict[str, Any]:
+    mode = os.environ.get("STREAMWEAVE_TRACKING_METRICS", "full").strip().lower()
+    if mode not in {"compact", "short", "core"}:
+        return data
+    return _filter_core_metrics(data)
 
 
 class Tracking:
@@ -264,7 +249,7 @@ class Tracking:
     def log(self, data, step, backend=None):
         for default_backend, logger_instance in self.logger.items():
             if backend is None or default_backend in backend:
-                logger_data = _filter_console_metrics(data) if default_backend == "console" else data
+                logger_data = _filter_console_metrics(data) if default_backend == "console" else _filter_tracking_metrics(data)
                 logger_instance.log(data=logger_data, step=step)
 
     def __del__(self):
