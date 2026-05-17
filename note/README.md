@@ -1,35 +1,51 @@
-# Anchor README
+# StreamWeave V5 Notes
 
-本目录维护 `StreamWeave` 实验笔记。默认先读 `experiment-log.md`，其中只保留当前结论、关键里程碑和下一步，不再堆完整聊天过程。
+本目录记录当前 `streamweave_v5` 的代码、数据、训练和实验结论。旧笔记内容已经整理进本目录，不再保留旧文档堆。
 
-## 读取顺序
+## 阅读顺序
 
-1. `experiment-log.md`：当前状态和关键里程碑。
-2. `00-overview.md`：项目目标、当前实验口径和主路径。
-3. `10-source-code-current-state.md`：按当前源码同步的协议、SFT、RL 和脚本口径。
-4. `05-rl-training.md`：当前 V5 GRPO/RL 状态、run 记录、checkpoint 和性能问题。
-5. `0508实验跑分.md`：当前阶段最新的 OVO 结果快照。
-6. `实验跑分.md`：正式跑分主表，只保留可比较结果。
-7. `07-key-points.md`：关键结论和避坑。
-8. `08-commands-and-tools.md`：当前仍建议使用的命令。
-9. `04-sft-training.md`、`数据合成0508.md`、`数据清洗0510.md`：SFT 训练记录、数据历史、新数据清洗和已知问题。
-10. `补充实验待办.md`：主线之外的补充实验 checklist。
+1. `00-代码简介.md`：代码结构、核心协议、eval/SFT/RL 三条链路。
+2. `01-数据准备.md`：上游数据、抽帧目录、当前保留文件。
+3. `02-SFT数据清洗.md`：SFT 合成、过滤和最终训练文件。
+4. `03-RL数据清洗.md`：RL query_events schema、难度清洗和最终筛选数据。
+5. `04-SFT训练.md`：LLaMAFactory 训练入口、模型导出和注意事项。
+6. `05-RL训练.md`：verl stepwise RL 入口、reward、judge、当前 run 口径和历史 RL 实验归档。
+7. `06-实验跑分.md`：可比较的正式结果表。
+8. `07-实验记录.md`：时间线、关键结论和下一步。
+9. `08-命令和工具使用.md`：当前仍建议使用的命令。
+10. `09-文献与历史方案归档.md`：从旧 `docs/` 融合进来的历史方案和论文调研结论。
+11. `10-RL方案.md`：当前 RL 方案设计，融合 EXP3 GRPPO proposal 和现有代码实现。
 
-## 当前口径
+## 当前主线
 
-- 当前主线：`exp3/streamweave_v5` 的 SFT/RL/eval 和新数据清洗。
-- SFT 记录：`04-sft-training.md` 单独记录 answered-full SFT 的数据合成、过滤、LLaMAFactory 训练和 OVO 1/8 评测状态。
-- RL 记录：`05-rl-training.md` 单独记录旧 8GPU run、fused/chunked run、checkpoint、reward 指标和性能指标。
-- 最新事实：历史 RL 输出已从 `RL/outputs` 清理；旧 GRPO launcher 已删除，只保留最新 fused/chunked GRPO 入口、PPO 入口和 smoke test。
-- 当前源码事实：最新 GRPO 入口默认从 answered-full SFT vLLM 兼容模型启动，使用 `save_freq=30`、`resume_mode=auto`、remove padding、fused kernels 和 chunked prefill。
-- 当前优先级：等 answered-full SFT 评测落盘；用最新 GRPO 入口启动 reward v2 RL；保证 checkpoint 可恢复；再优化 `old_log_prob` 和 `update_actor` 慢的问题。
-- 历史 V4 SFT 数据合成已经不再是当前阻塞项；第一次 SFT 回评显示退化，不能直接当作可靠结论。早期 idea 验证、旧数据构造和旧数据清洗摘要已合并到 `00-overview.md`。
+当前仓库：
 
-## 更新原则
+```text
+/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
+```
 
-- 当前状态只写一处：`experiment-log.md`。
-- 详细跑分只写一处：`实验跑分.md`。
-- 命令只保留当前推荐命令；废弃命令不再展开。
-- 历史阶段保留结论，不保留重复执行过程。
-- 新的异常和经验结论同步写入 `07-key-points.md`。
-- 源码行为变化同步写入 `10-source-code-current-state.md`，再按需要摘到总览和命令页。
+当前代码主线是 StreamWeave V5：模型按视频流逐步读取当前帧窗口，维护 `anchor + delta` 形式的图文交错 Memory，并在 QA History 中按时间回答或更新答案。
+
+当前主要训练数据：
+
+```text
+dataset2/rl_0516_filter.jsonl
+dataset2/sft_0516_4500.jsonl
+```
+
+当前 RL 训练入口：
+
+```text
+RL/scripts/train_exp9_24.sh
+```
+
+当前文档原则：
+
+- 当前事实写在 `note/`。
+- 历史材料已经压缩进当前文档；后续只维护 `note/`。
+- 顶层 `docs/` 的历史内容已经融合到 `09-文献与历史方案归档.md` 和相关主线笔记中。
+- `RL/scripts/EXP3_GRPPO_PROPOSAL.md` 已融合到 `10-RL方案.md` 并删除。
+- `RL/scripts/EXPERIMENTS.md` 的关键信息已融合到 `05-RL训练.md`；原文件已删除。
+- `RL/verl/` 和 `SFT/LlamaFactory/` 是第三方/框架文档，默认不纳入本目录整理。
+- 命令只保留当前可用版本，废弃命令不展开。
+- 跑分表和实验时间线分开写，避免结果和过程混在一起。

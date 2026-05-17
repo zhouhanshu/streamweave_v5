@@ -2,7 +2,7 @@ benchmark: videohallucer
 policy: streamweave         # = anchor + delta (image-text interleaved memory)
 
 prompt:
-  profile: teacher_eval
+  profile: eval
 
 postprocess:
   mode: eval_repair

@@ -2,7 +2,7 @@ benchmark: videohallucer
 policy: delta_only          # = text-only memory (no anchor images)
 
 prompt:
-  profile: teacher_eval
+  profile: eval
 
 postprocess:
   mode: eval_repair
