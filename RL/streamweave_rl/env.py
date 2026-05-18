@@ -249,17 +249,20 @@ class StreamWeaveRLEnv:
         else:
             grppo_answer_correctness = 0.0
             grppo_label_status = grppo_supervision.status
-        if self.current_answer_target is not None and _grppo_label_requires_answer(self.current_answer_target):
+        target_step_answer_required = (
+            self.current_answer_target is not None and _grppo_label_requires_answer(self.current_answer_target)
+        )
+        target_step_answer_rule_score = 0.0
+        if target_step_answer_required:
             if not quality.parser_ok:
-                target_step_answer_score = 0.0
+                target_step_answer_rule_score = 0.0
             else:
-                target_step_answer_score, _ = _score_current_step_answer(
+                target_step_answer_rule_score, _ = _score_current_step_answer(
                     answer=raw_action.answer,
                     label=self.current_answer_target,
                     metadata=self.sample.metadata,
                     cfg=self.settings.rl_reward,
                 )
-            self.target_answer_scores.append(float(target_step_answer_score))
         note_frequency_result = compute_note_frequency_score(
             action=raw_action,
             previous_no_note_streak=self.no_note_streak,
@@ -292,6 +295,15 @@ class StreamWeaveRLEnv:
                 status="blocked_note_frequency",
                 issues=list(note_frequency_reasons),
             )
+        if target_step_answer_required:
+            target_step_answer_score, _target_step_answer_source = _target_answer_score_from_judge_or_rule(
+                rule_score=target_step_answer_rule_score,
+                judge_result=judge_result,
+                grppo_enabled=self.grppo_enabled,
+                answer_reward_event=grppo_answer_event,
+                answer_supervision_kind=grppo_supervision.kind,
+            )
+            self.target_answer_scores.append(float(target_step_answer_score))
         self.env.commit(applied)
         reward_result = compute_step_reward(
             quality=quality,
@@ -751,6 +763,34 @@ def _score_current_step_answer(
     return min(max(float(score), 0.0), 1.0), "scored"
 
 
+def _target_answer_score_from_judge_or_rule(
+    *,
+    rule_score: float,
+    judge_result: JudgeResult,
+    grppo_enabled: bool,
+    answer_reward_event: bool,
+    answer_supervision_kind: str,
+) -> tuple[float, str]:
+    """Use answer judge for target answer metrics when it is available.
+
+    The rule scorer is kept only as a fallback for disabled/failed judge calls.
+    """
+
+    if grppo_enabled and answer_reward_event and answer_supervision_kind == "answer":
+        scores = judge_result.scores if isinstance(judge_result, JudgeResult) else {}
+        if judge_result.status == "ok" and "answer_reward" in scores:
+            return _clamp_unit(scores.get("answer_reward", 0.0)), "judge"
+    return _clamp_unit(rule_score), "rule"
+
+
+def _clamp_unit(value: Any) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        score = 0.0
+    return min(max(score, 0.0), 1.0)
+
+
 def _binary_silence_score(answer_text: str) -> float:
     return 1.0 if not str(answer_text or "").strip() else 0.0
 
@@ -783,7 +823,8 @@ def _final_grppo_answer_reward(
     if kind == "answer":
         if not has_answer:
             return 0.0
-        return binary_score
+        attempt = float(silence_reward_value) if _bool_from_value(silence_reward) else 0.0
+        return attempt + binary_score
     raise ValueError(f"Unknown GRPPO answer supervision kind: {supervision_kind}")
 
 
@@ -794,7 +835,8 @@ def _answer_reward_scale(
     silence_reward_value: float = 1.0,
 ) -> float:
     if kind == "answer":
-        return 1.0
+        attempt = float(silence_reward_value) if _bool_from_value(silence_reward) else 0.0
+        return 1.0 + attempt
     if kind == "silence" and _bool_from_value(silence_reward):
         return float(silence_reward_value)
     return 0.0

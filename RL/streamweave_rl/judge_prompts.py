@@ -105,9 +105,11 @@ For each process dimension, fill every listed check with 1, 0.5, or 0:
 - 0.5 means the check is neutral or partially applicable only where explicitly allowed below.
 - 0 means the check fails.
 - Do not use null.
-Set the dimension score to the mean of all listed checks. Reflect severe failures by failing the
-relevant checks; do not hide them only in caps_applied. Include every listed check for each dimension;
-omitting a listed check is treated as a failed check.
+Set each dimension score from its listed checks with this gate: if any listed check is 0, the dimension
+score is 0; otherwise set the dimension score to the mean of its listed checks. A 0.5 check remains
+neutral/partial and does not zero the dimension. Reflect severe failures by failing the relevant checks;
+do not hide them only in caps_applied. Include every listed check for each dimension; omitting a listed
+check is treated as a failed check.
 
 1. delta_groundedness checks
 - delta_captures_action_progress: <delta> records the main observable actions, progress, starts, stops,
@@ -116,8 +118,8 @@ omitting a listed check is treated as a failed check.
 - delta_captures_state_or_location_changes: when visible, <delta> preserves important object/person
   state, location, layout, or cumulative-progress changes that are not already preserved by the
   surrounding visual anchors.
-- delta_preserves_query_relevant_details: <delta> keeps textual details that may matter for current or
-  future QA and can be safely represented in text.
+- delta_preserves_query_relevant_details: <delta> does not introduce an incorrect semantic transition,
+  skip events, or incorrectly segment or switch between events.
 - delta_no_visual_hallucination: <delta> does not invent unsupported objects, attributes, actions, counts,
   relations, causes, or outcomes.
 - delta_not_polluted_by_qa: <delta> does not treat question text, answer choices, prior answers, or QA
@@ -133,8 +135,8 @@ omitting a listed check is treated as a failed check.
   exactly one anchor at t="0.0-1.0" or "0-1"; if this is not the first window, use 1.
 
 3. semantic_alignment checks
-- semantic_output_coherent: the current model output is semantically coherent as a whole; its <anchor>,
-  <delta>, <state>, and <answer> do not conflict with each other.
+- semantic_output_coherent: the current model output is semantically coherent as a whole; it does not
+  insert events, force event segmentation, or make incorrect semantic transitions.
 - semantic_text_anchor_express_current_frames: compared with the current frames, the model's text and
   anchored frame, if any, effectively express the visually important content of this step.
 - semantic_no_cross_step_contradiction: the output does not move events to the wrong time, reverse
@@ -358,11 +360,11 @@ def build_grppo_judge_content(ctx: GrppoJudgePromptContext) -> list[ContentItem]
     answer_rubric = f"\n{GRPPO_ANSWER_RUBRIC}" if answer_reward_event else ""
     answer_caps = "- answer_reward must be exactly 0.0 or 1.0.\n" if answer_reward_event else ""
     overall_rule = (
-        "overall is a process-only diagnostic score. Compute it as 2.0 times the mean of all "
-        "process checks across the four process dimensions. Do not include answer_reward in overall."
+        "overall is a process-only diagnostic score. Compute it as 2.0 times the mean of the four "
+        "process dimension scores after applying the dimension fail gate. Do not include answer_reward in overall."
         if answer_reward_event
-        else "overall is a process-only diagnostic score. Compute it as 2.0 times the mean of all "
-        "process checks across the four process dimensions."
+        else "overall is a process-only diagnostic score. Compute it as 2.0 times the mean of the four "
+        "process dimension scores after applying the dimension fail gate."
     )
     output_schema = GRPPO_OUTPUT_SCHEMA_5 if answer_reward_event else GRPPO_OUTPUT_SCHEMA_4
 

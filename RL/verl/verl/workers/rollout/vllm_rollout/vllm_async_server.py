@@ -76,6 +76,28 @@ logger = logging.getLogger(__file__)
 logger.setLevel(logging.INFO)
 
 
+def _vision_special_token_ids(processor: Any) -> set[int]:
+    token_ids: set[int] = set()
+    if processor is None:
+        return token_ids
+    for attr in ("image_token_id", "video_token_id"):
+        token_id = getattr(processor, attr, None)
+        if isinstance(token_id, int) and token_id >= 0:
+            token_ids.add(int(token_id))
+    return token_ids
+
+
+def _ban_vision_special_tokens(sampling_params: dict[str, Any], processor: Any) -> None:
+    """Prevent input-only visual placeholder tokens from being sampled as text."""
+    token_ids = _vision_special_token_ids(processor)
+    if not token_ids:
+        return
+    logit_bias = dict(sampling_params.get("logit_bias") or {})
+    for token_id in token_ids:
+        logit_bias[int(token_id)] = -100.0
+    sampling_params["logit_bias"] = logit_bias
+
+
 class vLLMHttpServer:
     """vLLM http server in single node, this is equivalent to launch server with command line:
     ```
@@ -546,6 +568,7 @@ class vLLMHttpServer:
         )
         sampling_params["logprobs"] = 0 if sampling_params.pop("logprobs", False) else None
         sampling_params.setdefault("repetition_penalty", self.config.get("repetition_penalty", 1.0))
+        _ban_vision_special_tokens(sampling_params, self.model_config.processor)
         sampling_params = SamplingParams(max_tokens=max_tokens, **sampling_params)
         prompt_ids = qwen2_5_vl_dedup_image_tokens(prompt_ids, self.model_config.processor)
         multi_modal_data = {}

@@ -346,7 +346,8 @@ def _trace_step(
         f"note_reasons={reward_info.get('note_frequency_reasons', [])} "
         f"judge_status={reward_info.get('judge_status', 'disabled')} "
         f"judge_raw={fmt(reward_info.get('judge_raw_score', 0.0))} "
-        f"judge_dims={judge_scores} judge_reasons={shorten(str(judge_reasons), default_limit=320)} "
+        f"judge_dims={judge_scores} "
+        f"judge_reasons={shorten(str(judge_reasons), limit_env='STREAMWEAVE_TRACE_JUDGE_MAX_CHARS', default_limit=2000)} "
         f"issues={info.get('issue_codes', [])}"
     )
     trace_print(

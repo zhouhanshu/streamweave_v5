@@ -28,7 +28,9 @@ def env_text(name: str, *, default: str = "") -> str:
 def trace_rollout_allowed(*, group_idx: Any, traj_idx: int, sample_id: str, sample_index: Any = None) -> bool:
     if not env_flag("STREAMWEAVE_TRACE_FIRST_ROLLOUT", default=False):
         return False
-    if int(traj_idx) != env_int("STREAMWEAVE_TRACE_TRAJ_INDEX", default=0):
+    if not env_flag("STREAMWEAVE_TRACE_ALL_TRAJS", default=False) and int(traj_idx) != env_int(
+        "STREAMWEAVE_TRACE_TRAJ_INDEX", default=0
+    ):
         return False
 
     sample_filter = env_text("STREAMWEAVE_TRACE_SAMPLE_ID")

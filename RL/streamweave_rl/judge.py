@@ -643,31 +643,21 @@ def _extract_checklist_score(key: str, value: Any) -> float | None:
     scores = [check_score for check_score in raw_scores if check_score is not None]
     if not scores:
         return None
+    if any(check_score <= 0.0 for check_score in scores):
+        return 0.0
     return _clamp_score(sum(scores) / len(scores))
 
 
 def _extract_flat_grppo_process_score(parsed: dict[str, Any]) -> float | None:
-    raw_scores: list[float | None] = []
     if not _has_any_grppo_process_checklist(parsed):
         return None
+    dimension_scores: list[float] = []
     for key in GRPPO_STEP_SCORE_KEYS:
-        value = parsed.get(key)
-        expected_keys = GRPPO_CHECK_KEYS.get(key, ())
-        if not isinstance(value, dict) or not isinstance(value.get("checks"), dict):
-            raw_scores.extend(0.0 for _ in expected_keys)
-            continue
-        checks = value["checks"]
-        if expected_keys:
-            raw_scores.extend(
-                0.0 if check_key not in checks else _extract_check_value(checks[check_key])
-                for check_key in expected_keys
-            )
-        else:
-            raw_scores.extend(_extract_check_value(item) for item in checks.values())
-    scores = [score for score in raw_scores if score is not None]
-    if not scores:
+        checklist_score = _extract_checklist_score(key, parsed.get(key))
+        dimension_scores.append(0.0 if checklist_score is None else checklist_score)
+    if not dimension_scores:
         return None
-    return _clamp_process_total_score(GRPPO_PROCESS_SCORE_SCALE * sum(scores) / len(scores))
+    return _clamp_process_total_score(GRPPO_PROCESS_SCORE_SCALE * sum(dimension_scores) / len(dimension_scores))
 
 
 def _has_any_grppo_process_checklist(parsed: dict[str, Any]) -> bool:

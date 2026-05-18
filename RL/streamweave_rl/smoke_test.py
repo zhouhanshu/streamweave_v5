@@ -105,6 +105,7 @@ def main() -> None:
             _grppo_answer_event_enabled,
             _timeline_grppo_answer_supervision,
             _normalize_query_annotations,
+            _target_answer_score_from_judge_or_rule,
         )
         from streamweave_rl.rewards import StreamWeaveRewardConfig
         from streamweave_rl.dapo import compute_group_filter_result, select_reward_extra_infos
@@ -138,6 +139,25 @@ def main() -> None:
     assert cfg.w_success == 0.8
     assert cfg.note_frequency_weight == 1.0
     assert cfg.judge_weight == 1.0
+
+    score, source = _target_answer_score_from_judge_or_rule(
+        rule_score=0.0,
+        judge_result=JudgeResult(status="ok", score=1.8, scores={"answer_reward": 1.0}),
+        grppo_enabled=True,
+        answer_reward_event=True,
+        answer_supervision_kind="answer",
+    )
+    assert score == 1.0
+    assert source == "judge"
+    score, source = _target_answer_score_from_judge_or_rule(
+        rule_score=0.25,
+        judge_result=JudgeResult(status="error", score=0.0, scores={"answer_reward": 1.0}),
+        grppo_enabled=True,
+        answer_reward_event=True,
+        answer_supervision_kind="answer",
+    )
+    assert score == 0.25
+    assert source == "rule"
     assert cfg.grppo_process_weight == 1.0
     assert cfg.grppo_format_weight == 0.1
     assert cfg.grppo_note_frequency_weight == 0.0
@@ -407,9 +427,11 @@ def main() -> None:
         }
         """
     )
-    assert grppo_checklist_judge.scores["delta_groundedness"] == 3.5 / 5
+    assert grppo_checklist_judge.scores["delta_groundedness"] == 0.0
     assert grppo_checklist_judge.scores["anchor_keyframe"] == 3 / 4
-    assert abs(grppo_checklist_judge.score - (2.0 * 12.5 / 18)) < 1e-8
+    assert grppo_checklist_judge.scores["semantic_alignment"] == 0.0
+    assert grppo_checklist_judge.scores["state_groundedness"] == 0.0
+    assert abs(grppo_checklist_judge.score - (2.0 * 0.75 / 4)) < 1e-8
     grppo_missing_checklists = _parse_grppo_judge_response(
         """
         {
@@ -429,7 +451,7 @@ def main() -> None:
         }
         """
     )
-    assert abs(grppo_missing_checklists.score - (2.0 * 5 / 18)) < 1e-8
+    assert abs(grppo_missing_checklists.score - (2.0 * 1 / 4)) < 1e-8
     assert grppo_missing_checklists.scores["anchor_keyframe"] == 0.0
     assert grppo_missing_checklists.scores["semantic_alignment"] == 0.0
     assert grppo_missing_checklists.scores["state_groundedness"] == 0.0
@@ -652,8 +674,55 @@ def main() -> None:
         == 0.0
     )
     assert _final_grppo_answer_reward(raw_score=1.0, supervision_kind="answer", has_answer=False, label_status="scored") == 0.0
-    assert _final_grppo_answer_reward(raw_score=1.0, supervision_kind="answer", has_answer=True, label_status="scored") == 1.0
-    assert _answer_reward_scale("answer", silence_reward_value=0.1) == 1.0
+    # answer kind with attempt-reward (additive): silence_reward_value is added as participation reward.
+    # silent -> 0; wrong attempt -> attempt only; correct attempt -> attempt + 1.
+    assert (
+        _final_grppo_answer_reward(
+            raw_score=0.0,
+            supervision_kind="answer",
+            has_answer=True,
+            label_status="scored",
+            silence_reward=True,
+            silence_reward_value=0.1,
+        )
+        == 0.1
+    )
+    assert (
+        _final_grppo_answer_reward(
+            raw_score=1.0,
+            supervision_kind="answer",
+            has_answer=True,
+            label_status="scored",
+            silence_reward=True,
+            silence_reward_value=0.1,
+        )
+        == 1.1
+    )
+    # silence_reward=False disables the attempt reward (interpretation A).
+    assert (
+        _final_grppo_answer_reward(
+            raw_score=1.0,
+            supervision_kind="answer",
+            has_answer=True,
+            label_status="scored",
+            silence_reward=False,
+            silence_reward_value=0.1,
+        )
+        == 1.0
+    )
+    assert (
+        _final_grppo_answer_reward(
+            raw_score=0.0,
+            supervision_kind="answer",
+            has_answer=True,
+            label_status="scored",
+            silence_reward=False,
+            silence_reward_value=0.1,
+        )
+        == 0.0
+    )
+    assert _answer_reward_scale("answer", silence_reward_value=0.1) == 1.1
+    assert _answer_reward_scale("answer", silence_reward=False, silence_reward_value=0.1) == 1.0
     assert _answer_reward_scale("silence", silence_reward_value=0.1) == 0.1
     timeline_query = {"event_type": "query", "question": "What color?", "timestamp": 1.0}
     timeline_no_event = _timeline_grppo_answer_supervision(
