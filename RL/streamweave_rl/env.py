@@ -795,6 +795,9 @@ def _binary_silence_score(answer_text: str) -> float:
     return 1.0 if not str(answer_text or "").strip() else 0.0
 
 
+GRPPO_ANSWER_ATTEMPT_REWARD_OFFSET = 0.4
+
+
 def _final_grppo_answer_reward(
     *,
     raw_score: float,
@@ -823,7 +826,11 @@ def _final_grppo_answer_reward(
     if kind == "answer":
         if not has_answer:
             return 0.0
-        attempt = float(silence_reward_value) if _bool_from_value(silence_reward) else 0.0
+        attempt = (
+            float(silence_reward_value) + GRPPO_ANSWER_ATTEMPT_REWARD_OFFSET
+            if _bool_from_value(silence_reward)
+            else 0.0
+        )
         return attempt + binary_score
     raise ValueError(f"Unknown GRPPO answer supervision kind: {supervision_kind}")
 
@@ -835,7 +842,11 @@ def _answer_reward_scale(
     silence_reward_value: float = 1.0,
 ) -> float:
     if kind == "answer":
-        attempt = float(silence_reward_value) if _bool_from_value(silence_reward) else 0.0
+        attempt = (
+            float(silence_reward_value) + GRPPO_ANSWER_ATTEMPT_REWARD_OFFSET
+            if _bool_from_value(silence_reward)
+            else 0.0
+        )
         return 1.0 + attempt
     if kind == "silence" and _bool_from_value(silence_reward):
         return float(silence_reward_value)

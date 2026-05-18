@@ -674,9 +674,10 @@ def main() -> None:
         == 0.0
     )
     assert _final_grppo_answer_reward(raw_score=1.0, supervision_kind="answer", has_answer=False, label_status="scored") == 0.0
-    # answer kind with attempt-reward (additive): silence_reward_value is added as participation reward.
+    # answer kind with attempt-reward (additive): silence_reward_value plus the fixed answer-attempt
+    # offset is added as participation reward.
     # silent -> 0; wrong attempt -> attempt only; correct attempt -> attempt + 1.
-    assert (
+    assert abs(
         _final_grppo_answer_reward(
             raw_score=0.0,
             supervision_kind="answer",
@@ -685,9 +686,9 @@ def main() -> None:
             silence_reward=True,
             silence_reward_value=0.1,
         )
-        == 0.1
-    )
-    assert (
+        - 0.5
+    ) < 1e-8
+    assert abs(
         _final_grppo_answer_reward(
             raw_score=1.0,
             supervision_kind="answer",
@@ -696,8 +697,8 @@ def main() -> None:
             silence_reward=True,
             silence_reward_value=0.1,
         )
-        == 1.1
-    )
+        - 1.5
+    ) < 1e-8
     # silence_reward=False disables the attempt reward (interpretation A).
     assert (
         _final_grppo_answer_reward(
@@ -721,7 +722,7 @@ def main() -> None:
         )
         == 0.0
     )
-    assert _answer_reward_scale("answer", silence_reward_value=0.1) == 1.1
+    assert abs(_answer_reward_scale("answer", silence_reward_value=0.1) - 1.5) < 1e-8
     assert _answer_reward_scale("answer", silence_reward=False, silence_reward_value=0.1) == 1.0
     assert _answer_reward_scale("silence", silence_reward_value=0.1) == 0.1
     timeline_query = {"event_type": "query", "question": "What color?", "timestamp": 1.0}
