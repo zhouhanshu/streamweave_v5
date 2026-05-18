@@ -15,6 +15,215 @@
 | 结果 | `outputs/ovo_qwen3vl_sft_0516_step50_1of8/results.jsonl` |
 | Trace 根目录 | `outputs/ovo_qwen3vl_sft_0516_step50_1of8/traces/` |
 
+定量补充：
+
+| 项目 | 路径 |
+|---|---|
+| 图文交错 full 结果 | `outputs/gemini_full_0516/results.jsonl` |
+| 图文交错 full trace | `outputs/gemini_full_0516/traces/` |
+| 纯文本 full 结果 | `outputs/streamtext/ovo_gemini_flash_full/results.jsonl` |
+| 纯文本 full trace | `outputs/streamtext/ovo_gemini_flash_full/traces/` |
+
+注意：下面的 6 个 case 是 `qwen3vl_sft_0516_step50_1of8` 的 qualitative trace demo；token 量化和 paired 对比来自 Gemini full 跑法，用来说明同一套 memory 形式在 full OVO 上的成本-效果关系。
+
+---
+
+## Token Efficiency: 图文交错是否真的省 token
+
+为了避免只凭直觉说“省 token”，这里统一用 **Qwen3-VL-equivalent memory tokens** 计量最终 memory 成本：
+
+```text
+C_memory = C_text + C_image
+C_text   = Qwen3-VL tokenizer(memory text)
+C_image  = sum_i ceil(W_i / 32) * ceil(H_i / 32)
+```
+
+其中 `W_i, H_i` 是图片经过实际后端 resize 后的尺寸。当前评测配置里的 `resolution: 448` 表示最长边缩到 448，并保持宽高比，不是强制 `448x448`。因此常见 `1280x720` 帧会变成约 `448x252`，对应约 `14 * 8 = 112` 个视觉 token，而不是 `196`。
+
+在两边都有 memory 的 `3034` 个 OVO 样本上做 paired comparison：
+
+| Method | Text tokens | Image tokens | Total memory tokens | Micro Acc. | Official OVO AVG |
+|---|---:|---:|---:|---:|---:|
+| Interleaved Memory | 4.27M | 3.21M | **7.48M** | **58.70%** | 61.86% |
+| Text-only Memory | 18.45M | 0 | **18.45M** | 58.04% | **62.22%** |
+
+最终 memory token reduction：
+
+```text
+1 - 7.48M / 18.45M = 59.5%
+bootstrap 95% CI: [57.7%, 61.1%]
+```
+
+逐样本比较：
+
+| Metric | Value |
+|---|---:|
+| Interleaved token 更少的样本比例 | 74.03% |
+| Interleaved correct, text-only wrong | 381 |
+| Text-only correct, interleaved wrong | 361 |
+| Both correct | 1400 |
+| Both wrong | 892 |
+
+所以这里更稳妥的结论不是“所有任务上都更准”，而是：
+
+```text
+Interleaved memory reduces final memory tokens by 59.5% while maintaining comparable accuracy.
+It also produces slightly more paired wins than text-only memory: 381 vs. 361.
+```
+
+按任务拆开看，图文交错在一些需要视觉证据保真的任务上更占优：
+
+| Task | Interleaved Acc. | Text-only Acc. | Interleaved-only wins | Text-only-only wins | Token reduction |
+|---|---:|---:|---:|---:|---:|
+| CRR | 51.25% | 28.33% | 68 | 13 | 69.8% |
+| STU | 66.29% | 62.36% | 32 | 25 | 67.6% |
+| ACR | 89.91% | 84.40% | 8 | 2 | 46.1% |
+| ATR | 72.41% | 70.69% | 11 | 9 | 70.5% |
+| REC | 34.24% | 32.66% | 95 | 84 | 29.3% |
+| SSR | 67.09% | 65.18% | 85 | 73 | 26.2% |
+
+---
+
+## Paired Wins: 图文交错对，纯文本错
+
+下面两个例子都来自 Gemini full paired comparison。它们适合放在论文里说明：图文交错不是只靠牺牲信息换 token，而是在部分样本上同时更省 token、也答得更对。
+
+### Example A: `636`，STU，方向判断
+
+问题：
+
+```text
+Which direction am I moving?
+Options:
+A. Move forward while moving up
+B. Move forward while moving down
+C. Move backward while moving up
+D. Move backward while moving down
+```
+
+结果：
+
+| Method | Answer | Score | Memory tokens |
+|---|---|---:|---:|
+| Interleaved Memory | B | 1 | 12,333 |
+| Text-only Memory | A | 0 | 93,720 |
+
+token saving：
+
+```text
+1 - 12,333 / 93,720 = 86.8%
+```
+
+图文交错的判断依据：
+
+```text
+The character has been consistently moving forward along a path...
+The current frames show the character continuing to run forward on a path
+that appears to be relatively flat or slightly downhill...
+answer = B
+```
+
+纯文本错误判断：
+
+```text
+The character is running up a slight incline...
+answer = A
+```
+
+这个例子的重点：纯文本 memory 虽然很长，但累积文字描述把坡度方向判断错了；图文交错保留了少量视觉 anchor，并在最后判断中结合当前帧，既省 token 又答对。
+
+### Example B: `1474_2`，CRR，是否已经能回答后续去向
+
+问题：
+
+```text
+The two people, one man and one woman, are talking.
+Where they go and stay for a while next?
+Decide whether the existing visual content ... provides enough information.
+Answer only with "Yes" or "No".
+```
+
+结果：
+
+| Method | Answer | Score | Memory tokens |
+|---|---|---:|---:|
+| Interleaved Memory | Yes | 1 | 10,107 |
+| Text-only Memory | No | 0 | 76,826 |
+
+token saving：
+
+```text
+1 - 10,107 / 76,826 = 86.8%
+```
+
+图文交错的判断依据：
+
+```text
+The video shows a young man and a woman talking at a bar.
+The man follows the woman down a dark hallway.
+Based on the current frames, they are walking down a dark hallway together.
+This provides enough information to answer "Yes".
+```
+
+纯文本错误判断：
+
+```text
+The current frames continue to show a dimly lit hallway...
+the question ... cannot be answered from the current visual information.
+answer = No
+```
+
+这个例子的重点：纯文本 memory 把历史全部文字化，但最终仍然判断证据不足；图文交错 memory 用更少 token 保留了关键视觉转场，能判断后续去向已经出现。
+
+### Backward paired wins
+
+Backward 任务里也有同样现象。下面这些样本都是图文交错答对、纯文本答错：
+
+| sample | Task | GT | Interleaved | Text-only | Interleaved tokens | Text-only tokens | Saving |
+|---|---|---:|---|---|---:|---:|---:|
+| `325` | HLD | B | B | A | 6,449 | 38,175 | 83.1% |
+| `327` | HLD | A | A | B | 8,476 | 32,094 | 73.6% |
+| `110` | EPM | B | B | C | 4,959 | 14,260 | 65.2% |
+| `132` | EPM | A | A | C | 3,735 | 8,600 | 56.6% |
+| `577` | ASI | B | B | C | 5,201 | 12,241 | 57.5% |
+| `199` | EPM | C | C | cannot answer | 1,113 | 2,688 | 58.6% |
+
+其中 `199` 是一个很直接的 backward memory retrieval case。
+
+问题：
+
+```text
+What is the gold object on the nightstand?
+Options:
+A. A painting
+B. A mirror
+C. A nightlamp
+D. A vase
+```
+
+视频后半段当前帧已经转到 kitchen/dining area，问题要求回忆早期 bedroom 里 nightstand 上的物体。
+
+图文交错答对：
+
+```text
+The question asks about a gold object on a nightstand.
+The nightstand was visible in the bedroom from t=42.0 to t=65.0.
+Reviewing the memory from that time, specifically the anchor at t=42.0-43.0,
+shows a nightstand next to the bed. On the nightstand, there is a white object
+with a gold-colored base, which appears to be a nightlamp.
+answer = C
+```
+
+纯文本答错：
+
+```text
+The video shows a dining area and kitchen...
+There is no nightstand or gold object visible in the current frames or in the
+previously described bedroom. Therefore, the question cannot be answered.
+```
+
+这个例子的重点：backward 问题依赖早期视觉细节。纯文本 memory 在长链路里没有可靠保留 nightstand 上的细节；图文交错 memory 通过早期 anchor 找回视觉证据，用更少 token 答对。
+
 ---
 
 ## Case 1: `1512_2`，蓝盒子什么时候变成可答
