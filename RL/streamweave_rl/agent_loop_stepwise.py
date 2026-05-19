@@ -149,6 +149,11 @@ class StreamWeaveAgentLoop(AgentLoopBase):
                         item.extra_fields["reward_extra_info"]["grppo_target_trajectory_score"] = target_trajectory_score
                         item.extra_fields["reward_extra_info"]["grppo_target_answer_reward"] = target_answer_reward
                         item.extra_fields["reward_extra_info"]["grppo_target_format_reward"] = target_format_reward
+                    _renormalize_grppo_silence_rewards(
+                        outputs,
+                        silence_reward_enabled=getattr(env.settings.rl_reward, "grppo_silence_reward", True),
+                        silence_reward_value=getattr(env.settings.rl_reward, "grppo_silence_reward_value", 0.0),
+                    )
                     if trace_rollout:
                         _trace_traj_done(
                             group_idx=group_idx,
@@ -393,6 +398,73 @@ def _grppo_extra_fields(info: dict[str, Any]) -> dict[str, Any]:
         "grppo_prompt_kind": str(info.get("grppo_prompt_kind", "")),
         "grppo_label_status": str(info.get("grppo_label_status", "")),
     }
+
+
+def _renormalize_grppo_silence_rewards(
+    outputs: list[AgentLoopOutput],
+    *,
+    silence_reward_enabled: Any,
+    silence_reward_value: Any,
+) -> None:
+    if not outputs or not _bool_from_value(silence_reward_enabled):
+        return
+
+    answer_count = 0
+    false_answer_count = 0
+    for item in outputs:
+        fields = item.extra_fields
+        supervision = _as_float(fields.get("grppo_answer_supervision", 0.0))
+        has_answer = _as_float(fields.get("grppo_has_answer", 0.0)) >= 0.5
+        if _is_answer_supervision(supervision):
+            answer_count += 1
+        elif has_answer:
+            false_answer_count += 1
+
+    denominator = max(1, answer_count + false_answer_count)
+    try:
+        scaled_silence_reward = float(silence_reward_value) / denominator
+    except (TypeError, ValueError):
+        scaled_silence_reward = 0.0
+
+    for item in outputs:
+        fields = item.extra_fields
+        supervision = _as_float(fields.get("grppo_answer_supervision", 0.0))
+        has_answer = _as_float(fields.get("grppo_has_answer", 0.0)) >= 0.5
+        if _is_silence_supervision(supervision):
+            _set_extra_field(item, "grppo_answer_reward_scale", scaled_silence_reward)
+            _set_extra_field(item, "grppo_answer_reward", 0.0 if has_answer else scaled_silence_reward)
+        elif has_answer and not _is_answer_supervision(supervision):
+            _set_extra_field(item, "grppo_answer_reward", 0.0)
+
+
+def _is_answer_supervision(value: float) -> bool:
+    return abs(float(value) - 2.0) < 1e-6
+
+
+def _is_silence_supervision(value: float) -> bool:
+    return abs(float(value) - 1.0) < 1e-6
+
+
+def _set_extra_field(item: AgentLoopOutput, key: str, value: float) -> None:
+    item.extra_fields[key] = float(value)
+    reward_extra_info = item.extra_fields.get("reward_extra_info")
+    if isinstance(reward_extra_info, dict) and key in reward_extra_info:
+        reward_extra_info[key] = float(value)
+
+
+def _as_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _bool_from_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "y"}
 
 
 def _trace_traj_done(

@@ -86,7 +86,11 @@ def main() -> None:
         print(f"StreamWeave RL smoke test skipped: missing dependency {MISSING_NUMERIC_DEP!r}.")
         return
     try:
-        from streamweave_rl.agent_loop_stepwise import _finalize_aborted_outputs, _grppo_extra_fields
+        from streamweave_rl.agent_loop_stepwise import (
+            _finalize_aborted_outputs,
+            _grppo_extra_fields,
+            _renormalize_grppo_silence_rewards,
+        )
         from streamweave_rl.advantage import (
             compute_streamweave_stepwise_bilevel_gae,
             compute_streamweave_stepwise_grppo,
@@ -686,7 +690,7 @@ def main() -> None:
             silence_reward=True,
             silence_reward_value=0.1,
         )
-        - 0.3
+        - 0.2
     ) < 1e-8
     assert abs(
         _final_grppo_answer_reward(
@@ -697,7 +701,7 @@ def main() -> None:
             silence_reward=True,
             silence_reward_value=0.1,
         )
-        - 1.3
+        - 1.2
     ) < 1e-8
     # silence_reward=False disables the attempt reward (interpretation A).
     assert (
@@ -722,7 +726,7 @@ def main() -> None:
         )
         == 0.0
     )
-    assert abs(_answer_reward_scale("answer", silence_reward_value=0.1) - 1.3) < 1e-8
+    assert abs(_answer_reward_scale("answer", silence_reward_value=0.1) - 1.2) < 1e-8
     assert _answer_reward_scale("answer", silence_reward=False, silence_reward_value=0.1) == 1.0
     assert _answer_reward_scale("silence", silence_reward_value=0.1) == 0.1
     timeline_query = {"event_type": "query", "question": "What color?", "timestamp": 1.0}
@@ -1105,6 +1109,37 @@ def main() -> None:
             self.extra_fields = {}
             self.reward_score = None
             self.num_turns = 0
+
+    def make_grppo_output(supervision: float, has_answer: float, reward: float, scale: float) -> DummyOutput:
+        item = DummyOutput()
+        grppo_fields = {
+            "grppo_answer_supervision": supervision,
+            "grppo_has_answer": has_answer,
+            "grppo_answer_reward": reward,
+            "grppo_answer_reward_scale": scale,
+        }
+        item.extra_fields.update(grppo_fields)
+        item.extra_fields["reward_extra_info"] = dict(grppo_fields)
+        return item
+
+    answer_correct = make_grppo_output(2.0, 1.0, 1.2, 1.2)
+    answer_wrong = make_grppo_output(2.0, 1.0, 0.2, 1.2)
+    silence_correct = make_grppo_output(1.0, 0.0, 0.1, 0.1)
+    silence_false_answer = make_grppo_output(1.0, 1.0, 0.0, 0.1)
+    _renormalize_grppo_silence_rewards(
+        [answer_correct, answer_wrong, silence_correct, silence_false_answer],
+        silence_reward_enabled=True,
+        silence_reward_value=0.1,
+    )
+    assert abs(answer_correct.extra_fields["grppo_answer_reward"] - 1.2) < 1e-8
+    assert abs(answer_wrong.extra_fields["grppo_answer_reward"] - 0.2) < 1e-8
+    assert abs(silence_correct.extra_fields["grppo_answer_reward"] - (0.1 / 3.0)) < 1e-8
+    assert silence_false_answer.extra_fields["grppo_answer_reward"] == 0.0
+    assert abs(silence_false_answer.extra_fields["grppo_answer_reward_scale"] - (0.1 / 3.0)) < 1e-8
+    assert (
+        silence_correct.extra_fields["reward_extra_info"]["grppo_answer_reward"]
+        == silence_correct.extra_fields["grppo_answer_reward"]
+    )
 
     aborted = DummyOutput()
     _finalize_aborted_outputs([aborted], group_idx="sample-a", traj_idx=0, reason="unit-test")

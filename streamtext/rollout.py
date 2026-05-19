@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,15 @@ class StepRunResult:
     attempts: list[AttemptRecord]
     accepted_attempt_index: int
     target_raw_output: str
+
+
+@dataclass(slots=True)
+class MultiQARunResult:
+    sample: BenchmarkSample
+    prefix_transitions: list[Transition]
+    qa_traces: list[RolloutTrace]
+    task_failed: bool = False
+    failure_reason: str = ""
 
 
 class StreamTextRunner:
@@ -156,6 +166,149 @@ class StreamTextRunner:
                 step_done_callback(transition)
         return RolloutTrace(sample=sample, transitions=transitions)
 
+    def run_streaming_qa_sample(self, sample: BenchmarkSample) -> MultiQARunResult:
+        """Run one video once and branch independent QA probes at their timestamps."""
+        qa_list = [item for item in sample.metadata.get("qa_list") or [] if isinstance(item, dict)]
+        if not qa_list:
+            return MultiQARunResult(sample=sample, prefix_transitions=[], qa_traces=[], task_failed=True, failure_reason="empty_qa_list")
+
+        dataset_name = str(sample.metadata.get("frame_dataset_name") or self.dataset_name)
+        declared_count = read_declared_frame_count(sample.metadata, sample.sample_id)
+        frames = self.frame_store.ensure_frames(
+            dataset_name=dataset_name,
+            video_id=sample.video_id,
+            video_path=sample.video_path,
+            sample_fps=self.runtime.sample_fps,
+            max_frames=self.runtime.max_frames,
+        )
+        if declared_count is not None:
+            if len(frames) < declared_count:
+                raise RuntimeError(
+                    f"Sample {sample.sample_id!r} declared frame_count={declared_count} "
+                    f"but only {len(frames)} frame(s) are available on disk."
+                )
+            frames = frames[:declared_count]
+        frames = _truncate_frames_at_timestamp(
+            frames,
+            sample.metadata.get("target_timestamp"),
+            sample_fps=self.runtime.sample_fps,
+            frame_id_base=self.frame_store.config.frame_id_base,
+        )
+        groups = _group_frames(frames, self.runtime.frames_per_step)
+        if self.runtime.max_steps:
+            groups = groups[: self.runtime.max_steps]
+        if not groups:
+            return MultiQARunResult(sample=sample, prefix_transitions=[], qa_traces=[], task_failed=True, failure_reason="empty_frame_groups")
+
+        frame_to_group: dict[int, int] = {}
+        for group_index, group in enumerate(groups):
+            for frame in group:
+                frame_to_group[frame.global_index] = group_index
+        min_frame_id = min(frame.global_index for frame in frames)
+        max_frame_id = max(frame.global_index for frame in frames)
+        queries_by_group: dict[int, list[tuple[int, dict]]] = {}
+        for qa_index, qa in enumerate(qa_list):
+            timestamp = _qa_timestamp(qa, sample.metadata.get("target_timestamp"))
+            frame_id = _timestamp_to_frame_id(
+                timestamp,
+                sample_fps=self.runtime.sample_fps,
+                frame_id_base=self.frame_store.config.frame_id_base,
+                min_frame_id=min_frame_id,
+                max_frame_id=max_frame_id,
+            )
+            group_index = frame_to_group.get(frame_id, len(groups) - 1)
+            queries_by_group.setdefault(group_index, []).append((qa_index, qa))
+
+        env = StreamTextEnv(
+            prompt_profile=self.prompt_profile,
+            memory_window=self.memory_config.window_seconds,
+            extra_context=str(sample.metadata.get("teacher_context", "")),
+        )
+        trace_dir = self._trace_dir_for_sample(sample)
+        prefix_writer = TraceWriter(trace_dir / "_stream", write_jsonl=self.trace_config.write_jsonl)
+        prefix_transitions: list[Transition] = []
+        qa_traces_by_index: dict[int, RolloutTrace] = {}
+        last_query_group_index = max(queries_by_group)
+
+        for step_index, group in enumerate(groups):
+            if not group:
+                continue
+            step_end = group[-1].end_time
+
+            for qa_index, qa in queries_by_group.get(step_index, []):
+                qa_sample = _sample_for_streaming_qa_branch(sample, qa, qa_index)
+                branch_env = copy.deepcopy(env)
+                branch_env.add_question(
+                    QARecord(
+                        timestamp=_qa_timestamp(qa, step_end),
+                        text=str(qa.get("query_text") or qa.get("question") or ""),
+                        role="q",
+                    )
+                )
+                qa_id = _safe_trace_name(str(qa.get("qa_id") or f"qa_{qa_index:04d}"))
+                branch_writer = TraceWriter(trace_dir / qa_id, write_jsonl=self.trace_config.write_jsonl)
+                branch_env.evict_memory(step_end)
+                memory_before = branch_env.memory_text()
+                result = self._run_model_step(
+                    env=branch_env,
+                    writer=branch_writer,
+                    step_index=step_index,
+                    prompt_frames=group,
+                    memory_before=memory_before,
+                )
+                memory_after = branch_env.memory_text()
+                branch_writer.write_env_done(step_index=step_index, quality=result.quality, applied=result.applied, memory_after=memory_after)
+                transition = _transition_from_step(
+                    sample=qa_sample,
+                    step_index=step_index,
+                    group=group,
+                    result=result,
+                    memory_before=memory_before,
+                    memory_after=memory_after,
+                )
+                branch_writer.write_transition(transition)
+                qa_traces_by_index[qa_index] = RolloutTrace(sample=qa_sample, transitions=[*prefix_transitions, transition])
+
+            if step_index >= last_query_group_index:
+                break
+
+            env.evict_memory(step_end)
+            memory_before = env.memory_text()
+            result = self._run_model_step(
+                env=env,
+                writer=prefix_writer,
+                step_index=step_index,
+                prompt_frames=group,
+                memory_before=memory_before,
+            )
+            memory_after = env.memory_text()
+            prefix_writer.write_env_done(step_index=step_index, quality=result.quality, applied=result.applied, memory_after=memory_after)
+            transition = _transition_from_step(
+                sample=sample,
+                step_index=step_index,
+                group=group,
+                result=result,
+                memory_before=memory_before,
+                memory_after=memory_after,
+            )
+            prefix_writer.write_transition(transition)
+            prefix_transitions.append(transition)
+
+        for qa_index, qa in enumerate(qa_list):
+            if qa_index in qa_traces_by_index:
+                continue
+            qa_traces_by_index[qa_index] = RolloutTrace(
+                sample=_sample_for_streaming_qa_branch(sample, qa, qa_index),
+                transitions=list(prefix_transitions),
+                task_failed=True,
+                failure_reason="query_not_reached",
+            )
+        return MultiQARunResult(
+            sample=sample,
+            prefix_transitions=prefix_transitions,
+            qa_traces=[qa_traces_by_index[idx] for idx in sorted(qa_traces_by_index)],
+        )
+
     def _run_model_step(
         self,
         *,
@@ -216,6 +369,93 @@ class StreamTextRunner:
         if sample.sample_id != sample.video_id:
             trace_dir = trace_dir / sample.sample_id
         return trace_dir
+
+
+def _transition_from_step(
+    *,
+    sample: BenchmarkSample,
+    step_index: int,
+    group: list[FrameRef],
+    result: StepRunResult,
+    memory_before: str,
+    memory_after: str,
+) -> Transition:
+    return Transition(
+        sample_id=sample.sample_id,
+        video_id=sample.video_id,
+        step_index=step_index,
+        step_start=group[0].start_time,
+        step_end=group[-1].end_time,
+        prompt_text=result.prompt_text,
+        prompt_images=result.prompt_images,
+        current_frames=result.current_frames,
+        raw_action=result.raw_action,
+        quality=result.quality,
+        applied=result.applied,
+        backend_result=result.backend_result,
+        memory_before=memory_before,
+        memory_after=memory_after,
+        base_prompt_text=result.base_prompt_text,
+        base_prompt_images=result.base_prompt_images,
+        attempt_prompt_text=result.attempt_prompt_text,
+        attempt_prompt_images=result.attempt_prompt_images,
+        attempts=result.attempts,
+        accepted_attempt_index=result.accepted_attempt_index,
+        target_raw_output=result.target_raw_output,
+    )
+
+
+def _sample_for_streaming_qa_branch(sample: BenchmarkSample, qa: dict, qa_index: int) -> BenchmarkSample:
+    qa_id = str(qa.get("qa_id") or f"qa_{qa_index:04d}")
+    timestamp = _qa_timestamp(qa, sample.metadata.get("target_timestamp"))
+    question = qa.get("question") if isinstance(qa.get("question"), dict) else {}
+    metadata = dict(sample.metadata)
+    metadata.pop("qa_list", None)
+    metadata.update(
+        {
+            "is_streaming_qa_branch": True,
+            "streamingbench_grouped_eval": True,
+            "streamingbench_grouped_real": str(metadata.get("split", "")) == "real",
+            "qa_id": qa_id,
+            "qa_index": qa_index,
+            "question": question,
+            "query_text": qa.get("query_text") or "",
+            "query_timestamp": timestamp,
+            "target_timestamp": timestamp,
+            "result_index": qa.get("result_index"),
+            "raw_entry_index": qa.get("raw_entry_index"),
+            "entry_index": qa.get("entry_index"),
+            "question_index": qa.get("question_index"),
+            "video_question_index": qa.get("video_question_index"),
+        }
+    )
+    return BenchmarkSample(
+        sample_id=str(qa.get("sample_id") or f"{sample.sample_id}_{qa_id}"),
+        video_id=sample.video_id,
+        video_path=sample.video_path,
+        query_events=[QueryEvent(text=str(qa.get("query_text") or ""), timestamp=timestamp)],
+        metadata=metadata,
+    )
+
+
+def _safe_trace_name(value: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in value.strip())
+    return safe or "qa"
+
+
+def _qa_timestamp(qa: dict, default: object = None) -> float:
+    for key in ("query_timestamp", "target_timestamp", "timestamp"):
+        value = qa.get(key)
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            pass
+    try:
+        return float(default)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _group_frames(frames: list[FrameRef], size: int) -> list[list[FrameRef]]:

@@ -1,42 +1,46 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# StreamText OVO eval on local vLLM replicas, one server per GPU.
+# StreamText StreamingBench eval on local vLLM replicas, one server per GPU.
 # Usage:
-#   bash streamtext/run_ovo_8gpu_vllm.sh
-#   bash streamtext/run_ovo_8gpu_vllm.sh /path/to/vllm-compatible-model
-#   SPLIT=1of8 bash streamtext/run_ovo_8gpu_vllm.sh
-#   RESUME=1 ALLOW_EXISTING_SERVERS=1 bash streamtext/run_ovo_8gpu_vllm.sh /path/to/model
+#   bash streamtext/run_streamingbench_8gpu_vllm.sh /path/to/model
+#   SPLIT=sqa OUTPUT_DIR=outputs/streamtext/streamingbench_sqa bash streamtext/run_streamingbench_8gpu_vllm.sh /path/to/model
+#   SPLIT=omni TASK_FILTER="Misleading Context Understanding,Anomaly Context Understanding" bash streamtext/run_streamingbench_8gpu_vllm.sh /path/to/model
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 MODEL="${1:-/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct}"
 PYTHON="${PYTHON:-/mmu_mllm_hdd/zhouhanshu/conda/envs/simple/bin/python}"
 VLLM="${VLLM:-/mmu_mllm_hdd/zhouhanshu/conda/envs/vllm/bin/vllm}"
-SPLIT="${SPLIT:-full}"
+SPLIT="${SPLIT:-real}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/streamtext/streamingbench_${SPLIT}_8gpu}"
+CONFIG="${OUTPUT_DIR}/run_config.yaml"
 ALLOW_EXISTING_SERVERS="${ALLOW_EXISTING_SERVERS:-0}"
 RESUME="${RESUME:-0}"
 GPUS="${GPUS:-0 1 2 3 4 5 6 7}"
 PORT_BASE="${PORT_BASE:-8000}"
 WORKERS="${WORKERS:-16}"
 LIMIT="${LIMIT:-}"
-ANNO_PATH="${ANNO_PATH:-}"
+TASK_FILTER="${TASK_FILTER:-}"
 RUNTIME_RESOLUTION="${RUNTIME_RESOLUTION:-}"
 MEMORY_WINDOW_SECONDS="${MEMORY_WINDOW_SECONDS:-}"
 
-if [[ "$SPLIT" == "1of8" ]]; then
-  BASE_CONFIG="streamtext/configs/batch_ovo_qwen3vl8b_8gpu_1of8.yaml"
-  DEFAULT_OUTPUT_DIR="outputs/streamtext/ovo_qwen3vl8b_8gpu_1of8"
-elif [[ "$SPLIT" == "full" ]]; then
-  BASE_CONFIG="streamtext/configs/batch_ovo_qwen3vl8b_8gpu_full.yaml"
-  DEFAULT_OUTPUT_DIR="outputs/streamtext/ovo_qwen3vl8b_8gpu_full"
-else
-  echo "ERROR: SPLIT must be full or 1of8, got: $SPLIT" >&2
-  exit 1
-fi
+case "$SPLIT" in
+  real|sqa|omni)
+    BASE_CONFIG="streamtext/configs/eval_streamingbench.yaml"
+    ;;
+  proactive)
+    BASE_CONFIG="streamtext/configs/eval_streamingbench_proactive.yaml"
+    ;;
+  *)
+    echo "ERROR: SPLIT must be one of: real, sqa, omni, proactive. Got: $SPLIT" >&2
+    exit 1
+    ;;
+esac
 
-OUTPUT_DIR="${OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}"
-CONFIG="$OUTPUT_DIR/run_config.yaml"
+if [[ "$SPLIT" == "omni" && -z "$TASK_FILTER" ]]; then
+  TASK_FILTER="Misleading Context Understanding,Anomaly Context Understanding"
+fi
 
 [[ -x "$PYTHON" ]] || PYTHON="python"
 [[ -x "$VLLM" ]] || VLLM="vllm"
@@ -73,17 +77,29 @@ if [[ "$RESUME" == "1" && -f "$CONFIG" ]]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
-"$PYTHON" - "$CONFIG_SOURCE" "$CONFIG" "$OUTPUT_DIR" "$MODEL" "$ANNO_PATH" "$endpoints" "$WORKERS" "$RUNTIME_RESOLUTION" "$MEMORY_WINDOW_SECONDS" <<'PY'
+"$PYTHON" - "$CONFIG_SOURCE" "$CONFIG" "$OUTPUT_DIR" "$MODEL" "$SPLIT" "$endpoints" "$WORKERS" "$TASK_FILTER" "$RUNTIME_RESOLUTION" "$MEMORY_WINDOW_SECONDS" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
-config_source, output_config, output_dir, model, anno_path, endpoints_csv, workers, runtime_resolution, memory_window_seconds = sys.argv[1:10]
+(
+    config_source,
+    output_config,
+    output_dir,
+    model,
+    split,
+    endpoints_csv,
+    workers,
+    task_filter,
+    runtime_resolution,
+    memory_window_seconds,
+) = sys.argv[1:11]
 with open(config_source, encoding="utf-8") as handle:
     cfg = yaml.safe_load(handle) or {}
 
 endpoints = [item for item in endpoints_csv.split(",") if item]
+cfg["benchmark"] = "streamingbench"
 cfg["policy"] = "streamtext"
 cfg["result_output"] = f"{output_dir}/results.jsonl"
 cfg.setdefault("prompt", {})["profile"] = "text_memory_eval"
@@ -98,14 +114,20 @@ cfg["batch"]["workers"] = int(workers)
 cfg.setdefault("backend", {})["backend"] = "vllm"
 cfg["backend"]["model"] = model
 cfg["backend"]["api_key"] = "EMPTY"
+cfg["backend"]["api_key_env"] = ""
 if endpoints:
     cfg["backend"]["base_url"] = endpoints[0]
 if runtime_resolution:
     cfg.setdefault("runtime", {})["resolution"] = int(runtime_resolution)
 if memory_window_seconds:
     cfg.setdefault("memory", {})["window_seconds"] = float(memory_window_seconds)
-if anno_path:
-    cfg.setdefault("benchmark_args", {})["anno_path"] = anno_path
+cfg.setdefault("benchmark_args", {})["split"] = split
+cfg["benchmark_args"]["group_by_video"] = bool(split in {"real", "omni"})
+if task_filter:
+    cfg["benchmark_args"]["task_filter"] = task_filter
+else:
+    cfg["benchmark_args"].pop("task_filter", None)
+    cfg["benchmark_args"].pop("task_types", None)
 
 Path(output_config).parent.mkdir(parents=True, exist_ok=True)
 with open(output_config, "w", encoding="utf-8") as handle:
@@ -197,7 +219,7 @@ done
 eval_cmd=(
   "$PYTHON" streamtext/eval_batch.py
   --config "$CONFIG"
-  --benchmark ovo
+  --benchmark streamingbench
   --backend vllm
   --model "$MODEL"
   --endpoints "$endpoints"
@@ -213,7 +235,7 @@ if [[ "$RESUME" == "1" ]]; then
   eval_cmd+=(--resume)
 fi
 
-eval_profile="$("$PYTHON" - "$CONFIG" <<'PY'
+"$PYTHON" - "$CONFIG" <<'PY'
 import sys
 import yaml
 
@@ -221,20 +243,64 @@ with open(sys.argv[1], encoding="utf-8") as f:
     cfg = yaml.safe_load(f) or {}
 prompt = (cfg.get("prompt") or {}).get("profile", "")
 postprocess = (cfg.get("postprocess") or {}).get("mode", "")
-anno = (cfg.get("benchmark_args") or {}).get("anno_path", "")
+split = (cfg.get("benchmark_args") or {}).get("split", "")
+group_by_video = bool((cfg.get("benchmark_args") or {}).get("group_by_video", False))
+task_filter = (cfg.get("benchmark_args") or {}).get("task_filter", "")
+frames_per_step = (cfg.get("runtime") or {}).get("frames_per_step", "")
 resolution = (cfg.get("runtime") or {}).get("resolution", "")
 memory_window_seconds = (cfg.get("memory") or {}).get("window_seconds", "")
+group_text = ", grouped_by_video=1" if group_by_video else ""
+task_text = f", task_filter={task_filter}" if task_filter else ""
 print(
-    f"{prompt or '<unset>'} + {postprocess or '<unset>'}, "
-    f"resolution={resolution}, memory_window_seconds={memory_window_seconds} | {anno}"
+    f"[eval] path: {split or '<split>'}: {prompt or '<unset>'} + {postprocess or '<unset>'}, "
+    f"frames_per_step={frames_per_step}, resolution={resolution}, memory_window_seconds={memory_window_seconds}"
+    f"{group_text}{task_text}",
+    flush=True,
 )
 PY
-)"
-echo "[eval] path: $eval_profile"
-echo "[eval] split=$SPLIT"
 echo "[eval] gpus=${GPU_ARRAY[*]}"
 echo "[eval] workers=$WORKERS"
 echo "[eval] endpoints=$endpoints"
 echo "[eval] output=$OUTPUT_DIR/results.jsonl"
 echo "[eval] resume=$RESUME"
 "${eval_cmd[@]}"
+
+"$PYTHON" - "$OUTPUT_DIR/results_summary.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+summary_path = Path(sys.argv[1])
+if not summary_path.exists():
+    print(f"[summary] missing: {summary_path}", flush=True)
+    raise SystemExit(0)
+
+with summary_path.open(encoding="utf-8") as handle:
+    summary = json.load(handle)
+
+count = int(summary.get("count") or 0)
+scored = int(summary.get("scored_count") or 0)
+correct = int(summary.get("correct") or 0)
+accuracy = summary.get("accuracy")
+accuracy_text = f"{accuracy * 100:.2f}%" if isinstance(accuracy, (int, float)) else "n/a"
+print(f"[summary] overall: {correct}/{scored} = {accuracy_text} (rows={count})", flush=True)
+
+task_rows = summary.get("task_rows") or []
+if task_rows:
+    print("[summary] by task:", flush=True)
+    for row in task_rows:
+        task = str(row.get("task") or "<task>")
+        total = int(row.get("total") or 0)
+        task_correct = int(row.get("correct") or 0)
+        task_acc = row.get("accuracy")
+        task_acc_text = f"{task_acc * 100:.2f}%" if isinstance(task_acc, (int, float)) else "n/a"
+        print(f"[summary]   {task}: {task_correct}/{total} = {task_acc_text}", flush=True)
+
+grouped = summary.get("grouped_actual_rollout_metrics")
+if isinstance(grouped, dict):
+    calls = int(grouped.get("actual_model_call_count") or 0)
+    logical_calls = int(grouped.get("logical_row_model_call_count") or 0)
+    saving = grouped.get("estimated_call_saving_ratio")
+    saving_text = f"{saving:.2f}x" if isinstance(saving, (int, float)) else "n/a"
+    print(f"[summary] grouped actual calls: {calls} vs logical {logical_calls}, saving={saving_text}", flush=True)
+PY
