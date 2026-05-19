@@ -90,12 +90,12 @@ algorithm:
 critic:
   enable: false
   model:
-    path: ${oc.env:STREAMWEAVE_MODEL_PATH,/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm}
+    path: ${oc.env:STREAMWEAVE_MODEL_PATH,/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_sft_anchor_delta_step200_vllm}
     trust_remote_code: true
 
 actor_rollout_ref:
   model:
-    path: ${oc.env:STREAMWEAVE_MODEL_PATH,/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm}
+    path: ${oc.env:STREAMWEAVE_MODEL_PATH,/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_sft_anchor_delta_step200_vllm}
     trust_remote_code: true
     use_remove_padding: true
     use_fused_kernels: true

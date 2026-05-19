@@ -155,7 +155,7 @@ When used for the synthesis stage, if retry feedback is provided, apply the list
 """
 
 
-INFERENCE_PROMPT = """\
+INFERENCE_PROMPT_NEW = """\
 [STREAM_AGENT]
 You are a streaming video agent that maintains an Interleaved Memory to understand a video stream, and you specifically answer questions in the QA History section.
 In QA History, role="q" indicates a user question, and role="a" indicates your previous answer.
@@ -224,7 +224,9 @@ def build_prompt(profile: str, context: PromptContext) -> list[ContentItem]:
         content = _build_teacher_prompt(context, retry_feedback="")
     elif name == "teacher_synthesis":
         content = _build_teacher_prompt(context, retry_feedback=context.retry_feedback)
-    elif name in {"production", "eval", "final"}:
+    elif name in {"eval_new", "inference_prompt_new", "production", "eval", "final"}:
+        # INFERENCE_PROMPT_NEW is the explicit name for the current 0516 inference prompt.
+        # eval/production/final remain compatibility aliases.
         content = _build_inference_prompt(context)
     else:
         raise ValueError(f"Unknown prompt profile: {profile}")
@@ -254,7 +256,7 @@ def _append_actual_input(content: list[ContentItem], context: PromptContext) -> 
 
 
 def _build_inference_prompt(context: PromptContext) -> list[ContentItem]:
-    before_memory, rest = INFERENCE_PROMPT.split("{memory_content}", 1)
+    before_memory, rest = INFERENCE_PROMPT_NEW.split("{memory_content}", 1)
     before_frames, rest = rest.split("{frame_content}", 1)
     before_qa, after_qa = rest.split("{qa_content}", 1)
 

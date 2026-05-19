@@ -44,7 +44,7 @@ models/qwen3vl_sft_0516_step100
 | 早期 LoRA smoke | `streamweave_sft`，122 examples | 历史 `examples/train_lora/qwen3vl_8b_lora_sft_streamweave.yaml` | `saves/qwen3-vl-8b/lora/streamweave_sft` | 已完成，只验证链路，非当前主线 |
 | V2 3077 full SFT | `streamweave_sft_v2_3077` | `qwen3vl_8b_lora_sft_streamweave_v2_3077.yaml` | `saves/qwen3-vl-8b/full/streamweave_sft_v2_3077` | 配置和脚本保留，当前 saves 下未见输出目录 |
 | answered-full SFT | `streamweave_sft_answered_full` | `qwen3vl_8b_full_sft_streamweave_answered_full.yaml` | `models/qwen3vl8b_streamweave_sft_answered_full_vllm` | 历史训练完成，旧笔记记录了完整指标 |
-| answered-full init-anchor | `streamweave_sft_answered_full_anchor_delta_init_anchor` | `qwen3vl_8b_full_sft_streamweave_answered_full_anchor_delta_init_anchor.yaml` | `models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm` | 可见 step200 vLLM 导出模型；当前未找到完整训练日志 |
+| answered-full init-anchor | `streamweave_sft_answered_full_anchor_delta_init_anchor` | `qwen3vl_8b_full_sft_streamweave_answered_full_anchor_delta_init_anchor.yaml` | `models/qwen3vl8b_sft_anchor_delta_step200_vllm` | 可见 step200 vLLM 导出模型；当前未找到完整训练日志 |
 | 0511 note SFT | `dataset2/sft_0511_note.jsonl`，182998 行 | `qwen3vl_8b_full_sft_streamweave_0511_note.yaml` | `models/qwen_sft_0513` | 已完成，708/708 step |
 | 0516 4500 SFT | `dataset2/sft_0516_4500.jsonl`，67856 行 | `qwen3vl_8b_full_sft_streamweave_0516_4500.yaml` | `models/qwen3vl_sft_0516_step50`，`models/qwen3vl_sft_0516_step100` | 当前主线，checkpoint-100 已保存 |
 
@@ -475,7 +475,7 @@ output_dir: saves/qwen3-vl-8b/full/streamweave_sft_answered_full_anchor_delta_in
 当前可见导出模型：
 
 ```text
-models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm
+models/qwen3vl8b_sft_anchor_delta_step200_vllm
 ```
 
 当前没有在 `SFT/LlamaFactory/logs` 或 `SFT/LlamaFactory/saves` 下找到这轮完整训练结果，只能确认配置、脚本和 step200 vLLM 导出目录存在。
@@ -594,7 +594,7 @@ find models/qwen3vl_sft_0516_step100 -maxdepth 1 -type f | sort
 ```text
 models/qwen_sft_0513
 models/qwen3vl8b_streamweave_sft_answered_full_vllm
-models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm
+models/qwen3vl8b_sft_anchor_delta_step200_vllm
 models/qwen3vl_sft_0516_step50
 models/qwen3vl_sft_0516_step100
 ```

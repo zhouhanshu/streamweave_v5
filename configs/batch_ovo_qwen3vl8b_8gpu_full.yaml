@@ -17,14 +17,14 @@ synthesis:
   max_attempts: 3
 
 memory:
-  window_seconds: 120.0
+  window_seconds: 180.0
 
 runtime:
   sample_fps: 1.0
   frames_per_step: 5
   max_frames: 0
   max_steps: 0
-  resolution: 448
+  resolution: 768
 
 dataset:
   dataset_root: dataset

@@ -14,21 +14,23 @@ VLLM="/mmu_mllm_hdd/zhouhanshu/conda/envs/vllm/bin/vllm"
 BASE_CONFIG="configs/batch_ovo_qwen3vl8b_finetuned_8gpu.yaml"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/ovo_qwen3vl8b_finetuned_1of8}"
 ANNO_PATH="${ANNO_PATH:-}"
+PROMPT_PROFILE="${PROMPT_PROFILE:-}"
 CONFIG="${OUTPUT_DIR}/run_config.yaml"
 LIMIT=""  # Set to e.g. "8" for smoke; keep empty for the configured annotation file.
 ALLOW_EXISTING_SERVERS="${ALLOW_EXISTING_SERVERS:-0}"
+WORKERS="${WORKERS:-32}"
 
 [[ -x "$PYTHON" ]] || PYTHON="python"
 [[ -x "$VLLM" ]] || VLLM="vllm"
 
 mkdir -p "$OUTPUT_DIR"
-"$PYTHON" - "$BASE_CONFIG" "$CONFIG" "$OUTPUT_DIR" "$MODEL" "$ANNO_PATH" <<'PY'
+"$PYTHON" - "$BASE_CONFIG" "$CONFIG" "$OUTPUT_DIR" "$MODEL" "$ANNO_PATH" "$PROMPT_PROFILE" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
-base_config, output_config, output_dir, model, anno_path = sys.argv[1:6]
+base_config, output_config, output_dir, model, anno_path, prompt_profile = sys.argv[1:7]
 with open(base_config, encoding="utf-8") as handle:
     cfg = yaml.safe_load(handle) or {}
 
@@ -40,6 +42,8 @@ cfg.setdefault("batch", {})["worker_log_dir"] = f"{output_dir}/worker_logs"
 cfg.setdefault("backend", {})["model"] = model
 if anno_path:
     cfg.setdefault("benchmark_args", {})["anno_path"] = anno_path
+if prompt_profile:
+    cfg.setdefault("prompt", {})["profile"] = prompt_profile
 
 Path(output_config).parent.mkdir(parents=True, exist_ok=True)
 with open(output_config, "w", encoding="utf-8") as handle:
@@ -138,7 +142,7 @@ eval_cmd=(
   --backend vllm
   --model "$MODEL"
   --endpoints "$endpoints"
-  --workers 16
+  --workers "$WORKERS"
   --output "$OUTPUT_DIR/results.jsonl"
   --worker-log-dir "$OUTPUT_DIR/worker_logs"
 )

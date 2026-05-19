@@ -795,7 +795,7 @@ def _binary_silence_score(answer_text: str) -> float:
     return 1.0 if not str(answer_text or "").strip() else 0.0
 
 
-GRPPO_ANSWER_ATTEMPT_REWARD_OFFSET = 0.4
+GRPPO_ANSWER_ATTEMPT_REWARD_OFFSET = 0.2
 
 
 def _final_grppo_answer_reward(

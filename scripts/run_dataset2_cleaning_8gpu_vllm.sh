@@ -23,7 +23,7 @@ if [[ -f "$DATASET_PATH" ]]; then
 else
   DATASET_NAME="${DATASET_BASENAME%.jsonl}"
 fi
-MODEL="${2:-/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm}"
+MODEL="${2:-/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_sft_anchor_delta_step200_vllm}"
 PYTHON="/mmu_mllm_hdd/zhouhanshu/conda/envs/simple/bin/python"
 VLLM="/mmu_mllm_hdd/zhouhanshu/conda/envs/vllm/bin/vllm"
 BASE_CONFIG="configs/data_cleaning_dataset2.yaml"

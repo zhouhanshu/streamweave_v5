@@ -210,10 +210,11 @@ def _anno_to_samples(anno: dict[str, Any], video_dir: Path) -> list[BenchmarkSam
 def _forward_sample(anno: dict[str, Any], video_dir: Path, idx: int, info: dict[str, Any]) -> BenchmarkSample:
     task = anno["task"]
     target_timestamp = float(info.get("realtime", 0.0))
-    if task in {"REC", "SSR"}:
-        query_timestamp = target_timestamp
-    else:
-        query_timestamp = float(anno.get("ask_time", 0.0)) if task == "CRR" else 0.0
+    # Official OVO offline evaluation creates one chunk per test_info item and
+    # asks once at the chunk end, i.e. test_info.realtime. REC is intentionally
+    # target-aware here: the counting target is available from the start so the
+    # model can maintain a running count through QA History.
+    query_timestamp = 0.0 if task == "REC" else target_timestamp
     ground_truth = info.get("count", 0) if task == "REC" else info.get("type", 0)
     sample_id = f"{anno['id']}_{idx}"
     return BenchmarkSample(

@@ -7,6 +7,7 @@ set -euo pipefail
 #   SPLIT=sqa OUTPUT_DIR=outputs/streamingbench_sqa_8gpu bash scripts/run_streamingbench_8gpu_vllm.sh /path/to/model
 #   SPLIT=proactive bash scripts/run_streamingbench_8gpu_vllm.sh /path/to/model
 #   SPLIT=omni TASK_FILTER="Misleading Context Understanding,Anomaly Context Understanding" bash scripts/run_streamingbench_8gpu_vllm.sh /path/to/model
+#   RUNTIME_RESOLUTION=448 PROMPT_PROFILE=eval bash scripts/run_streamingbench_8gpu_vllm.sh /path/to/model
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -22,6 +23,9 @@ GPUS="${GPUS:-0 1 2 3 4 5 6 7}"
 PORT_BASE="${PORT_BASE:-8000}"
 LIMIT="${LIMIT:-}"
 TASK_FILTER="${TASK_FILTER:-}"
+PROMPT_PROFILE="${PROMPT_PROFILE:-}"
+RUNTIME_RESOLUTION="${RUNTIME_RESOLUTION:-}"
+MEMORY_WINDOW_SECONDS="${MEMORY_WINDOW_SECONDS:-}"
 
 case "$SPLIT" in
   real|sqa|omni)
@@ -76,13 +80,25 @@ if [[ "$RESUME" == "1" && -f "$CONFIG" ]]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
-"$PYTHON" - "$CONFIG_SOURCE" "$CONFIG" "$OUTPUT_DIR" "$MODEL" "$SPLIT" "$endpoints" "$WORKERS" "$TASK_FILTER" <<'PY'
+"$PYTHON" - "$CONFIG_SOURCE" "$CONFIG" "$OUTPUT_DIR" "$MODEL" "$SPLIT" "$endpoints" "$WORKERS" "$TASK_FILTER" "$PROMPT_PROFILE" "$RUNTIME_RESOLUTION" "$MEMORY_WINDOW_SECONDS" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
-config_source, output_config, output_dir, model, split, endpoints_csv, workers, task_filter = sys.argv[1:9]
+(
+    config_source,
+    output_config,
+    output_dir,
+    model,
+    split,
+    endpoints_csv,
+    workers,
+    task_filter,
+    prompt_profile,
+    runtime_resolution,
+    memory_window_seconds,
+) = sys.argv[1:12]
 with open(config_source, encoding="utf-8") as handle:
     cfg = yaml.safe_load(handle) or {}
 
@@ -98,10 +114,19 @@ cfg["batch"]["workers"] = int(workers)
 cfg.setdefault("backend", {})["model"] = model
 if endpoints:
     cfg["backend"]["base_url"] = endpoints[0]
+if prompt_profile:
+    cfg.setdefault("prompt", {})["profile"] = prompt_profile
+if runtime_resolution:
+    cfg.setdefault("runtime", {})["resolution"] = int(runtime_resolution)
+if memory_window_seconds:
+    cfg.setdefault("memory", {})["window_seconds"] = float(memory_window_seconds)
 cfg.setdefault("benchmark_args", {})["split"] = split
 cfg["benchmark_args"]["group_by_video"] = bool(split in {"real", "omni"})
 if task_filter:
     cfg["benchmark_args"]["task_filter"] = task_filter
+else:
+    cfg["benchmark_args"].pop("task_filter", None)
+    cfg["benchmark_args"].pop("task_types", None)
 
 Path(output_config).parent.mkdir(parents=True, exist_ok=True)
 with open(output_config, "w", encoding="utf-8") as handle:
@@ -221,11 +246,14 @@ split = (cfg.get("benchmark_args") or {}).get("split", "")
 group_by_video = bool((cfg.get("benchmark_args") or {}).get("group_by_video", False))
 task_filter = (cfg.get("benchmark_args") or {}).get("task_filter", "")
 frames_per_step = (cfg.get("runtime") or {}).get("frames_per_step", "")
+resolution = (cfg.get("runtime") or {}).get("resolution", "")
+memory_window_seconds = (cfg.get("memory") or {}).get("window_seconds", "")
 group_text = ", grouped_by_video=1" if group_by_video else ""
 task_text = f", task_filter={task_filter}" if task_filter else ""
 print(
     f"[eval] path: {split or '<split>'}: {prompt or '<unset>'} + {postprocess or '<unset>'}, "
-    f"frames_per_step={frames_per_step}{group_text}{task_text}",
+    f"frames_per_step={frames_per_step}, resolution={resolution}, memory_window_seconds={memory_window_seconds}"
+    f"{group_text}{task_text}",
     flush=True,
 )
 PY

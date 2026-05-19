@@ -686,7 +686,7 @@ def main() -> None:
             silence_reward=True,
             silence_reward_value=0.1,
         )
-        - 0.5
+        - 0.3
     ) < 1e-8
     assert abs(
         _final_grppo_answer_reward(
@@ -697,7 +697,7 @@ def main() -> None:
             silence_reward=True,
             silence_reward_value=0.1,
         )
-        - 1.5
+        - 1.3
     ) < 1e-8
     # silence_reward=False disables the attempt reward (interpretation A).
     assert (
@@ -722,7 +722,7 @@ def main() -> None:
         )
         == 0.0
     )
-    assert abs(_answer_reward_scale("answer", silence_reward_value=0.1) - 1.5) < 1e-8
+    assert abs(_answer_reward_scale("answer", silence_reward_value=0.1) - 1.3) < 1e-8
     assert _answer_reward_scale("answer", silence_reward=False, silence_reward_value=0.1) == 1.0
     assert _answer_reward_scale("silence", silence_reward_value=0.1) == 0.1
     timeline_query = {"event_type": "query", "question": "What color?", "timestamp": 1.0}

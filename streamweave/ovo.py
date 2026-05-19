@@ -35,27 +35,33 @@ Do not include any additional text or explanation in your response.
 REC_PROMPT_TEMPLATE = """\
 You're watching a video in which people may perform a certain type of action repetitively.
 The person performing this kind of action is referred to as "they" in the following statement.
-Your task is to count how many times different people in the video have performed this kind of action in total.
+Your task is to track the running total of how many times different people in the video have performed this kind of action in total.
 One complete motion counts as one.
-Now, answer the following question: {question}
-Provide your answer as a single number (e.g., 0, 1, 2, 3...) indicating the total count.
-Do not include any additional text or explanation in your response.
+Target counting question: {question}
+Keep this target action in mind throughout the video.
+Whenever the running total changes, answer with the updated total count as a single number (e.g., 0, 1, 2, 3...).
+If the running total has not changed in the current frames, keep <answer></answer> empty and preserve useful counting evidence in Memory.
+The final non-empty answer should be the total count up to the latest observed frame.
 """
 
 SSR_PROMPT_TEMPLATE = """\
 You're watching a tutorial video which contains a sequence of steps.
 The following is one step from the whole procedure:
 {step}
-Your task is to determine if the man or woman in the video is currently performing this step.
+Your task is to determine whether the current visual content belongs to this step.
+Answer "Yes" if the current frames show the person preparing for, starting, continuing, completing, or showing the immediate result of this step, or if the current frames have any reasonable relation to this step.
+Answer "No" only if the current frames are completely a different step or provide no visual evidence related to this step.
 Answer only with "Yes" or "No".
 Do not include any additional text or explanation in your response.
 """
 
 CRR_PROMPT_TEMPLATE = """\
 You're responsible for answering questions based on the video content.
-The following question is relevant to the latest frames, i.e. the end of the video.
+Target question, do not answer it directly:
 {question}
-Decide whether the existing visual content, especially the latest frames near the end of the video, provides enough information for answering the question.
+Only judge whether the existing visual content, especially the latest frames near the end of the video, provides enough information to answer the target question.
+Answer "Yes" if the answer to the target question can be inferred from the visible content, or if there is any visual clue related to the target question.
+Answer "No" only if the necessary visual evidence is not visible, or if the visible content remains ambiguous and completely unrelated to the target question. Do not be too strict.
 Answer only with "Yes" or "No".
 Do not include any additional text or explanation in your response.
 """

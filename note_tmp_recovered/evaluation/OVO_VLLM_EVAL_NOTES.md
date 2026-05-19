@@ -7,7 +7,7 @@ This note records the exact StreamWeave v5 OVO evaluation path and the common pi
 The exported step-200 model for the anchor/delta + initial-anchor SFT run is:
 
 ```bash
-/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm
+/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_sft_anchor_delta_step200_vllm
 ```
 
 It was exported from:
@@ -59,7 +59,7 @@ Fix:
 2. Copy the missing tokenizer/processor sidecar files from the base model:
 
 ```bash
-MODEL_DIR=/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm
+MODEL_DIR=/mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_sft_anchor_delta_step200_vllm
 BASE=/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct
 
 cp -a \
@@ -79,7 +79,7 @@ cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
 /mmu_mllm_hdd/zhouhanshu/conda/envs/vllm/bin/python - <<'PY'
 from transformers import AutoProcessor, AutoTokenizer
 
-p = "models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm"
+p = "models/qwen3vl8b_sft_anchor_delta_step200_vllm"
 tok = AutoTokenizer.from_pretrained(p, trust_remote_code=True)
 print("tokenizer_ok", type(tok).__name__, tok.eos_token, tok.pad_token)
 proc = AutoProcessor.from_pretrained(p, trust_remote_code=True)
@@ -118,7 +118,7 @@ cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
 
 OUTPUT_DIR=outputs/ovo_qwen3vl8b_sft_anchor_delta_step200_1of8 \
 bash scripts/run_ovo_8gpu_vllm_finetuned.sh \
-  /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_streamweave_sft_answered_full_anchor_delta_init_anchor_step200_vllm
+  /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5/models/qwen3vl8b_sft_anchor_delta_step200_vllm
 ```
 
 This starts 8 local vLLM servers:

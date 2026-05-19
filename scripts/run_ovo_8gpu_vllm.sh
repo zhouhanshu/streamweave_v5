@@ -13,9 +13,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 MODEL="${1:-/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct}"
 PYTHON="/mmu_mllm_hdd/zhouhanshu/conda/envs/simple/bin/python"
 VLLM="/mmu_mllm_hdd/zhouhanshu/conda/envs/vllm/bin/vllm"
-BASE_CONFIG="configs/batch_ovo_qwen3vl8b_8gpu_full.yaml"
+BASE_CONFIG="${BASE_CONFIG:-configs/batch_ovo_qwen3vl8b_8gpu_full.yaml}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/ovo_qwen3vl8b_base_full}"
 ANNO_PATH="${ANNO_PATH:-}"
+PROMPT_PROFILE="${PROMPT_PROFILE:-}"
+RUNTIME_RESOLUTION="${RUNTIME_RESOLUTION:-}"
+MEMORY_WINDOW_SECONDS="${MEMORY_WINDOW_SECONDS:-}"
 CONFIG="${OUTPUT_DIR}/run_config.yaml"
 LIMIT=""  # Set to e.g. "8" for smoke; keep empty for the configured annotation file.
 ALLOW_EXISTING_SERVERS="${ALLOW_EXISTING_SERVERS:-0}"
@@ -59,13 +62,13 @@ if [[ "$RESUME" == "1" && -f "$CONFIG" ]]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
-"$PYTHON" - "$CONFIG_SOURCE" "$CONFIG" "$OUTPUT_DIR" "$MODEL" "$ANNO_PATH" "$endpoints" "$WORKERS" <<'PY'
+"$PYTHON" - "$CONFIG_SOURCE" "$CONFIG" "$OUTPUT_DIR" "$MODEL" "$ANNO_PATH" "$endpoints" "$WORKERS" "$PROMPT_PROFILE" "$RUNTIME_RESOLUTION" "$MEMORY_WINDOW_SECONDS" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
-config_source, output_config, output_dir, model, anno_path, endpoints_csv, workers = sys.argv[1:8]
+config_source, output_config, output_dir, model, anno_path, endpoints_csv, workers, prompt_profile, runtime_resolution, memory_window_seconds = sys.argv[1:11]
 with open(config_source, encoding="utf-8") as handle:
     cfg = yaml.safe_load(handle) or {}
 
@@ -82,6 +85,12 @@ if endpoints:
     cfg["backend"]["base_url"] = endpoints[0]
 if anno_path:
     cfg.setdefault("benchmark_args", {})["anno_path"] = anno_path
+if prompt_profile:
+    cfg.setdefault("prompt", {})["profile"] = prompt_profile
+if runtime_resolution:
+    cfg.setdefault("runtime", {})["resolution"] = int(runtime_resolution)
+if memory_window_seconds:
+    cfg.setdefault("memory", {})["window_seconds"] = float(memory_window_seconds)
 
 Path(output_config).parent.mkdir(parents=True, exist_ok=True)
 with open(output_config, "w", encoding="utf-8") as handle:
