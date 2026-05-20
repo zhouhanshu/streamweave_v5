@@ -4,6 +4,16 @@
 
 前四个 case 是 RL 成功且 base/streamtext 失败的对照；`252` 是 RL/base 对照且 streamtext 也正确；`199` 是三组都失败的 hard case。
 
+## Short Presentation Cases
+
+给别人展示时优先看这个入口：[short_cases_summary.md](short_cases_summary.md)。
+
+这批短 case 只对比 RL 和 text-only，并且把两条轨迹分开放：
+
+- `rl_steps.md`：只放 RL 每一步的当前帧链接和模型原始输出。
+- `text_steps.md`：只放 text-only 每一步的当前帧链接和模型原始输出。
+- `analysis.md`：总结 RL 为什么对、text-only 为什么错。
+
 ## Layout
 
 ```text
