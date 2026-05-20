@@ -5,11 +5,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 MODEL="${MODEL:-/mmu_mllm_hdd/Models/Qwen3-VL-8B-Instruct}"
 FULL_ANNO_PATH="${ANNO_PATH:-/mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/OVO-Bench/data/ovo_bench_new.json}"
-OUTPUT_DIR="${OUTPUT_DIR:-outputs/ovo_qwen3vl8b_base_full_eval}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/ovo_qwen3vl8b_base_full_eval_no_abstain_hint}"
 GPUS="${GPUS:-0 1 2 3 4 5 6 7}"
 WORKERS="${WORKERS:-32}"
 RESUME="${RESUME:-0}"
-PROMPT_PROFILE="${PROMPT_PROFILE:-eval}"
+PROMPT_PROFILE="${PROMPT_PROFILE:-eval_no_abstain_hint}"
 RUNTIME_RESOLUTION="${RUNTIME_RESOLUTION:-448}"
 
 OUTPUT_DIR="$OUTPUT_DIR" \

@@ -168,7 +168,23 @@ def main() -> None:
     assert cfg.score_scale == 1.0
     assert abs(compute_grppo_step_reward(process_score=0.5, format_score=1.0, cfg=cfg) - 0.6) < 1e-6
     assert abs(compute_grppo_step_reward(process_score=2.0, format_score=1.0, cfg=cfg) - 2.1) < 1e-6
-    grppo_anchor_cfg = StreamWeaveRewardConfig(grppo_note_frequency_weight=0.5)
+    grppo_anchor_cfg = StreamWeaveRewardConfig(
+        grppo_process_weight=0.6,
+        grppo_format_weight=0.1,
+        grppo_note_frequency_weight=0.3,
+    )
+    assert (
+        abs(
+            compute_grppo_step_reward(
+                process_score=0.9,
+                format_score=1.0,
+                note_frequency_score=1.0,
+                cfg=grppo_anchor_cfg,
+            )
+            - (0.9 * 0.9 + 0.1)
+        )
+        < 1e-6
+    )
     assert (
         abs(
             compute_grppo_step_reward(
@@ -177,7 +193,7 @@ def main() -> None:
                 note_frequency_score=0.0,
                 cfg=grppo_anchor_cfg,
             )
-            - (0.9 + 0.1)
+            - 0.1
         )
         < 1e-6
     )

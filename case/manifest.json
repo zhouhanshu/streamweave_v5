@@ -1,0 +1,62 @@
+{
+  "description": "Self-contained StreamWeave case studies with copied frames and model traces.",
+  "benchmark": "OVO-Bench",
+  "cases": [
+    {
+      "sample_id": "590",
+      "slug": "case_590_asi_clothes_before_put_down",
+      "note": "短 backward/ASI 样例。RL 答对前序动作；base 和纯文本都选错。",
+      "criterion": "RL scored `1`; base and streamtext both scored `0` on the same OVO sample."
+    },
+    {
+      "sample_id": "591",
+      "slug": "case_591_asi_sandwich_before_throw_clothes",
+      "note": "纯文本失败明显：streamtext 输出了非选项解释；base 直接 cannot answer；RL 选对。",
+      "criterion": "RL scored `1`; base and streamtext both scored `0` on the same OVO sample."
+    },
+    {
+      "sample_id": "493",
+      "slug": "case_493_asi_inner_tube_leak",
+      "note": "修补内胎场景。RL 识别到 polish 前先找漏点；base/text 都误判为 apply glue。",
+      "criterion": "RL scored `1`; base and streamtext both scored `0` on the same OVO sample."
+    },
+    {
+      "sample_id": "1266",
+      "slug": "case_1266_acr_white_outfit_snowdrift",
+      "note": "较长 realtime/ACR 样例。RL 答对人在雪堆后喝水；base/text 误判其他动作。",
+      "criterion": "RL scored `1`; base and streamtext both scored `0` on the same OVO sample."
+    },
+    {
+      "sample_id": "252",
+      "slug": "case_252_epm_second_story_bathroom_sink",
+      "note": "新增 EPM 样例。RL 和 streamtext 都答对二楼洗手位置；base 输出 cannot answer。",
+      "criterion": "RL scored `1`; base scored `0`; streamtext also scored `1`, so this is primarily an RL/base contrast case."
+    },
+    {
+      "sample_id": "199",
+      "slug": "case_199_epm_gold_object_nightstand",
+      "note": "新增 hard EPM 样例。正确答案是 nightlamp；RL 误选 vase，base/text 都未能回答。",
+      "criterion": "All three compared models scored `0`; this is included as a hard failure example rather than an RL-success case."
+    }
+  ],
+  "models": [
+    {
+      "key": "rl_exp10_step40",
+      "label": "RL qwen3vl_rl_exp10_step40",
+      "kind": "rl",
+      "result_dir": "outputs/ovo_qwen3vl_rl_exp10_step40_full_eval"
+    },
+    {
+      "key": "base_qwen3vl_8b_0516",
+      "label": "Base qwen3vl_8b_base_0516",
+      "kind": "base",
+      "result_dir": "outputs/qwen3vl_8b_base_full_0516"
+    },
+    {
+      "key": "streamtext_gemini_flash",
+      "label": "StreamText Gemini Flash",
+      "kind": "text",
+      "result_dir": "outputs/streamtext/ovo_gemini_flash_full"
+    }
+  ]
+}

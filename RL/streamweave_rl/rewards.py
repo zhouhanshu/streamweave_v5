@@ -202,10 +202,14 @@ def compute_grppo_step_reward(
     process_value = max(float(process_score), 0.0)
     format_value = _clamp_score(float(format_score), cfg=cfg)
     note_frequency_value = _clamp_score(float(note_frequency_score), cfg=cfg)
+    effective_process_weight = process_weight
+    if note_frequency_weight > 0.0 and note_frequency_value <= 0.0:
+        process_value = 0.0
+    elif note_frequency_weight > 0.0:
+        effective_process_weight += note_frequency_weight
     return max(
-        process_weight * process_value
-        + format_weight * format_value
-        + note_frequency_weight * note_frequency_value,
+        effective_process_weight * process_value
+        + format_weight * format_value,
         0.0,
     )
 

@@ -1,0 +1,14 @@
+{
+  "status": "complete",
+  "extractor_version": "frame_store_manifest_v1",
+  "created_at": 1777579713.9627554,
+  "sample_fps": 1.0,
+  "max_frames": 0,
+  "frame_count": 53,
+  "frame_id_base": 0,
+  "image_ext": "jpg",
+  "jpeg_quality": 95,
+  "source_path": "/mmu_mllm_hdd/zhouhanshu/test/OVO-Bench/chunked_videos/493.mp4",
+  "source_mtime_ns": 1740824115000000000,
+  "source_size": 11430103
+}

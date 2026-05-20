@@ -18,6 +18,7 @@ exp11 重新从较早的 SFT 模型启动 RL，观察在更低 KL、更低 answe
 ```text
 RL/streamweave_rl/env.py
 RL/streamweave_rl/agent_loop_stepwise.py
+RL/streamweave_rl/rewards.py
 ```
 
 answer attempt 硬编码奖励：
@@ -76,6 +77,28 @@ extra_fields["reward_extra_info"]["grppo_answer_reward"]
 - 训练 advantage 使用 `non_tensor_batch["grppo_answer_reward"]`。
 - `turn_reward` / `reward_score` 目前不作为 GRPPO answer advantage 的来源。
 - trace 中如果看 `turn_reward`，它可能不完全反映后处理后的 answer reward。
+
+GRPPO note frequency gate：
+
+```text
+位置: RL/streamweave_rl/rewards.py::compute_grppo_step_reward
+生效实验: exp13 / exp14 / exp15 后续训练均按此代码口径
+
+当 grppo_note_frequency_weight > 0 且 note_frequency_score == 0:
+  grppo_process_score 视为 0
+
+当 grppo_note_frequency_weight > 0 且 note_frequency_score > 0:
+  grppo_note_frequency_weight 不作为常数奖励项
+  而是并入 process 权重
+
+exp13 / exp14 / exp15 当前权重下：
+  note frequency 合格: grppo_step_reward = 0.9 * process_score + 0.1 * format_score
+  note frequency 不合格: grppo_step_reward = 0.1 * format_score
+
+目的:
+  防止无 anchor / note 但 Gemini process 仍给较高分时，模型靠 process reward 抵消 note frequency 违规；
+  同时避免把 note frequency 设计成额外常数奖励。
+```
 
 ## 共同配置
 
@@ -582,6 +605,231 @@ cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
 EXP12_16_RAY_ROLE=driver RAY_HEAD_IP=10.82.121.78 bash RL/scripts/train_exp12_16.sh
 ```
 
+## exp13
+
+脚本：
+
+```text
+RL/scripts/train_exp13.sh
+```
+
+创建原因：
+
+```text
+exp12_16 训练早期指标显示学习偏弱、no-target 乱答不稳定。
+exp13 回到单机 8 卡，保留 exp12_16 的数据、reward 口径、batch、rollout 和保存配置，
+只把 KL 约束降到最好 exp10 的口径，并把 answer advantage 权重调回 0.6。
+随后加强 note frequency 约束：连续无 note 阈值从 3 改为 2，并提高 note frequency 在 GRPPO step reward 中的权重。
+```
+
+相对 exp12_16 的主要改动：
+
+```text
+run_name: exp13
+nnodes: 1
+n_gpus_per_node: 8
+total_gpus: 8
+agent.num_workers: 32
+actor.kl_loss_coef: 0.001
+algorithm.grppo_answer_weight: 0.6
+data.streamweave.reward.stale_note_after_steps: 2
+data.streamweave.reward.grppo_process_weight: 0.6
+data.streamweave.reward.grppo_format_weight: 0.1
+data.streamweave.reward.grppo_note_frequency_weight: 0.3
+real rollout trajectories per step: 16 * 8 = 128
+```
+
+保持对齐 exp12_16 的关键参数：
+
+```text
+source_model: models/qwen_sft_0513
+train_file: dataset2/rl_0516_filter2.jsonl
+val_file: dataset2/rl_0515_val.jsonl
+train_batch_size: 16
+gen_batch_size: 16
+val_batch_size: 16
+actor lr: 1e-6
+actor.kl_loss_type: low_var_kl
+algorithm.grppo_answer_decay: 0.3
+algorithm.grppo_step_weight: 1.0
+algorithm.grppo_norm_by_std: true
+algorithm.grppo_min_std: 0.01
+algorithm.grppo_filter_groups.min_std: 0.01
+grppo_silence_reward_value: 0.1
+rollout.n: 8
+rollout.max_model_len: 12288
+rollout.max_num_batched_tokens: 65536
+rollout.max_num_seqs: 3072
+save_freq: 10
+test_freq: 30
+resume_mode: auto
+max_actor_ckpt_to_keep: 5
+```
+
+输出：
+
+```text
+run_dir: RL/outputs/runs/exp13
+train_log: RL/outputs/runs/exp13/train.log
+checkpoints: RL/outputs/runs/exp13/checkpoints
+```
+
+启动流程：
+
+```bash
+cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
+/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/ray stop --force
+rm -rf /dev/shm/*ray* /dev/shm/plasma* /dev/shm/sem.* /dev/shm/torch_* /dev/shm/nccl* /dev/shm/vllm*
+bash RL/scripts/train_exp13.sh
+```
+
+## exp14
+
+脚本：
+
+```text
+RL/scripts/train_exp14.sh
+```
+
+创建原因：
+
+```text
+在 exp13 基础上进一步收紧 note frequency：只把连续无 note 阈值从 2 改成 1，
+观察更强 note 频率约束是否能改善过程记录密度和 step reward 区分度。
+```
+
+相对 exp13 的唯一改动：
+
+```text
+run_name: exp14
+data.streamweave.reward.stale_note_after_steps: 1
+```
+
+保持对齐 exp13 的关键参数：
+
+```text
+nnodes: 1
+n_gpus_per_node: 8
+total_gpus: 8
+agent.num_workers: 32
+source_model: models/qwen_sft_0513
+train_file: dataset2/rl_0516_filter2.jsonl
+val_file: dataset2/rl_0515_val.jsonl
+train_batch_size: 16
+gen_batch_size: 16
+val_batch_size: 16
+actor lr: 1e-6
+actor.kl_loss_coef: 0.001
+actor.kl_loss_type: low_var_kl
+algorithm.grppo_answer_weight: 0.6
+data.streamweave.reward.grppo_process_weight: 0.6
+data.streamweave.reward.grppo_format_weight: 0.1
+data.streamweave.reward.grppo_note_frequency_weight: 0.3
+grppo_silence_reward_value: 0.1
+rollout.n: 8
+real rollout trajectories per step: 16 * 8 = 128
+save_freq: 10
+test_freq: 30
+resume_mode: auto
+max_actor_ckpt_to_keep: 5
+```
+
+输出：
+
+```text
+run_dir: RL/outputs/runs/exp14
+train_log: RL/outputs/runs/exp14/train.log
+checkpoints: RL/outputs/runs/exp14/checkpoints
+```
+
+启动流程：
+
+```bash
+cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
+/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/ray stop --force
+rm -rf /dev/shm/*ray* /dev/shm/plasma* /dev/shm/sem.* /dev/shm/torch_* /dev/shm/nccl* /dev/shm/vllm*
+bash RL/scripts/train_exp14.sh
+```
+
+## exp15
+
+脚本：
+
+```text
+RL/scripts/train_exp15.sh
+```
+
+创建原因：
+
+```text
+exp15 的目标是向当前最好模型 exp10 的成功训练配置对齐。
+在 exp14 的 note frequency 约束和 step reward 权重基础上，只对齐 exp10 中最关键的两个训练信号：
+actor learning rate 和 silence reward value。
+```
+
+相对 exp14 的唯一改动：
+
+```text
+run_name: exp15
+actor.optim.lr: 1e-5
+data.streamweave.reward.grppo_silence_reward_value: 0.05
+algorithm.grppo_silence_reward_value: 0.05
+```
+
+保持对齐 exp14 的关键参数：
+
+```text
+nnodes: 1
+n_gpus_per_node: 8
+total_gpus: 8
+agent.num_workers: 32
+source_model: models/qwen_sft_0513
+train_file: dataset2/rl_0516_filter2.jsonl
+val_file: dataset2/rl_0515_val.jsonl
+train_batch_size: 16
+gen_batch_size: 16
+val_batch_size: 16
+actor.kl_loss_coef: 0.001
+actor.kl_loss_type: low_var_kl
+algorithm.grppo_answer_weight: 0.6
+data.streamweave.reward.stale_note_after_steps: 1
+data.streamweave.reward.grppo_process_weight: 0.6
+data.streamweave.reward.grppo_format_weight: 0.1
+data.streamweave.reward.grppo_note_frequency_weight: 0.3
+rollout.n: 8
+real rollout trajectories per step: 16 * 8 = 128
+save_freq: 10
+test_freq: 30
+resume_mode: auto
+max_actor_ckpt_to_keep: 5
+```
+
+与成功 exp10 对齐的参数：
+
+```text
+actor.optim.lr: 1e-5
+actor.kl_loss_coef: 0.001
+algorithm.grppo_answer_weight: 0.6
+grppo_silence_reward_value: 0.05
+```
+
+输出：
+
+```text
+run_dir: RL/outputs/runs/exp15
+train_log: RL/outputs/runs/exp15/train.log
+checkpoints: RL/outputs/runs/exp15/checkpoints
+```
+
+启动流程：
+
+```bash
+cd /mmu_mllm_hdd/zhouhanshu/test/exp3/streamweave_v5
+/mmu_mllm_hdd/zhouhanshu/conda/envs/verl_0425/bin/ray stop --force
+rm -rf /dev/shm/*ray* /dev/shm/plasma* /dev/shm/sem.* /dev/shm/torch_* /dev/shm/nccl* /dev/shm/vllm*
+bash RL/scripts/train_exp15.sh
+```
+
 ## 观察指标
 
 启动后优先看：
@@ -649,6 +897,51 @@ notes:
 ```
 
 ### exp12_16
+
+```text
+start_time:
+end_time: 2026-05-20 15:53 CST manual stop decision
+latest_step: 15 observed in train.log
+latest_checkpoint: RL/outputs/runs/exp12_16/checkpoints/global_step_10
+swanlab_url:
+exported_model:
+OVO full:
+OVO 1/8:
+StreamingBench:
+notes: 训练早期指标波动较大，no-target 乱答不稳定；决定掐掉 exp12_16，不再继续投入，后续改跑 exp13。
+```
+
+### exp13
+
+```text
+start_time:
+end_time:
+latest_step:
+latest_checkpoint:
+swanlab_url:
+exported_model:
+OVO full:
+OVO 1/8:
+StreamingBench:
+notes:
+```
+
+### exp14
+
+```text
+start_time:
+end_time:
+latest_step:
+latest_checkpoint:
+swanlab_url:
+exported_model:
+OVO full:
+OVO 1/8:
+StreamingBench:
+notes:
+```
+
+### exp15
 
 ```text
 start_time:

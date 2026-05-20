@@ -1,0 +1,190 @@
+{
+  "sample_id": "591",
+  "slug": "case_591_asi_sandwich_before_throw_clothes",
+  "benchmark": "OVO-Bench",
+  "note": "纯文本失败明显：streamtext 输出了非选项解释；base 直接 cannot answer；RL 选对。",
+  "selection_criterion": "RL scored `1`; base and streamtext both scored `0` on the same OVO sample.",
+  "annotation": {
+    "id": 591,
+    "task": "ASI",
+    "video": "star/STAFD.mp4",
+    "realtime": 46,
+    "question": "Which object did the person eat before they threw the clothes?",
+    "answer": "The sandwich.",
+    "options": [
+      "The sandwich.",
+      "The medicine.",
+      "The refrigerator.",
+      "The towel."
+    ],
+    "gt": 0
+  },
+  "source_video_frames": "dataset/ovo/video/591",
+  "copied_files": 47,
+  "models": [
+    {
+      "key": "rl_exp10_step40",
+      "label": "RL qwen3vl_rl_exp10_step40",
+      "result_dir": "outputs/ovo_qwen3vl_rl_exp10_step40_full_eval",
+      "trace_dir": "outputs/ovo_qwen3vl_rl_exp10_step40_full_eval/traces/591",
+      "result": {
+        "sample_id": "591",
+        "video_id": "591",
+        "annotation_id": "591",
+        "test_index": null,
+        "category": "backward",
+        "task": "ASI",
+        "response": "A",
+        "ground_truth": "A",
+        "score": 1,
+        "num_steps": 10,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 5,
+        "num_bridges": 10,
+        "total_latency_seconds": 27.53801989555359,
+        "model_call_count": 10,
+        "backend_attempt_count": 10,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "http://127.0.0.1:8007/v1"
+        ],
+        "repair_count": 4,
+        "repair_types": {
+          "drop_note_time_unmatched": 4
+        },
+        "reward_sums": {
+          "format_reward": 10,
+          "opentail_bridge_reward": 10,
+          "note_bridge_timing_reward": 6,
+          "operation_order_reward": 10
+        },
+        "reward_means": {
+          "format_reward": 1.0,
+          "opentail_bridge_reward": 1.0,
+          "note_bridge_timing_reward": 0.6,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 591,
+        "task_index": 591,
+        "worker_id": 15,
+        "endpoint": "http://127.0.0.1:8007/v1",
+        "policy": "streamweave",
+        "prompt_type": "eval"
+      }
+    },
+    {
+      "key": "base_qwen3vl_8b_0516",
+      "label": "Base qwen3vl_8b_base_0516",
+      "result_dir": "outputs/qwen3vl_8b_base_full_0516",
+      "trace_dir": "outputs/qwen3vl_8b_base_full_0516/traces/591",
+      "result": {
+        "sample_id": "591",
+        "video_id": "591",
+        "annotation_id": "591",
+        "test_index": null,
+        "category": "backward",
+        "task": "ASI",
+        "response": "cannot answer",
+        "ground_truth": "A",
+        "score": 0,
+        "num_steps": 10,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 4,
+        "num_bridges": 11,
+        "total_latency_seconds": 21.893510341644287,
+        "model_call_count": 10,
+        "backend_attempt_count": 10,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "http://127.0.0.1:8001/v1"
+        ],
+        "repair_count": 21,
+        "repair_types": {
+          "adjust_bridge_gap": 7,
+          "merge_open_tail_bridge_text": 7,
+          "skip_open_tail_start_repair": 7
+        },
+        "reward_sums": {
+          "format_reward": 3,
+          "opentail_bridge_reward": 3,
+          "note_bridge_timing_reward": 10,
+          "operation_order_reward": 10
+        },
+        "reward_means": {
+          "format_reward": 0.3,
+          "opentail_bridge_reward": 0.3,
+          "note_bridge_timing_reward": 1.0,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 591,
+        "task_index": 591,
+        "worker_id": 17,
+        "endpoint": "http://127.0.0.1:8001/v1",
+        "policy": "streamweave",
+        "prompt_type": "eval"
+      }
+    },
+    {
+      "key": "streamtext_gemini_flash",
+      "label": "StreamText Gemini Flash",
+      "result_dir": "outputs/streamtext/ovo_gemini_flash_full",
+      "trace_dir": "outputs/streamtext/ovo_gemini_flash_full/traces/591",
+      "result": {
+        "sample_id": "591",
+        "video_id": "591",
+        "annotation_id": "591",
+        "test_index": null,
+        "category": "backward",
+        "task": "ASI",
+        "response": "None of the above options are correct. The person was eating chips.",
+        "ground_truth": "A",
+        "score": 0,
+        "num_steps": 10,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 0,
+        "num_bridges": 10,
+        "total_latency_seconds": 27.578144073486328,
+        "model_call_count": 10,
+        "backend_attempt_count": 10,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "gemini"
+        ],
+        "repair_count": 0,
+        "repair_types": {},
+        "reward_sums": {
+          "format_reward": 1,
+          "opentail_bridge_reward": 10,
+          "note_bridge_timing_reward": 10,
+          "operation_order_reward": 10
+        },
+        "reward_means": {
+          "format_reward": 0.1,
+          "opentail_bridge_reward": 1.0,
+          "note_bridge_timing_reward": 1.0,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 591,
+        "worker_id": 57,
+        "endpoint": "",
+        "policy": "streamtext",
+        "prompt_type": "text_memory_eval"
+      }
+    }
+  ]
+}

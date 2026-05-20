@@ -1,0 +1,195 @@
+{
+  "sample_id": "1266",
+  "slug": "case_1266_acr_white_outfit_snowdrift",
+  "benchmark": "OVO-Bench",
+  "note": "较长 realtime/ACR 样例。RL 答对人在雪堆后喝水；base/text 误判其他动作。",
+  "selection_criterion": "RL scored `1`; base and streamtext both scored `0` on the same OVO sample.",
+  "annotation": {
+    "id": 1266,
+    "task": "ACR",
+    "video": "AutoEvalMetaData/129.mp4",
+    "realtime": 193.85,
+    "question": "What is the person in the white outfit doing?",
+    "answer": "He is having a drink.",
+    "options": [
+      "Lying down on a frozen lake, adjusting the sights on their rifle.",
+      "Standing on top of a snowy hill, peering through binoculars towards the horizon.",
+      "Hiding behind a snowdrift,having a drink.",
+      "Hiding behind a snowdrift, setting up a camera on a tripod."
+    ],
+    "gt": 2
+  },
+  "source_video_frames": "dataset/ovo/video/1266",
+  "copied_files": 195,
+  "models": [
+    {
+      "key": "rl_exp10_step40",
+      "label": "RL qwen3vl_rl_exp10_step40",
+      "result_dir": "outputs/ovo_qwen3vl_rl_exp10_step40_full_eval",
+      "trace_dir": "outputs/ovo_qwen3vl_rl_exp10_step40_full_eval/traces/1266",
+      "result": {
+        "sample_id": "1266",
+        "video_id": "1266",
+        "annotation_id": "1266",
+        "test_index": null,
+        "category": "realtime",
+        "task": "ACR",
+        "response": "C",
+        "ground_truth": "C",
+        "score": 1,
+        "num_steps": 39,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 10,
+        "num_bridges": 39,
+        "total_latency_seconds": 125.41764497756958,
+        "model_call_count": 39,
+        "backend_attempt_count": 39,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "http://127.0.0.1:8002/v1"
+        ],
+        "repair_count": 29,
+        "repair_types": {
+          "drop_note_time_unmatched": 29
+        },
+        "reward_sums": {
+          "format_reward": 39,
+          "opentail_bridge_reward": 39,
+          "note_bridge_timing_reward": 10,
+          "operation_order_reward": 39
+        },
+        "reward_means": {
+          "format_reward": 1.0,
+          "opentail_bridge_reward": 1.0,
+          "note_bridge_timing_reward": 0.2564102564102564,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 1266,
+        "task_index": 1266,
+        "worker_id": 18,
+        "endpoint": "http://127.0.0.1:8002/v1",
+        "policy": "streamweave",
+        "prompt_type": "eval"
+      }
+    },
+    {
+      "key": "base_qwen3vl_8b_0516",
+      "label": "Base qwen3vl_8b_base_0516",
+      "result_dir": "outputs/qwen3vl_8b_base_full_0516",
+      "trace_dir": "outputs/qwen3vl_8b_base_full_0516/traces/1266",
+      "result": {
+        "sample_id": "1266",
+        "video_id": "1266",
+        "annotation_id": "1266",
+        "test_index": null,
+        "category": "realtime",
+        "task": "ACR",
+        "response": "D",
+        "ground_truth": "C",
+        "score": 0,
+        "num_steps": 39,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 71,
+        "num_bridges": 98,
+        "total_latency_seconds": 160.26095914840698,
+        "model_call_count": 39,
+        "backend_attempt_count": 39,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "http://127.0.0.1:8004/v1"
+        ],
+        "repair_count": 85,
+        "repair_types": {
+          "add_initial_anchor": 1,
+          "adjust_bridge_gap": 26,
+          "clamp_bridge_interval": 1,
+          "drop_invalid_bridge_gap": 2,
+          "drop_invalid_bridge_interval": 1,
+          "merge_open_tail_bridge_text": 26,
+          "repair_malformed_note_tags": 2,
+          "skip_open_tail_start_repair": 26
+        },
+        "reward_sums": {
+          "format_reward": 11,
+          "opentail_bridge_reward": 13,
+          "note_bridge_timing_reward": 37,
+          "operation_order_reward": 38
+        },
+        "reward_means": {
+          "format_reward": 0.28205128205128205,
+          "opentail_bridge_reward": 0.3333333333333333,
+          "note_bridge_timing_reward": 0.9487179487179487,
+          "operation_order_reward": 0.9743589743589743
+        },
+        "error": "",
+        "error_type": "",
+        "index": 1266,
+        "task_index": 1266,
+        "worker_id": 20,
+        "endpoint": "http://127.0.0.1:8004/v1",
+        "policy": "streamweave",
+        "prompt_type": "eval"
+      }
+    },
+    {
+      "key": "streamtext_gemini_flash",
+      "label": "StreamText Gemini Flash",
+      "result_dir": "outputs/streamtext/ovo_gemini_flash_full",
+      "trace_dir": "outputs/streamtext/ovo_gemini_flash_full/traces/1266",
+      "result": {
+        "sample_id": "1266",
+        "video_id": "1266",
+        "annotation_id": "1266",
+        "test_index": null,
+        "category": "realtime",
+        "task": "ACR",
+        "response": "A",
+        "ground_truth": "C",
+        "score": 0,
+        "num_steps": 39,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 0,
+        "num_bridges": 39,
+        "total_latency_seconds": 140.20846247673035,
+        "model_call_count": 39,
+        "backend_attempt_count": 39,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "gemini"
+        ],
+        "repair_count": 0,
+        "repair_types": {},
+        "reward_sums": {
+          "format_reward": 1,
+          "opentail_bridge_reward": 39,
+          "note_bridge_timing_reward": 39,
+          "operation_order_reward": 39
+        },
+        "reward_means": {
+          "format_reward": 0.02564102564102564,
+          "opentail_bridge_reward": 1.0,
+          "note_bridge_timing_reward": 1.0,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 1266,
+        "worker_id": 41,
+        "endpoint": "",
+        "policy": "streamtext",
+        "prompt_type": "text_memory_eval"
+      }
+    }
+  ]
+}

@@ -30,6 +30,7 @@ Options:
 
 Respond only with the letter corresponding to your chosen option.
 Do not include any additional text or explanation in your response.
+You must answer with one of the option letters.
 """
 
 REC_PROMPT_TEMPLATE = """\
@@ -48,20 +49,17 @@ SSR_PROMPT_TEMPLATE = """\
 You're watching a tutorial video which contains a sequence of steps.
 The following is one step from the whole procedure:
 {step}
-Your task is to determine whether the current visual content belongs to this step.
-Answer "Yes" if the current frames show the person preparing for, starting, continuing, completing, or showing the immediate result of this step, or if the current frames have any reasonable relation to this step.
-Answer "No" only if the current frames are completely a different step or provide no visual evidence related to this step.
+Decide whether the current visual content contains visual clues related to this step.
 Answer only with "Yes" or "No".
 Do not include any additional text or explanation in your response.
 """
 
 CRR_PROMPT_TEMPLATE = """\
 You're responsible for answering questions based on the video content.
-Target question, do not answer it directly:
+The following question is relevant to the latest frames, i.e. the end of the video.
 {question}
-Only judge whether the existing visual content, especially the latest frames near the end of the video, provides enough information to answer the target question.
-Answer "Yes" if the answer to the target question can be inferred from the visible content, or if there is any visual clue related to the target question.
-Answer "No" only if the necessary visual evidence is not visible, or if the visible content remains ambiguous and completely unrelated to the target question. Do not be too strict.
+Decide whether the existing visual content, especially the latest frames near the end of the video, contains visual clues related to the question.
+Do not answer the question itself; only judge whether it is answerable.
 Answer only with "Yes" or "No".
 Do not include any additional text or explanation in your response.
 """

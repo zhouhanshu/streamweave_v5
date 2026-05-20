@@ -1,0 +1,194 @@
+{
+  "sample_id": "199",
+  "slug": "case_199_epm_gold_object_nightstand",
+  "benchmark": "OVO-Bench",
+  "note": "新增 hard EPM 样例。正确答案是 nightlamp；RL 误选 vase，base/text 都未能回答。",
+  "selection_criterion": "All three compared models scored `0`; this is included as a hard failure example rather than an RL-success case.",
+  "annotation": {
+    "id": 199,
+    "task": "EPM",
+    "video": "OpenEQA/013-hm3d-svBbv1Pavdk.mp4",
+    "realtime": 110,
+    "question": "What is the gold object on the nightstand?",
+    "answer": "A nightlamp",
+    "options": [
+      "A painting",
+      "A mirror",
+      "A nightlamp",
+      "A vase"
+    ],
+    "gt": 2
+  },
+  "source_video_frames": "dataset/ovo/video/199",
+  "copied_files": 111,
+  "models": [
+    {
+      "key": "rl_exp10_step40",
+      "label": "RL qwen3vl_rl_exp10_step40",
+      "result_dir": "outputs/ovo_qwen3vl_rl_exp10_step40_full_eval",
+      "trace_dir": "outputs/ovo_qwen3vl_rl_exp10_step40_full_eval/traces/199",
+      "result": {
+        "sample_id": "199",
+        "video_id": "199",
+        "annotation_id": "199",
+        "test_index": null,
+        "category": "backward",
+        "task": "EPM",
+        "response": "D",
+        "ground_truth": "C",
+        "score": 0,
+        "num_steps": 22,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 9,
+        "num_bridges": 22,
+        "total_latency_seconds": 78.23258757591248,
+        "model_call_count": 22,
+        "backend_attempt_count": 22,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "http://127.0.0.1:8007/v1"
+        ],
+        "repair_count": 11,
+        "repair_types": {
+          "drop_note_time_unmatched": 11
+        },
+        "reward_sums": {
+          "format_reward": 22,
+          "opentail_bridge_reward": 22,
+          "note_bridge_timing_reward": 11,
+          "operation_order_reward": 22
+        },
+        "reward_means": {
+          "format_reward": 1.0,
+          "opentail_bridge_reward": 1.0,
+          "note_bridge_timing_reward": 0.5,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 199,
+        "task_index": 199,
+        "worker_id": 7,
+        "endpoint": "http://127.0.0.1:8007/v1",
+        "policy": "streamweave",
+        "prompt_type": "eval"
+      }
+    },
+    {
+      "key": "base_qwen3vl_8b_0516",
+      "label": "Base qwen3vl_8b_base_0516",
+      "result_dir": "outputs/qwen3vl_8b_base_full_0516",
+      "trace_dir": "outputs/qwen3vl_8b_base_full_0516/traces/199",
+      "result": {
+        "sample_id": "199",
+        "video_id": "199",
+        "annotation_id": "199",
+        "test_index": null,
+        "category": "backward",
+        "task": "EPM",
+        "response": "cannot answer",
+        "ground_truth": "C",
+        "score": 0,
+        "num_steps": 22,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 27,
+        "num_bridges": 38,
+        "total_latency_seconds": 65.19785380363464,
+        "model_call_count": 22,
+        "backend_attempt_count": 22,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "http://127.0.0.1:8002/v1"
+        ],
+        "repair_count": 37,
+        "repair_types": {
+          "add_missing_bridge_gap": 1,
+          "adjust_bridge_gap": 11,
+          "clamp_bridge_interval": 1,
+          "drop_invalid_bridge_interval": 1,
+          "merge_open_tail_bridge_text": 11,
+          "repair_malformed_note_tags": 1,
+          "skip_open_tail_start_repair": 11
+        },
+        "reward_sums": {
+          "format_reward": 8,
+          "opentail_bridge_reward": 11,
+          "note_bridge_timing_reward": 21,
+          "operation_order_reward": 21
+        },
+        "reward_means": {
+          "format_reward": 0.36363636363636365,
+          "opentail_bridge_reward": 0.5,
+          "note_bridge_timing_reward": 0.9545454545454546,
+          "operation_order_reward": 0.9545454545454546
+        },
+        "error": "",
+        "error_type": "",
+        "index": 199,
+        "task_index": 199,
+        "worker_id": 18,
+        "endpoint": "http://127.0.0.1:8002/v1",
+        "policy": "streamweave",
+        "prompt_type": "eval"
+      }
+    },
+    {
+      "key": "streamtext_gemini_flash",
+      "label": "StreamText Gemini Flash",
+      "result_dir": "outputs/streamtext/ovo_gemini_flash_full",
+      "trace_dir": "outputs/streamtext/ovo_gemini_flash_full/traces/199",
+      "result": {
+        "sample_id": "199",
+        "video_id": "199",
+        "annotation_id": "199",
+        "test_index": null,
+        "category": "backward",
+        "task": "EPM",
+        "response": "The question cannot be answered from the provided video frames.",
+        "ground_truth": "C",
+        "score": 0,
+        "num_steps": 22,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 0,
+        "num_bridges": 22,
+        "total_latency_seconds": 63.458956480026245,
+        "model_call_count": 22,
+        "backend_attempt_count": 22,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "gemini"
+        ],
+        "repair_count": 0,
+        "repair_types": {},
+        "reward_sums": {
+          "format_reward": 1,
+          "opentail_bridge_reward": 22,
+          "note_bridge_timing_reward": 22,
+          "operation_order_reward": 22
+        },
+        "reward_means": {
+          "format_reward": 0.045454545454545456,
+          "opentail_bridge_reward": 1.0,
+          "note_bridge_timing_reward": 1.0,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 199,
+        "worker_id": 4,
+        "endpoint": "",
+        "policy": "streamtext",
+        "prompt_type": "text_memory_eval"
+      }
+    }
+  ]
+}

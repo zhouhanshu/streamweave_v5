@@ -1,0 +1,192 @@
+{
+  "sample_id": "493",
+  "slug": "case_493_asi_inner_tube_leak",
+  "benchmark": "OVO-Bench",
+  "note": "修补内胎场景。RL 识别到 polish 前先找漏点；base/text 都误判为 apply glue。",
+  "selection_criterion": "RL scored `1`; base and streamtext both scored `0` on the same OVO sample.",
+  "annotation": {
+    "id": 493,
+    "task": "ASI",
+    "video": "COIN/qV3Yd1hJKZU.mp4",
+    "realtime": 53,
+    "question": "What does the person do before use sandpaper/metal to polish rubber near leak",
+    "answer": "look for leaks",
+    "options": [
+      "put inner tube back",
+      "look for leaks",
+      "apply glue",
+      "paste patch"
+    ],
+    "gt": 1
+  },
+  "source_video_frames": "dataset/ovo/video/493",
+  "copied_files": 54,
+  "models": [
+    {
+      "key": "rl_exp10_step40",
+      "label": "RL qwen3vl_rl_exp10_step40",
+      "result_dir": "outputs/ovo_qwen3vl_rl_exp10_step40_full_eval",
+      "trace_dir": "outputs/ovo_qwen3vl_rl_exp10_step40_full_eval/traces/493",
+      "result": {
+        "sample_id": "493",
+        "video_id": "493",
+        "annotation_id": "493",
+        "test_index": null,
+        "category": "backward",
+        "task": "ASI",
+        "response": "B",
+        "ground_truth": "B",
+        "score": 1,
+        "num_steps": 11,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 5,
+        "num_bridges": 11,
+        "total_latency_seconds": 35.320679903030396,
+        "model_call_count": 11,
+        "backend_attempt_count": 11,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "http://127.0.0.1:8005/v1"
+        ],
+        "repair_count": 6,
+        "repair_types": {
+          "drop_note_time_unmatched": 6
+        },
+        "reward_sums": {
+          "format_reward": 11,
+          "opentail_bridge_reward": 11,
+          "note_bridge_timing_reward": 5,
+          "operation_order_reward": 11
+        },
+        "reward_means": {
+          "format_reward": 1.0,
+          "opentail_bridge_reward": 1.0,
+          "note_bridge_timing_reward": 0.45454545454545453,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 493,
+        "task_index": 493,
+        "worker_id": 21,
+        "endpoint": "http://127.0.0.1:8005/v1",
+        "policy": "streamweave",
+        "prompt_type": "eval"
+      }
+    },
+    {
+      "key": "base_qwen3vl_8b_0516",
+      "label": "Base qwen3vl_8b_base_0516",
+      "result_dir": "outputs/qwen3vl_8b_base_full_0516",
+      "trace_dir": "outputs/qwen3vl_8b_base_full_0516/traces/493",
+      "result": {
+        "sample_id": "493",
+        "video_id": "493",
+        "annotation_id": "493",
+        "test_index": null,
+        "category": "backward",
+        "task": "ASI",
+        "response": "C",
+        "ground_truth": "B",
+        "score": 0,
+        "num_steps": 11,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 13,
+        "num_bridges": 20,
+        "total_latency_seconds": 41.39687752723694,
+        "model_call_count": 11,
+        "backend_attempt_count": 11,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "http://127.0.0.1:8005/v1"
+        ],
+        "repair_count": 25,
+        "repair_types": {
+          "adjust_bridge_gap": 8,
+          "drop_note_time_unmatched": 1,
+          "merge_open_tail_bridge_text": 7,
+          "repair_malformed_note_tags": 2,
+          "skip_open_tail_start_repair": 7
+        },
+        "reward_sums": {
+          "format_reward": 2,
+          "opentail_bridge_reward": 4,
+          "note_bridge_timing_reward": 11,
+          "operation_order_reward": 11
+        },
+        "reward_means": {
+          "format_reward": 0.18181818181818182,
+          "opentail_bridge_reward": 0.36363636363636365,
+          "note_bridge_timing_reward": 1.0,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 493,
+        "task_index": 493,
+        "worker_id": 13,
+        "endpoint": "http://127.0.0.1:8005/v1",
+        "policy": "streamweave",
+        "prompt_type": "eval"
+      }
+    },
+    {
+      "key": "streamtext_gemini_flash",
+      "label": "StreamText Gemini Flash",
+      "result_dir": "outputs/streamtext/ovo_gemini_flash_full",
+      "trace_dir": "outputs/streamtext/ovo_gemini_flash_full/traces/493",
+      "result": {
+        "sample_id": "493",
+        "video_id": "493",
+        "annotation_id": "493",
+        "test_index": null,
+        "category": "backward",
+        "task": "ASI",
+        "response": "C",
+        "ground_truth": "B",
+        "score": 0,
+        "num_steps": 11,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 0,
+        "num_bridges": 11,
+        "total_latency_seconds": 41.40457820892334,
+        "model_call_count": 11,
+        "backend_attempt_count": 11,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "gemini"
+        ],
+        "repair_count": 0,
+        "repair_types": {},
+        "reward_sums": {
+          "format_reward": 1,
+          "opentail_bridge_reward": 11,
+          "note_bridge_timing_reward": 11,
+          "operation_order_reward": 11
+        },
+        "reward_means": {
+          "format_reward": 0.09090909090909091,
+          "opentail_bridge_reward": 1.0,
+          "note_bridge_timing_reward": 1.0,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 493,
+        "worker_id": 45,
+        "endpoint": "",
+        "policy": "streamtext",
+        "prompt_type": "text_memory_eval"
+      }
+    }
+  ]
+}

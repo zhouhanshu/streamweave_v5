@@ -1,0 +1,192 @@
+{
+  "sample_id": "590",
+  "slug": "case_590_asi_clothes_before_put_down",
+  "benchmark": "OVO-Bench",
+  "note": "短 backward/ASI 样例。RL 答对前序动作；base 和纯文本都选错。",
+  "selection_criterion": "RL scored `1`; base and streamtext both scored `0` on the same OVO sample.",
+  "annotation": {
+    "id": 590,
+    "task": "ASI",
+    "video": "star/RAQNI.mp4",
+    "realtime": 18,
+    "question": "What happened before the person put down the clothes?",
+    "answer": "Tidied up the blanket.",
+    "options": [
+      "Put down the clothes.",
+      "Tidied up the blanket.",
+      "Took the blanket.",
+      "Washed the cup/glass/bottle."
+    ],
+    "gt": 1
+  },
+  "source_video_frames": "dataset/ovo/video/590",
+  "copied_files": 19,
+  "models": [
+    {
+      "key": "rl_exp10_step40",
+      "label": "RL qwen3vl_rl_exp10_step40",
+      "result_dir": "outputs/ovo_qwen3vl_rl_exp10_step40_full_eval",
+      "trace_dir": "outputs/ovo_qwen3vl_rl_exp10_step40_full_eval/traces/590",
+      "result": {
+        "sample_id": "590",
+        "video_id": "590",
+        "annotation_id": "590",
+        "test_index": null,
+        "category": "backward",
+        "task": "ASI",
+        "response": "B",
+        "ground_truth": "B",
+        "score": 1,
+        "num_steps": 4,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 2,
+        "num_bridges": 4,
+        "total_latency_seconds": 9.890759706497192,
+        "model_call_count": 4,
+        "backend_attempt_count": 4,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "http://127.0.0.1:8000/v1"
+        ],
+        "repair_count": 2,
+        "repair_types": {
+          "drop_note_time_unmatched": 2
+        },
+        "reward_sums": {
+          "format_reward": 4,
+          "opentail_bridge_reward": 4,
+          "note_bridge_timing_reward": 2,
+          "operation_order_reward": 4
+        },
+        "reward_means": {
+          "format_reward": 1.0,
+          "opentail_bridge_reward": 1.0,
+          "note_bridge_timing_reward": 0.5,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 590,
+        "task_index": 590,
+        "worker_id": 16,
+        "endpoint": "http://127.0.0.1:8000/v1",
+        "policy": "streamweave",
+        "prompt_type": "eval"
+      }
+    },
+    {
+      "key": "base_qwen3vl_8b_0516",
+      "label": "Base qwen3vl_8b_base_0516",
+      "result_dir": "outputs/qwen3vl_8b_base_full_0516",
+      "trace_dir": "outputs/qwen3vl_8b_base_full_0516/traces/590",
+      "result": {
+        "sample_id": "590",
+        "video_id": "590",
+        "annotation_id": "590",
+        "test_index": null,
+        "category": "backward",
+        "task": "ASI",
+        "response": "C",
+        "ground_truth": "B",
+        "score": 0,
+        "num_steps": 4,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 1,
+        "num_bridges": 4,
+        "total_latency_seconds": 11.428877830505371,
+        "model_call_count": 4,
+        "backend_attempt_count": 4,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "http://127.0.0.1:8006/v1"
+        ],
+        "repair_count": 11,
+        "repair_types": {
+          "adjust_bridge_gap": 3,
+          "drop_invalid_bridge_gap": 1,
+          "drop_note_time_unmatched": 1,
+          "merge_open_tail_bridge_text": 3,
+          "skip_open_tail_start_repair": 3
+        },
+        "reward_sums": {
+          "format_reward": 1,
+          "opentail_bridge_reward": 1,
+          "note_bridge_timing_reward": 3,
+          "operation_order_reward": 4
+        },
+        "reward_means": {
+          "format_reward": 0.25,
+          "opentail_bridge_reward": 0.25,
+          "note_bridge_timing_reward": 0.75,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 590,
+        "task_index": 590,
+        "worker_id": 14,
+        "endpoint": "http://127.0.0.1:8006/v1",
+        "policy": "streamweave",
+        "prompt_type": "eval"
+      }
+    },
+    {
+      "key": "streamtext_gemini_flash",
+      "label": "StreamText Gemini Flash",
+      "result_dir": "outputs/streamtext/ovo_gemini_flash_full",
+      "trace_dir": "outputs/streamtext/ovo_gemini_flash_full/traces/590",
+      "result": {
+        "sample_id": "590",
+        "video_id": "590",
+        "annotation_id": "590",
+        "test_index": null,
+        "category": "backward",
+        "task": "ASI",
+        "response": "A",
+        "ground_truth": "B",
+        "score": 0,
+        "num_steps": 4,
+        "task_failed": false,
+        "failure_reason": "",
+        "num_notes": 0,
+        "num_bridges": 4,
+        "total_latency_seconds": 10.304097175598145,
+        "model_call_count": 4,
+        "backend_attempt_count": 4,
+        "backend_retry_count": 0,
+        "backend_retry_error_count": 0,
+        "backend_retry_errors": [],
+        "backend_endpoints": [
+          "gemini"
+        ],
+        "repair_count": 0,
+        "repair_types": {},
+        "reward_sums": {
+          "format_reward": 1,
+          "opentail_bridge_reward": 4,
+          "note_bridge_timing_reward": 4,
+          "operation_order_reward": 4
+        },
+        "reward_means": {
+          "format_reward": 0.25,
+          "opentail_bridge_reward": 1.0,
+          "note_bridge_timing_reward": 1.0,
+          "operation_order_reward": 1.0
+        },
+        "error": "",
+        "error_type": "",
+        "index": 590,
+        "worker_id": 38,
+        "endpoint": "",
+        "policy": "streamtext",
+        "prompt_type": "text_memory_eval"
+      }
+    }
+  ]
+}

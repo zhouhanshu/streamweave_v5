@@ -208,6 +208,11 @@ Output format:
 ...
 """
 
+NO_ABSTAIN_HINT_SENTENCE = (
+    ' If it cannot be answered, choose the "cannot answer" option if one exists.'
+)
+INFERENCE_PROMPT_NO_ABSTAIN_HINT = INFERENCE_PROMPT_NEW.replace(NO_ABSTAIN_HINT_SENTENCE, "")
+
 
 @dataclass(slots=True)
 class PromptContext:
@@ -227,7 +232,9 @@ def build_prompt(profile: str, context: PromptContext) -> list[ContentItem]:
     elif name in {"eval_new", "inference_prompt_new", "production", "eval", "final"}:
         # INFERENCE_PROMPT_NEW is the explicit name for the current 0516 inference prompt.
         # eval/production/final remain compatibility aliases.
-        content = _build_inference_prompt(context)
+        content = _build_inference_prompt(context, prompt_template=INFERENCE_PROMPT_NEW)
+    elif name in {"eval_no_abstain_hint", "no_abstain_hint", "base_no_abstain_hint"}:
+        content = _build_inference_prompt(context, prompt_template=INFERENCE_PROMPT_NO_ABSTAIN_HINT)
     else:
         raise ValueError(f"Unknown prompt profile: {profile}")
     return content
@@ -255,8 +262,8 @@ def _append_actual_input(content: list[ContentItem], context: PromptContext) -> 
     content.append(ContentItem("text", text=TEACHER_FOOTER))
 
 
-def _build_inference_prompt(context: PromptContext) -> list[ContentItem]:
-    before_memory, rest = INFERENCE_PROMPT_NEW.split("{memory_content}", 1)
+def _build_inference_prompt(context: PromptContext, *, prompt_template: str) -> list[ContentItem]:
+    before_memory, rest = prompt_template.split("{memory_content}", 1)
     before_frames, rest = rest.split("{frame_content}", 1)
     before_qa, after_qa = rest.split("{qa_content}", 1)
 
